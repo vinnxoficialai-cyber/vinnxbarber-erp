@@ -1,0 +1,4 @@
+-- Enum extensions — must run outside transaction
+ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'BARBER';
+ALTER TYPE "EventType" ADD VALUE IF NOT EXISTS 'APPOINTMENT';
+ALTER TYPE "EventType" ADD VALUE IF NOT EXISTS 'BLOCKED';

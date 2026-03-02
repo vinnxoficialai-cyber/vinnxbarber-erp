@@ -1,0 +1,4 @@
+﻿[dotenv@17.2.4] injecting env (4) from .env -- tip: ÔÜÖ´©Å  suppress all logs with { quiet: true }
+payroll_periods: null rows
+weekly_checkins: null rows
+RPC_delete_user_completely: RESULT: Only admins can delete users

@@ -1,0 +1,103 @@
+﻿[dotenv@17.2.4] injecting env (4) from .env -- tip: ­ƒùé´©Å backup and recover secrets: https://dotenvx.com/ops
+
+ÔòöÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòù
+Ôòæ   VINNX ERP ÔÇö SUPABASE LIVE AUDIT       Ôòæ
+Ôòæ   Project: auvqsjbtgtwklqzwxqce          Ôòæ
+ÔòÜÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòØ
+
+Ô£à Signed in as: marcos@gmail.com 
+
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+  1. TABLES CHECK
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+
+  Tables Found:
+    Ô£à users                     (2 rows)
+    Ô£à team_members              (2 rows)
+    Ô£à clients                   (1 rows)
+    Ô£à contracts                 (1 rows)
+    Ô£à projects                  (0 rows)
+    Ô£à tasks                     (0 rows)
+    Ô£à transactions              (3 rows)
+    Ô£à calendar_events           (1 rows)
+    Ô£à vacations                 (0 rows)
+    Ô£à time_entries              (0 rows)
+    Ô£à evaluations               (0 rows)
+    Ô£à service_credentials       (1 rows)
+    Ô£à goals                     (0 rows)
+    Ô£à bank_accounts             (1 rows)
+    Ô£à budgets                   (0 rows)
+    Ô£à commissions               (0 rows)
+    Ô£à withdrawals               (1 rows)
+    Ô£à pipeline_stages           (0 rows)
+    Ô£à client_interactions       (0 rows)
+    Ô£à app_settings              (1 rows)
+    Ô£à role_permissions          (4 rows)
+    Ô£à system_notifications      (0 rows)
+    Ô£à personal_tasks            (0 rows)
+    Ô£à services                  (0 rows)
+    Ô£à payment_records           (0 rows)
+    Ô£à recurring_expenses        (2 rows)
+
+  Summary: 26/26 tables found
+
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+  2. FUNCTIONS, TRIGGERS & ENUMS
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+
+  Custom Functions:
+    Ô£à get_company_branding() => {"logo":"https://auvqsjbtgtwklqzwxqce.supabase.co/storage/v1/object/public/avatars/public/company_logo_1770910227444","name":"VINNX"}
+    Ôä╣´©Å  get_user_role() ÔÇö used internally by RLS policies (cannot test via RPC)
+    Ôä╣´©Å  handle_new_erp_user() ÔÇö trigger function (cannot test via RPC)
+
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+  3. STORAGE BUCKETS
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+
+  ÔÜá´©Å  No buckets found
+
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+  4. AUTH USERS (from users table)
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+
+  Users (2):
+    ­ƒæñ Vinicius | vinnxoficialai@gmail.com | role: ADMIN | id: 300d44a5...
+    ­ƒæñ Talis Gomes  | talisgomes@vinnx.com | role: ADMIN | id: 51f19a6e...
+
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+  5. APP SETTINGS & ROLE PERMISSIONS
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+
+  app_settings:
+    company: {"cnpj":"00.000.000/0001-00","logo":"https://auvqsjbtgtwklqzwxqce.supabase.co/st...
+    hr: {"holidays":[],"timeBank":{"enabled":true,"overtimeAction":"pay","toleranceMinut
+    financial: {"taxes":{"rat":0.02,"fgts":0.08,"terceiros":0.058,"inssEmployer":0.2},"irTable"
+
+  role_permissions (4 roles):
+    ­ƒöæ ADMIN      => {"all":true}
+    ­ƒöæ MANAGER    => {"edit_team":true,"view_financial":true}
+    ­ƒöæ SALES      => {"view_clients":true,"view_financial":false}
+    ­ƒöæ SUPPORT    => {"view_tickets":true,"view_financial":false}
+
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+  6. DATA COUNTS (rows per table)
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+
+    users                     2 rows
+    team_members              2 rows
+    clients                   1 rows
+    contracts                 1 rows
+    projects                  0 rows
+    tasks                     0 rows
+    transactions              3 rows
+    calendar_events           1 rows
+    services                  0 rows
+    commissions               0 rows
+    withdrawals               1 rows
+    budgets                   0 rows
+    evaluations               0 rows
+
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+  AUDIT COMPLETE
+ÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉ
+

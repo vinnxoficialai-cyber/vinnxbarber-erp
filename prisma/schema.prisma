@@ -1,0 +1,484 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id         String      @id @default(uuid())
+  email      String      @unique
+  name       String
+  password   String?
+  role       UserRole    @default(SUPPORT)
+  phone      String?
+  avatar     String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  clients    Client[]    @relation("ClientCreator")
+  projects   Project[]   @relation("ProjectCreator")
+  tasks      Task[]      @relation("TaskAssignee")
+  teamMember TeamMember?
+
+  @@map("users")
+}
+
+model TeamMember {
+  id               String       @id @default(uuid())
+  userId           String       @unique
+  baseSalary       Decimal      @db.Decimal(10, 2)
+  commissionRate   Decimal      @default(0.20) @db.Decimal(5, 4)
+  joinDate         DateTime
+  department       String?
+  birthDate        DateTime?
+  cpf              String?      @unique
+  address          String?
+  totalSales       Decimal      @default(0) @db.Decimal(12, 2)
+  totalCommissions Decimal      @default(0) @db.Decimal(12, 2)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  contracts        Contract[]
+  evaluations      Evaluation[]
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timeEntries      TimeEntry[]
+  vacations        Vacation[]
+
+  @@map("team_members")
+}
+
+model Client {
+  id                 String              @id @default(uuid())
+  name               String
+  company            String?
+  email              String              @unique
+  phone              String?
+  cpfCnpj            String?             @unique
+  status             ClientStatus        @default(LEAD)
+  monthlyValue       Decimal             @default(0) @db.Decimal(12, 2)
+  setupValue         Decimal             @default(0) @db.Decimal(12, 2)
+  totalValue         Decimal             @default(0) @db.Decimal(12, 2)
+  monthsActive       Int                 @default(0)
+  origin             String?
+  segment            String?
+  lastContact        DateTime?
+  avatar             String?
+  birthday           DateTime?
+  createdById        String?
+  salesExecutiveId   String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  budgets            Budget[]
+  createdBy          User?               @relation("ClientCreator", fields: [createdById], references: [id])
+  contracts          Contract[]
+  projects           Project[]
+  serviceCredentials ServiceCredential[]
+  transactions       Transaction[]
+  pipelineStage      PipelineStage?
+
+  @@map("clients")
+}
+
+model Contract {
+  id               String         @id @default(uuid())
+  title            String
+  clientId         String
+  salesExecutiveId String?
+  monthlyValue     Decimal        @db.Decimal(12, 2)
+  setupValue       Decimal        @default(0) @db.Decimal(12, 2)
+  contractDuration Int
+  startDate        DateTime
+  endDate          DateTime?
+  status           ContractStatus @default(ACTIVE)
+  autoRenew        Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  client           Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  salesExecutive   TeamMember?    @relation(fields: [salesExecutiveId], references: [id])
+
+  @@map("contracts")
+}
+
+model Project {
+  id          String     @id @default(uuid())
+  title       String
+  description String?
+  clientId    String
+  status      TaskStatus @default(TODO)
+  priority    Priority   @default(MEDIUM)
+  progress    Int        @default(0)
+  startDate   DateTime   @default(now())
+  dueDate     DateTime?
+  budget      Decimal    @default(0) @db.Decimal(12, 2)
+  tags        String[]
+  createdById String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  client      Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy   User?      @relation("ProjectCreator", fields: [createdById], references: [id])
+  tasks       Task[]
+
+  @@map("projects")
+}
+
+model Task {
+  id           String     @id @default(uuid())
+  title        String
+  description  String?
+  status       TaskStatus @default(TODO)
+  priority     Priority   @default(MEDIUM)
+  dueDate      DateTime?
+  projectId    String?
+  assignedToId String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  assignedTo   User?      @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  project      Project?   @relation(fields: [projectId], references: [id])
+
+  @@map("tasks")
+}
+
+model Transaction {
+  id          String            @id @default(uuid())
+  description String
+  amount      Decimal           @db.Decimal(12, 2)
+  type        TransactionType
+  date        DateTime
+  status      TransactionStatus @default(PENDING)
+  category    String?
+  clientId    String?
+  accountId   String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  account     BankAccount?      @relation(fields: [accountId], references: [id])
+  client      Client?           @relation(fields: [clientId], references: [id])
+
+  @@map("transactions")
+}
+
+model CalendarEvent {
+  id          String    @id @default(uuid())
+  title       String
+  type        EventType @default(MEETING)
+  startTime   String
+  endTime     String
+  date        DateTime
+  clientName  String?
+  observation String?
+  color       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("calendar_events")
+}
+
+model Vacation {
+  id           String         @id @default(uuid())
+  teamMemberId String
+  startDate    DateTime
+  endDate      DateTime
+  days         Int
+  type         String         @default("vacation")
+  status       VacationStatus @default(PENDING)
+  notes        String?
+  approvedBy   String?
+  approvedAt   DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  teamMember   TeamMember     @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+
+  @@map("vacations")
+}
+
+model TimeEntry {
+  id           String     @id @default(uuid())
+  teamMemberId String
+  date         DateTime
+  clockIn      String?
+  clockOut     String?
+  breakMinutes Int?
+  totalMinutes Int?
+  type         String     @default("regular")
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  teamMember   TeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+
+  @@map("time_entries")
+}
+
+model Evaluation {
+  id           String     @id @default(uuid())
+  teamMemberId String
+  reviewerId   String
+  direction    String     @default("manager")
+  type         String     @default("monthly")
+  period       String
+  criteria     Json
+  overallScore Decimal    @db.Decimal(3, 2)
+  positives    String?
+  improvements String?
+  goals        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime?  @default(now())
+  teamMember   TeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+
+  @@map("evaluations")
+}
+
+model ServiceCredential {
+  id          String   @id @default(uuid())
+  clientId    String
+  serviceName String
+  category    String   @default("other")
+  url         String?
+  username    String?
+  password    String
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("service_credentials")
+}
+
+model Goal {
+  id           String   @id @default(uuid())
+  type         String
+  title        String
+  targetValue  Decimal  @db.Decimal(12, 2)
+  currentValue Decimal  @default(0) @db.Decimal(12, 2)
+  period       String   @default("monthly")
+  startDate    DateTime
+  endDate      DateTime
+  assignedTo   String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("goals")
+}
+
+model BankAccount {
+  id           String        @id @default(uuid())
+  name         String
+  institution  String?
+  bank         String?
+  agency       String?
+  account      String?
+  type         String
+  balance      Decimal       @db.Decimal(12, 2)
+  limit        Decimal?      @db.Decimal(12, 2)
+  dueDate      Int?
+  color        String?
+  archived     Boolean       @default(false)
+  isDefault    Boolean       @default(false)
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+
+  @@map("bank_accounts")
+}
+
+model Budget {
+  id         String   @id @default(uuid())
+  clientId   String
+  title      String
+  status     String   @default("Draft")
+  items      Json
+  totalValue Decimal  @db.Decimal(12, 2)
+  discount   Decimal  @default(0) @db.Decimal(12, 2)
+  validUntil DateTime
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("budgets")
+}
+
+model Commission {
+  id         String    @id @default(uuid())
+  employeeId String
+  amount     Decimal   @db.Decimal(12, 2)
+  source     String
+  period     String
+  status     String    @default("pending")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime? @default(now())
+
+  @@map("commissions")
+}
+
+model Withdrawal {
+  id          String    @id @default(uuid())
+  employeeId  String
+  amount      Decimal   @db.Decimal(12, 2)
+  reason      String
+  description String?
+  date        DateTime
+  status      String    @default("pending")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime? @default(now())
+
+  @@map("withdrawals")
+}
+
+model PipelineStage {
+  id        String   @id @default(uuid())
+  clientId  String   @unique
+  stage     String
+  notes     String?
+  updatedAt DateTime @updatedAt
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("pipeline_stages")
+}
+
+model ClientInteraction {
+  id          String    @id @default(uuid())
+  clientId    String
+  type        String
+  title       String
+  description String?
+  date        DateTime
+  notes       String?
+  userId      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime? @default(now())
+
+  @@map("client_interactions")
+}
+
+// --- NEW MODELS FOR PHASE 2 MIGRATION ---
+
+model AppSettings {
+  id            String   @id @default(uuid())
+  company       Json?    @default("{}")
+  hr            Json?    @default("{}")
+  financial     Json?    @default("{}")
+  projects      Json?    @default("{}")
+  notifications Json?    @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("app_settings")
+}
+
+model RolePermission {
+  id          String   @id @default(uuid())
+  role        UserRole @unique
+  permissions Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("role_permissions")
+}
+
+model SystemNotification {
+  id          String    @id @default(uuid())
+  type        String // info, warning, success, error
+  title       String
+  message     String
+  read        Boolean   @default(false)
+  actionLabel String?
+  actionPath  String?
+  userId      String? // Opcional, se for notificação específica
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime? @default(now())
+
+  @@map("system_notifications")
+}
+
+model PersonalTask {
+  id          Int       @id @default(autoincrement())
+  text        String
+  scope       String
+  completed   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+  assigneeId  String
+  updatedAt   DateTime? @default(now())
+
+  @@map("personal_tasks")
+}
+
+model Service {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  price       Decimal  @db.Decimal(12, 2)
+  cost        Decimal  @db.Decimal(12, 2)
+  type        String   @default("One-Time")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("services")
+}
+
+// --- ENUMS ---
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  SALES
+  SUPPORT
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  LEAD
+  CHURNED
+}
+
+enum ContractStatus {
+  ACTIVE
+  CANCELLED
+  PENDING
+  ENDED
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  COMMISSION
+}
+
+enum TransactionStatus {
+  COMPLETED
+  PENDING
+  OVERDUE
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum VacationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum EventType {
+  MEETING
+  CALL
+  PRESENTATION
+  DEADLINE
+  OTHER
+}
