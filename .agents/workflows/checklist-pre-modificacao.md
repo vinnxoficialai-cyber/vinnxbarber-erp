@@ -91,3 +91,17 @@ const shadowClass = isDarkMode ? '' : 'shadow-sm';
 - **NÃO ASSUMA** — leia o código fonte
 - **NÃO INVENTE** — use padrões que já existem no projeto
 - **NÃO SIMPLIFIQUE** — mantenha o mesmo nível de detalhe das referências
+
+# checklist-pre-modificacao
+
+1) Identificar arquivos afetados e ABRIR todos antes de editar
+2) Verificar types (types.ts / types/index.ts)
+3) Verificar dataService.ts e hooks existentes
+4) Se houver banco:
+   - Ler prisma/migrations e confirmar tipos/colunas
+   - Confirmar tabela/coluna no Supabase antes de policy
+5) Implementar em pequenos commits/blocos
+6) Rodar:
+   - npx tsc --noEmit
+   - (lint/test se existir)
+7) Descrever como validar manualmente no app

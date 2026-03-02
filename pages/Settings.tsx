@@ -3,7 +3,8 @@ import {
   Building2, Save, Mail, Phone, MapPin, Globe, Users, Calendar,
   Clock, Briefcase, DollarSign, Bell, Settings2, ChevronRight,
   Plus, Trash2, Edit2, X, Check, AlertCircle, Shield, Loader2,
-  Bug, Database, ChevronUp, Upload, Image as ImageIcon, Eye
+  Bug, Database, ChevronUp, Upload, Image as ImageIcon, Eye,
+  Palette
 } from 'lucide-react';
 import { safeStorage } from '../utils';
 import { CustomDropdown } from '../components/CustomDropdown';
@@ -19,7 +20,7 @@ import {
   MOCK_PROJECT_SETTINGS, MOCK_NOTIFICATION_SETTINGS
 } from '../constants';
 
-type SettingsTab = 'company' | 'hr' | 'financial' | 'projects' | 'notifications' | 'permissions';
+type SettingsTab = 'company' | 'hr' | 'financial' | 'projects' | 'notifications' | 'permissions' | 'customize';
 
 interface SettingsProps {
   company: CompanySettings;
@@ -34,6 +35,20 @@ const TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
   { id: 'projects', label: 'Projetos', icon: Briefcase },
   { id: 'notifications', label: 'Notificações', icon: Bell },
   { id: 'permissions', label: 'Permissões', icon: Shield },
+  { id: 'customize', label: 'Personalizar', icon: Palette },
+];
+
+const COLOR_PRESETS: { name: string; hex: string; rgb: { DEFAULT: string; '50': string; '500': string; '600': string; '700': string } }[] = [
+  { name: 'Verde', hex: '#00bf62', rgb: { DEFAULT: '0 191 98', '50': '230 249 239', '500': '0 191 98', '600': '0 168 86', '700': '0 143 73' } },
+  { name: 'Azul', hex: '#3b82f6', rgb: { DEFAULT: '59 130 246', '50': '239 246 255', '500': '59 130 246', '600': '37 99 235', '700': '29 78 216' } },
+  { name: 'Branco', hex: '#ffffff', rgb: { DEFAULT: '255 255 255', '50': '250 250 252', '500': '255 255 255', '600': '243 244 246', '700': '229 231 235' } },
+  { name: 'Roxo', hex: '#8b5cf6', rgb: { DEFAULT: '139 92 246', '50': '245 243 255', '500': '139 92 246', '600': '124 58 237', '700': '109 40 217' } },
+  { name: 'Rosa', hex: '#ec4899', rgb: { DEFAULT: '236 72 153', '50': '253 242 248', '500': '236 72 153', '600': '219 39 119', '700': '190 24 93' } },
+  { name: 'Vermelho', hex: '#ef4444', rgb: { DEFAULT: '239 68 68', '50': '254 242 242', '500': '239 68 68', '600': '220 38 38', '700': '185 28 28' } },
+  { name: 'Laranja', hex: '#f97316', rgb: { DEFAULT: '249 115 22', '50': '255 247 237', '500': '249 115 22', '600': '234 88 12', '700': '194 65 12' } },
+  { name: 'Ambar', hex: '#f59e0b', rgb: { DEFAULT: '245 158 11', '50': '255 251 235', '500': '245 158 11', '600': '217 119 6', '700': '180 83 9' } },
+  { name: 'Dourado', hex: '#f6c927', rgb: { DEFAULT: '246 201 39', '50': '255 251 235', '500': '246 201 39', '600': '220 175 20', '700': '180 140 10' } },
+  { name: 'Teal', hex: '#14b8a6', rgb: { DEFAULT: '20 184 166', '50': '240 253 250', '500': '20 184 166', '600': '13 148 136', '700': '15 118 110' } },
 ];
 
 export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkMode }) => {
@@ -852,6 +867,101 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
     }
   };
 
+  // --- Customize Tab ---
+  const [activeColor, setActiveColor] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('erp_primary_color');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const match = COLOR_PRESETS.find(p => p.rgb.DEFAULT === parsed.DEFAULT);
+        return match?.hex || '#00bf62';
+      }
+    } catch { }
+    return '#00bf62';
+  });
+
+  const applyColor = (preset: typeof COLOR_PRESETS[number]) => {
+    const root = document.documentElement.style;
+    root.setProperty('--primary', preset.rgb.DEFAULT);
+    root.setProperty('--primary-50', preset.rgb['50']);
+    root.setProperty('--primary-500', preset.rgb['500']);
+    root.setProperty('--primary-600', preset.rgb['600']);
+    root.setProperty('--primary-700', preset.rgb['700']);
+    localStorage.setItem('erp_primary_color', JSON.stringify(preset.rgb));
+    setActiveColor(preset.hex);
+  };
+
+  const renderCustomizeTab = () => (
+    <div className="space-y-6">
+      {/* Cor Primária */}
+      <div>
+        <h3 className={`text-sm font-semibold ${textMain} mb-1 flex items-center gap-2`}>
+          <Palette size={16} className="text-primary" /> Cor Primária
+        </h3>
+        <p className={`text-xs ${textSub} mb-4`}>
+          Escolha a cor que será aplicada em todo o sistema: ícones, botões, indicadores e destaques.
+        </p>
+        <div className="grid grid-cols-5 sm:grid-cols-10 gap-4">
+          {COLOR_PRESETS.map(preset => {
+            const isActive = activeColor === preset.hex;
+            return (
+              <button
+                key={preset.hex}
+                onClick={() => applyColor(preset)}
+                className="flex flex-col items-center gap-1.5 group"
+                title={preset.name}
+              >
+                <div
+                  className={`w-10 h-10 rounded-full border-2 transition-all duration-200 flex items-center justify-center
+                    ${isActive
+                      ? 'border-white dark:border-white scale-110 shadow-lg ring-2 ring-offset-2 dark:ring-offset-dark'
+                      : `border-transparent group-hover:scale-105 group-hover:shadow-md`
+                    }`}
+                  style={{
+                    backgroundColor: preset.hex,
+                    ['--tw-ring-color' as any]: isActive ? preset.hex : undefined,
+                  }}
+                >
+                  {isActive && <Check size={18} className="text-white" strokeWidth={3} />}
+                </div>
+                <span className={`text-[10px] font-medium ${isActive ? textMain : textSub} transition-colors`}>
+                  {preset.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Preview */}
+      <div className={`border-t ${borderCol} pt-5`}>
+        <h3 className={`text-sm font-semibold ${textMain} mb-3`}>Preview</h3>
+        <div className={`p-4 rounded-xl border ${borderCol} ${isDarkMode ? 'bg-dark' : 'bg-slate-50'} space-y-3`}>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Palette size={20} className="text-primary" />
+            </div>
+            <div>
+              <p className={`text-sm font-semibold ${textMain}`}>Cor Primária Aplicada</p>
+              <p className={`text-xs ${textSub}`}>Veja como os elementos ficam com a cor selecionada</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className="px-3 py-1.5 bg-primary text-white rounded-full text-xs font-bold">Botão Primário</span>
+            <span className="px-3 py-1.5 bg-primary/10 text-primary border border-primary/30 rounded-full text-xs font-bold">Botão Secundário</span>
+            <span className={`px-3 py-1.5 rounded-full text-xs font-bold border ${borderCol} ${textSub}`}>Botão Neutro</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="h-2 flex-1 rounded-full bg-primary/20">
+              <div className="h-full w-3/4 rounded-full bg-primary transition-all" />
+            </div>
+            <span className="text-xs font-bold text-primary">75%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   const renderPermissionsTab = () => {
     const sections = [...new Set(PAGES_LIST.map(p => p.section))];
 
@@ -1023,6 +1133,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
           {activeTab === 'projects' && renderProjectsTab()}
           {activeTab === 'notifications' && renderNotificationsTab()}
           {activeTab === 'permissions' && renderPermissionsTab()}
+          {activeTab === 'customize' && renderCustomizeTab()}
         </div>
       </div>
     </div >

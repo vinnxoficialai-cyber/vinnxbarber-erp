@@ -16,20 +16,52 @@
     href="https://enjyflztvyomrlzddavk.supabase.co/storage/v1/object/public/avatars/public/company_logo_1770648773851" />
   <link rel="icon"
     href="https://enjyflztvyomrlzddavk.supabase.co/storage/v1/object/public/avatars/public/company_logo_1770648773851" />
+  <!-- Dynamic Theme Color System -->
+  <style>
+    :root {
+      --primary: 0 191 98;
+      --primary-50: 230 249 239;
+      --primary-500: 0 191 98;
+      --primary-600: 0 168 86;
+      --primary-700: 0 143 73;
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var s = localStorage.getItem('erp_primary_color');
+        if (s) {
+          var c = JSON.parse(s);
+          var r = document.documentElement.style;
+          if (c.DEFAULT) r.setProperty('--primary', c.DEFAULT);
+          if (c['50']) r.setProperty('--primary-50', c['50']);
+          if (c['500']) r.setProperty('--primary-500', c['500']);
+          if (c['600']) r.setProperty('--primary-600', c['600']);
+          if (c['700']) r.setProperty('--primary-700', c['700']);
+        }
+      } catch (e) { }
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
+    function _wo(v) {
+      return function ({ opacityValue }) {
+        return opacityValue !== undefined
+          ? 'rgb(' + v + ' / ' + opacityValue + ')'
+          : 'rgb(' + v + ')';
+      };
+    }
     tailwind.config = {
       darkMode: 'class',
       theme: {
         extend: {
           colors: {
             primary: {
-              DEFAULT: '#00bf62',
-              50: '#e6f9ef',
-              100: '#c0f0d8',
-              500: '#00bf62',
-              600: '#00a856',
-              700: '#008f49',
+              DEFAULT: _wo('var(--primary)'),
+              50: _wo('var(--primary-50)'),
+              500: _wo('var(--primary-500)'),
+              600: _wo('var(--primary-600)'),
+              700: _wo('var(--primary-700)'),
             },
             dark: {
               DEFAULT: '#09090b', // Requested dark background
