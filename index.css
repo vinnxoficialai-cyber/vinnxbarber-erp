@@ -3,6 +3,48 @@
 @tailwind utilities;
 
 /* ======================================================
+   Shadcn-compatible CSS variables for StoreCustomizer
+   ❌ NÃO definir --primary (colisão RGB/HSL) 
+   ❌ NÃO definir --radius (colisão borderRadius)
+   ====================================================== */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 4%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 4%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 240 5% 65%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --primary-foreground: 0 0% 100%;
+  }
+  .dark {
+    --background: 240 6% 4%;
+    --foreground: 0 0% 93%;
+    --card: 240 5% 7%;
+    --card-foreground: 0 0% 93%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 55%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 240 5% 35%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --primary-foreground: 0 0% 100%;
+  }
+}
+
+/* StoreCustomizer animation utility */
+@keyframes fadeZoomIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ======================================================
    Dashboard Premium Dark — card + texture utilities
    ====================================================== */
 
@@ -394,4 +436,524 @@
 .header-logo .svg-elem-10 {
   opacity: 0;
   animation: header-svg-reveal 0.5s ease 1.2s both;
+}
+
+/* ======================================================
+   PUBLIC BOOKING APP — Styles & Animations
+   Used by PublicSite.tsx (/#/site)
+   ====================================================== */
+
+/* Loading screen */
+.booking-loading-fadeout {
+  opacity: 0;
+  transition: opacity 0.7s ease-in-out;
+}
+
+/* Loading screen fade-in for logo */
+@keyframes bookingFadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.booking-fade-in {
+  animation: bookingFadeIn 1s ease-in-out;
+}
+.booking-fade-in-delay {
+  animation: bookingFadeIn 1s ease-in-out 0.3s;
+  animation-fill-mode: both;
+}
+
+/* Pause all animations until loading is done */
+.booking-anim-paused .booking-fade-in,
+.booking-anim-paused .booking-fade-in-delay,
+.booking-anim-paused .booking-slide-up,
+.booking-anim-paused .booking-underline {
+  animation-play-state: paused;
+}
+
+/* Slide-up for selection cards */
+@keyframes bookingSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.booking-slide-up {
+  animation: bookingSlideUp 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+.booking-delay-100 { animation-delay: 100ms; }
+.booking-delay-200 { animation-delay: 200ms; }
+.booking-delay-300 { animation-delay: 300ms; }
+.booking-delay-400 { animation-delay: 400ms; }
+.booking-delay-500 { animation-delay: 500ms; }
+
+/* Spin animation for loaders */
+@keyframes bookingSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.booking-spin {
+  animation: bookingSpin 1s linear infinite;
+}
+
+/* Zoom in for success/congrats cards */
+@keyframes bookingZoomIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.booking-zoom-in {
+  animation: bookingZoomIn 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+/* Tada (bounce/wiggle) for congratulations */
+@keyframes bookingTada {
+  0% { transform: scale(1); }
+  10%, 20% { transform: scale(0.9) rotate(-5deg); }
+  30%, 50%, 70%, 90% { transform: scale(1.1) rotate(5deg); }
+  40%, 60%, 80% { transform: scale(1.1) rotate(-5deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+.booking-tada {
+  animation: bookingTada 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.5s both;
+}
+
+/* Underline expand animation */
+@keyframes bookingUnderlineExpand {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.booking-underline {
+  transform-origin: center;
+  animation: bookingUnderlineExpand 0.7s ease-out 0.4s both;
+}
+
+/* Modal backdrop — dark translucent overlay only */
+.booking-modal-backdrop {
+  background-color: rgba(0, 0, 0, 0.6);
+}
+
+/* Modal slide-up transition — bottom sheet */
+.booking-modal-enter {
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.booking-modal-enter-active {
+  transform: translateY(0);
+}
+
+/* Modal sheet — layout container only, no visual */
+.booking-modal-sheet {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+/* Modal title — premium golden */
+.booking-modal-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 1.25rem;
+}
+
+/* Modal internal selection cards — floating on backdrop */
+.booking-modal-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  background: rgba(26, 26, 26, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.25s ease;
+}
+.booking-modal-item:hover {
+  border-color: var(--booking-primary, #fbb62c);
+  background: rgba(255, 255, 255, 0.08);
+  transform: translateX(2px);
+}
+.booking-modal-item:active {
+  transform: scale(0.98);
+}
+.booking-modal-item.active {
+  border-color: var(--booking-primary, #fbb62c);
+  border-width: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 0 12px rgba(251, 182, 44, 0.08);
+}
+
+/* Modal avatar/icon placeholder */
+.booking-modal-avatar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+}
+
+/* Modal scrollbar — premium styled */
+.booking-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--booking-primary, #fbb62c) rgba(30, 30, 30, 0.5);
+}
+.booking-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.booking-scrollbar::-webkit-scrollbar-track {
+  background: rgba(30, 30, 30, 0.5);
+  border-radius: 10px;
+}
+.booking-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--booking-primary, #fbb62c);
+  border-radius: 10px;
+  border: 1px solid rgba(30, 30, 30, 0.5);
+}
+
+/* Content blur when modal is open */
+.booking-content-blur {
+  filter: blur(6px) brightness(0.7);
+  transition: filter 0.35s ease-in-out;
+  pointer-events: none;
+}
+
+/* Floating pill navbar */
+.booking-navbar {
+  position: fixed;
+  bottom: calc(0.75rem + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  width: 92%;
+  max-width: 420px;
+  height: 52px;
+  padding: 6px;
+  border-radius: 9999px;
+  background: var(--booking-navbar-bg, rgba(20, 20, 20, 0.85));
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+}
+
+/* Navbar gradient fade */
+.booking-nav-fade {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 7rem;
+  pointer-events: none;
+  z-index: 40;
+}
+
+/* Navbar sliding indicator */
+.booking-nav-indicator {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 9999px;
+  transition: left 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+              width 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+  pointer-events: none;
+}
+
+/* Navbar item */
+.booking-nav-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  height: 100%;
+  text-decoration: none;
+  transition: all 0.3s ease-out;
+  z-index: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.booking-nav-item span {
+  font-size: 0.6rem;
+  margin-top: 2px;
+  opacity: 0.7;
+  transition: all 0.3s ease-out;
+}
+.booking-nav-item.active span {
+  opacity: 1;
+  font-weight: 600;
+}
+.booking-nav-item:not(.active):active {
+  transform: scale(0.9);
+}
+
+/* Selection item card — glassmorphism with progressive unlock */
+.booking-selection-item {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transition: all 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  cursor: pointer;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.booking-selection-item.selected {
+  border-color: var(--booking-primary, #00BF62);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.booking-selection-item:hover:not(.disabled) {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.12);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.booking-selection-item:active:not(.disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Disabled / locked state — visually "off" */
+.booking-selection-item.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: none;
+  transform: none;
+}
+.booking-selection-item.disabled:hover {
+  border-color: rgba(255, 255, 255, 0.04);
+  transform: none;
+}
+.booking-selection-item.disabled svg {
+  color: rgba(255, 255, 255, 0.2) !important;
+}
+
+/* Booking button — active/inactive states */
+.booking-btn-inactive {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: not-allowed;
+  transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+.booking-btn-active {
+  transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  border: none;
+  cursor: pointer;
+}
+.booking-btn-active:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+.booking-btn-active:active {
+  transform: translateY(0);
+  filter: brightness(0.95);
+}
+
+/* Calendar system */
+.booking-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+  place-items: center;
+}
+.booking-calendar-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  cursor: pointer;
+}
+.booking-calendar-day:hover:not(.unavailable) {
+  background-color: #4b5563;
+}
+.booking-calendar-day.unavailable {
+  color: #6b7280;
+  cursor: not-allowed;
+}
+.booking-calendar-day.today {
+  border: 2px solid var(--booking-primary, #00BF62);
+}
+
+/* Time slots */
+.booking-time-slot {
+  border: 1px solid #444;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+.booking-time-slot:hover:not(.disabled) {
+  border-color: var(--booking-primary, #00BF62);
+  background-color: rgba(255,255,255,0.05);
+}
+.booking-time-slot.disabled {
+  color: #6b7280;
+  cursor: not-allowed;
+  border-color: #374151;
+}
+
+/* Plan card */
+.booking-plan-card {
+  border: 1px solid #444;
+  transition: border-color 0.3s ease;
+}
+.booking-plan-card:hover {
+  border-color: var(--booking-primary, #00BF62);
+}
+.booking-plan-card.popular {
+  border: 2px solid var(--booking-primary, #00BF62);
+}
+
+/* History card */
+.booking-history-card {
+  background-color: #222222;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  border: 1px solid #444;
+}
+
+/* Auth form inputs */
+.booking-auth input,
+.booking-auth textarea,
+.booking-auth select {
+  background-color: #333;
+  border: 1px solid #555;
+  color: white;
+}
+.booking-auth input:focus,
+.booking-auth textarea:focus,
+.booking-auth select:focus {
+  border-color: var(--booking-primary, #00BF62);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--booking-primary, #00BF62) 40%, transparent);
+}
+
+/* Rating stars */
+.booking-star {
+  cursor: pointer;
+  transition: color 0.2s ease-in-out;
+}
+
+/* Progress bar animation */
+.booking-progress-bar {
+  transition: width 1s ease-out;
+}
+
+/* Service usage icons */
+.booking-service-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  height: 60px;
+}
+
+/* Credit card expandable */
+.booking-credit-details {
+  transition: all 0.5s ease-in-out;
+  max-height: 0;
+  overflow: hidden;
+}
+.booking-credit-details.expanded {
+  max-height: 500px;
+}
+
+/* Video background for hero */
+.booking-video-bg {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  overflow: hidden;
+}
+.booking-video-bg video,
+.booking-video-bg img {
+  min-width: 100%; min-height: 100%;
+  width: auto; height: auto;
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  object-fit: cover;
+}
+.booking-video-overlay {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+/* Hide scrollbar */
+.booking-hide-scrollbar::-webkit-scrollbar { display: none; }
+.booking-hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Custom scrollbar for service lists */
+.booking-scrollbar::-webkit-scrollbar { width: 8px; }
+.booking-scrollbar::-webkit-scrollbar-track { background: #1e1e1e; border-radius: 10px; }
+.booking-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--booking-primary, #00BF62);
+  border-radius: 10px;
+  border: 2px solid #1e1e1e;
+}
+
+/* Footer section */
+.booking-footer {
+  padding: 2rem 1.5rem;
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+  text-align: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.booking-footer a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  transition: all 0.2s ease;
+}
+.booking-footer a:hover {
+  border-color: var(--booking-primary, #00BF62);
+  transform: scale(1.1);
+}
+
+/* WhatsApp floating button */
+.booking-whatsapp-float {
+  position: fixed;
+  right: 1rem;
+  bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #25D366;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(37, 211, 102, 0.4);
+  z-index: 45;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.booking-whatsapp-float:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 24px rgba(37, 211, 102, 0.5);
+}
+.booking-whatsapp-float:active {
+  transform: scale(0.95);
+}
+.booking-whatsapp-float svg {
+  width: 26px;
+  height: 26px;
+  color: white;
 }

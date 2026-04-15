@@ -3,6 +3,7 @@ import { Star, Plus, X, User, TrendingUp, Calendar, ChevronRight, BarChart3, Use
 import { TeamMember, PerformanceReview, PerformanceCriterion } from '../types';
 import { CustomDropdown } from '../components/CustomDropdown';
 import { useAppData } from '../hooks/useAppData'; // MIGRATED
+import { useFilteredData } from '../hooks/useFilteredData';
 import { usePermissions } from '../hooks/usePermissions';
 import { useConfirm } from '../components/ConfirmModal';
 import { useToast } from '../components/Toast';
@@ -67,7 +68,8 @@ const SCORE_LABELS: Record<number, { label: string; color: string }> = {
 
 export const Avaliacoes: React.FC<AvaliacoesProps> = ({ currentUser, isDarkMode }) => {
     // Use useAppData for state management
-    const { reviews, members, setReviews, refresh, loading } = useAppData();
+    const { reviews, setReviews, refresh, loading } = useAppData();
+    const { filteredMembers: members } = useFilteredData();
 
     // Guard: prevent crash if currentUser is not loaded yet or data is loading
     if (!currentUser || loading) {

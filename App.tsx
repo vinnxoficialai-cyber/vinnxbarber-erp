@@ -42,10 +42,12 @@ import { Expedientes } from './pages/Expedientes';
 import { Relatorios } from './pages/Relatorios';
 import { Unidades } from './pages/Unidades';
 import NotaFiscal from './pages/NotaFiscal';
-import { SiteEditor } from './pages/SiteEditor';
+import { StoreCustomizer } from './pages/StoreCustomizer';
 import { UnitProvider } from './context/UnitContext';
 import { useAppData } from './hooks/useAppData';
+import { useFilteredData } from './hooks/useFilteredData';
 import { useDynamicFavicon } from './hooks/useDynamicFavicon';
+import { useClientReassignment, getClientUnitSettings } from './hooks/useClientReassignment';
 import { Client, Contract, TeamMember, PersonalTask, Budget, ProjectTask, Service, CompanySettings, Transaction, BankAccount } from './types';
 
 // Placeholder components for routes not fully implemented in this demo
@@ -180,11 +182,21 @@ const App: React.FC = () => {
     settings, setAppSettings
   } = useAppData();
 
+  // Unit-filtered data: replaces raw lists with filtered versions based on selected unit
+  const {
+    filteredClients, filteredMembers, filteredServices,
+    filteredTransactions, filteredCalendarEvents,
+    filteredComandas, filteredProducts, selectedUnitId,
+  } = useFilteredData();
+
   // Alias for backward compatibility
   const tasks = personalTasks;
   const setTasks = setPersonalTasks;
   const accounts = bankAccounts;
   const setAccounts = setBankAccounts;
+
+  // Client auto-reassignment (runs every 5 min)
+  useClientReassignment();
 
   // Helper for company settings (use context settings, fallback to empty defaults only when fully loaded)
   const companySettings = settings?.company || {
@@ -349,9 +361,9 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute path="/clients" currentUser={currentUser}>
                       <Clients
-                        clients={clients}
+                        clients={filteredClients}
                         setClients={setClients}
-                        members={members}
+                        members={filteredMembers}
                         contracts={contracts}
                         isDarkMode={isDarkMode}
                         currentUser={currentUser}
@@ -364,7 +376,7 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute path="/finance" currentUser={currentUser}>
                       <Finance
-                        transactions={transactions}
+                        transactions={filteredTransactions}
                         setTransactions={setTransactions}
                         isDarkMode={isDarkMode}
                       />
@@ -376,7 +388,7 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute path="/passivo-circulante" currentUser={currentUser}>
                       <PassivoCirculante
-                        transactions={transactions}
+                        transactions={filteredTransactions}
                         setTransactions={setTransactions}
                         isDarkMode={isDarkMode}
                       />
@@ -388,7 +400,7 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute path="/ativos-circulantes" currentUser={currentUser}>
                       <AtivosCirculantes
-                        transactions={transactions}
+                        transactions={filteredTransactions}
                         setTransactions={setTransactions}
                         isDarkMode={isDarkMode}
                       />
@@ -406,9 +418,9 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute path="/team" currentUser={currentUser}>
                       <Team
-                        members={members}
+                        members={filteredMembers}
                         setMembers={setMembers}
-                        clients={clients}
+                        clients={filteredClients}
                         contracts={contracts}
                         isDarkMode={isDarkMode}
                         currentUser={currentUser}
@@ -423,9 +435,9 @@ const App: React.FC = () => {
                       <Contracts
                         contracts={contracts}
                         setContracts={setContracts}
-                        clients={clients}
-                        members={members}
-                        transactions={transactions}
+                        clients={filteredClients}
+                        members={filteredMembers}
+                        transactions={filteredTransactions}
                         setTransactions={setTransactions}
                         onAddNotification={handleAddNotification}
                         isDarkMode={isDarkMode}
@@ -441,7 +453,7 @@ const App: React.FC = () => {
                       <Tasks
                         tasks={tasks}
                         setTasks={setTasks}
-                        members={members}
+                        members={filteredMembers}
                         currentUser={currentUser}
                         isDarkMode={isDarkMode}
                       />
@@ -455,8 +467,8 @@ const App: React.FC = () => {
                       <Budgets
                         budgets={budgets}
                         setBudgets={setBudgets}
-                        clients={clients}
-                        services={services}
+                        clients={filteredClients}
+                        services={filteredServices}
                         isDarkMode={isDarkMode}
                       />
                     </ProtectedRoute>
@@ -467,7 +479,7 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute path="/services" currentUser={currentUser}>
                       <Services
-                        services={services}
+                        services={filteredServices}
                         setServices={setServices}
                         isDarkMode={isDarkMode}
                         currentUser={currentUser}
@@ -499,7 +511,7 @@ const App: React.FC = () => {
                 />
                 <Route path="/pipeline" element={
                   <ProtectedRoute path="/pipeline" currentUser={currentUser}>
-                    <Pipeline clients={clients} setClients={setClients} isDarkMode={isDarkMode} currentUser={currentUser} />
+                    <Pipeline clients={filteredClients} setClients={setClients} isDarkMode={isDarkMode} currentUser={currentUser} />
                   </ProtectedRoute>
                 } />
                 <Route path="/contas-bancarias" element={
@@ -514,32 +526,32 @@ const App: React.FC = () => {
                 } />
                 <Route path="/avaliacoes" element={
                   <ProtectedRoute path="/avaliacoes" currentUser={currentUser}>
-                    <Avaliacoes members={members} currentUser={currentUser!} isDarkMode={isDarkMode} />
+                    <Avaliacoes members={filteredMembers} currentUser={currentUser!} isDarkMode={isDarkMode} />
                   </ProtectedRoute>
                 } />
                 <Route path="/banco-horas" element={
                   <ProtectedRoute path="/banco-horas" currentUser={currentUser}>
-                    <BancoHoras members={members} currentUser={currentUser!} isDarkMode={isDarkMode} />
+                    <BancoHoras members={filteredMembers} currentUser={currentUser!} isDarkMode={isDarkMode} />
                   </ProtectedRoute>
                 } />
                 <Route path="/ferias" element={
                   <ProtectedRoute path="/ferias" currentUser={currentUser}>
-                    <Ferias members={members} currentUser={currentUser!} isDarkMode={isDarkMode} />
+                    <Ferias members={filteredMembers} currentUser={currentUser!} isDarkMode={isDarkMode} />
                   </ProtectedRoute>
                 } />
                 <Route path="/credenciais" element={
                   <ProtectedRoute path="/credenciais" currentUser={currentUser}>
-                    <Credenciais clients={clients} currentUser={currentUser!} isDarkMode={isDarkMode} />
+                    <Credenciais clients={filteredClients} currentUser={currentUser!} isDarkMode={isDarkMode} />
                   </ProtectedRoute>
                 } />
                 <Route path="/metas" element={
                   <ProtectedRoute path="/metas" currentUser={currentUser}>
-                    <Metas members={members} contracts={contracts} clients={clients} isDarkMode={isDarkMode} currentUser={currentUser} />
+                    <Metas members={filteredMembers} contracts={contracts} clients={filteredClients} isDarkMode={isDarkMode} currentUser={currentUser} />
                   </ProtectedRoute>
                 } />
                 <Route path="/folha-pagamento" element={
                   <ProtectedRoute path="/folha-pagamento" currentUser={currentUser}>
-                    <FolhaPagamento members={members} isDarkMode={isDarkMode} currentUser={currentUser} />
+                    <FolhaPagamento members={filteredMembers} isDarkMode={isDarkMode} currentUser={currentUser} />
                   </ProtectedRoute>
                 } />
                 <Route path="/assinaturas" element={
@@ -579,9 +591,9 @@ const App: React.FC = () => {
                     <NotaFiscal isDarkMode={isDarkMode} currentUser={currentUser} />
                   </ProtectedRoute>
                 } />
-                <Route path="/editor-site" element={
-                  <ProtectedRoute path="/editor-site" currentUser={currentUser}>
-                    <SiteEditor isDarkMode={isDarkMode} currentUser={currentUser} />
+                <Route path="/personalizar" element={
+                  <ProtectedRoute path="/personalizar" currentUser={currentUser}>
+                    <StoreCustomizer isDarkMode={isDarkMode} currentUser={currentUser} />
                   </ProtectedRoute>
                 } />
                 <Route path="*" element={<Navigate to="/" replace />} />

@@ -43,6 +43,16 @@ export interface Client {
   totalVisits?: number; // Auto-incremented on comanda close
   gender?: 'M' | 'F' | 'O'; // M=Masculino, F=Feminino, O=Outro
   cpfCnpj?: string; // CPF or CNPJ document number
+  unitId?: string; // Multi-unit: unidade principal do cliente
+
+  // Public Booking App Fields
+  authUserId?: string; // FK to auth.users(id) — Supabase Auth link
+  referralCode?: string; // Unique referral code for this client
+  referralCredits?: number; // Accumulated referral credits (R$)
+  referralsMade?: number; // Number of successful referrals
+  redeemedGoals?: string[]; // IDs of referral goals already redeemed
+  profilePic?: string; // Profile picture URL
+  notificationPreferences?: { email?: boolean; whatsapp?: boolean };
 }
 
 export interface TeamMember {
@@ -137,6 +147,7 @@ export interface Transaction {
   status: 'Completed' | 'Pending' | 'Overdue';
   clientId?: string;
   accountId?: string; // Link to BankAccount (Credit Card purchase)
+  unitId?: string; // Multi-unit: unidade da transacao
 }
 
 export interface FinancialRecord {
@@ -182,6 +193,15 @@ export interface CalendarEvent {
   source?: 'manual' | 'app' | 'website';  // Booking origin
   status?: 'confirmed' | 'arrived' | 'in_service' | 'completed' | 'no_show' | 'cancelled'; // Lifecycle
   comandaId?: string;   // FK comandas.id — linked comanda (set when comanda is auto-created)
+
+  // Public Booking App Fields
+  clientName?: string;       // Client display name
+  clientId?: string;         // FK clients.id
+  finalPrice?: number;       // Final price after discounts/plan coverage
+  rating?: number;           // Client rating 1-5
+  ratingComment?: string;    // Client review comment
+  usedReferralCredit?: boolean; // Whether referral credit was used
+  usedInPlan?: boolean;          // Whether this appointment was covered by a subscription plan
 }
 
 export interface PersonalTask {
@@ -988,6 +1008,15 @@ export interface UnitMember {
   createdAt?: string;
 }
 
+// Client Unit Settings (auto-reassignment config)
+export interface ClientUnitSettings {
+  autoReassignEnabled: boolean;       // Ativa auto-reatribuicao
+  reassignWindowDays: number;         // Janela de avaliacao (padrao: 60)
+  reassignMinAppointments: number;    // Minimo de agendamentos (padrao: 3)
+  reassignThresholdPercent: number;   // % minimo para trocar (padrao: 60)
+  notifyOnReassign: boolean;          // Notificar ao reatribuir
+}
+
 // ============ NOTA FISCAL TYPES ============
 
 export type InvoiceDocType = 'nfse' | 'nfe' | 'nfce';
@@ -1173,4 +1202,30 @@ export interface FiscalSettings {
   pisRate?: number;
   cofinsRate?: number;
   updatedAt?: string;
+}
+
+// ============ PUBLIC BOOKING APP TYPES ============
+
+export interface ReferralGoal {
+  id: string;
+  target: number;           // Number of referrals needed (e.g., 5, 8, 12)
+  prize: string;            // Prize description (e.g., "Hidratação Grátis")
+  icon: string;             // Lucide icon name (e.g., "droplets", "gift", "bottle")
+  serviceId?: string;       // FK to services.id — if redeemable as service booking
+  active: boolean;
+  createdAt?: string;
+}
+
+export interface Coupon {
+  id: string;
+  code: string;             // Unique coupon code (e.g., "VS10")
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;    // Percentage (0-100) or fixed amount in R$
+  minAmount?: number;       // Minimum order amount to apply
+  maxUses?: number;         // Max total uses (null = unlimited)
+  usedCount: number;        // Current use count
+  validFrom?: string;       // ISO timestamp
+  validUntil?: string;      // ISO timestamp (null = no expiry)
+  active: boolean;
+  createdAt?: string;
 }

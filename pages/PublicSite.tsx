@@ -1,0 +1,2679 @@
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { supabase } from "../lib/supabase";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useStoreSettings } from "../hooks/useStoreCustomization";
+import {
+  Calendar, Clock, History, Star, User, ChevronRight, ChevronLeft,
+  MapPin, Scissors, Store, Loader2, LogOut, Check, X, AlertTriangle,
+  Gift, Share2, Bell, Edit3, Lock, Eye, EyeOff, Camera, CreditCard,
+  Phone, Mail, Award, Heart, Settings, ChevronDown, ChevronUp,
+  MessageCircle, Copy, ExternalLink, Pause, XCircle, RefreshCw,
+} from "lucide-react";
+import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscription } from "../types";
+
+// ============================================================
+// STANDALONE QueryClient for PublicSite (no ERP providers)
+// ============================================================
+const publicQueryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 1000 * 60 * 5 } },
+});
+
+// ============================================================
+// WRAPPER — provides its own QueryClient
+// ============================================================
+export default function PublicSite() {
+  return (
+    <QueryClientProvider client={publicQueryClient}>
+      <PublicSiteApp />
+    </QueryClientProvider>
+  );
+}
+
+// ============================================================
+// TYPES
+// ============================================================
+type ViewName = "agendar" | "historico" | "planos" | "perfil";
+type ModalPosition = "bottom" | "center" | "fullscreen";
+
+interface SelectionState {
+  unit: any | null;
+  barber: any | null;
+  service: Service | null;
+  date: Date | null;
+  time: string | null;
+  isFromCreditRedemption?: boolean;
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function formatPhone(value: string): string {
+  const v = value.replace(/\D/g, "").substring(0, 11);
+  if (v.length <= 2) return v.length > 0 ? `(${v}` : "";
+  if (v.length <= 3) return `(${v.substring(0, 2)}) ${v.substring(2)}`;
+  if (v.length <= 7) return `(${v.substring(0, 2)}) ${v.substring(2, 3)} ${v.substring(3)}`;
+  return `(${v.substring(0, 2)}) ${v.substring(2, 3)} ${v.substring(3, 7)}-${v.substring(7)}`;
+}
+
+function formatBirthdate(value: string): string {
+  let v = value.replace(/\D/g, "").substring(0, 8);
+  if (v.length > 2) v = `${v.substring(0, 2)}/${v.substring(2)}`;
+  if (v.length > 5) v = `${v.substring(0, 5)}/${v.substring(5, 9)}`;
+  return v;
+}
+
+function generateTimeSlots(start: string, end: string, interval: number): string[] {
+  const slots: string[] = [];
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  let totalMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  while (totalMin < endMin) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    slots.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    totalMin += interval;
+  }
+  return slots;
+}
+
+function isInBreak(slot: string, breakStart?: string, breakEnd?: string): boolean {
+  if (!breakStart || !breakEnd) return false;
+  return slot >= breakStart && slot < breakEnd;
+}
+
+function addMinutesToTime(time: string, minutes: number): string {
+  const [h, m] = time.split(":").map(Number);
+  const total = h * 60 + m + minutes;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function copyToClipboard(text: string): boolean {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.top = "-9999px";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
+
+const WEEKDAYS_PT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const WEEKDAYS_FULL = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+const MONTHS_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+// ============================================================
+// MAIN APP COMPONENT
+// ============================================================
+function PublicSiteApp() {
+  const g = useStoreSettings();
+  const isPreview = typeof window !== "undefined" && window.parent !== window;
+
+  // --- Theme from StoreCustomizer ---
+  const primary = g("theme.primary_color", "#00BF62");
+  const bgColor = g("theme.bg_color", "#111111");
+  const cardBg = g("theme.card_bg_color", "#222222");
+  const textColor = g("theme.text_color", "#ffffff");
+  const fontFamily = g("theme.font_family", "Inter, sans-serif");
+  const headingFont = g("theme.heading_font", "") || fontFamily;
+  const btnRadius = g("theme.btn_radius", "8");
+  const btnBg = g("theme.btn_bg_color", "") || primary;
+  const btnText = g("theme.btn_text_color", "") || bgColor;
+  const cardRadius = g("theme.card_radius", "12");
+  const cardShadow = g("theme.card_shadow", "true") !== "false";
+  const navbarBgColor = g("navbar.bg_color", "");
+  const navbarActiveColor = g("navbar.active_color", "") || primary;
+  const navbarShowLabels = g("navbar.show_labels", "true") !== "false";
+
+  // --- Navbar tab configuration ---
+  const defaultTab = g("navbar.default_tab", "agendar") as ViewName;
+  const tabDefs = useMemo(() => {
+    const raw = [
+      { key: "agendar" as ViewName, icon: Calendar, defaultLabel: "Agendar" },
+      { key: "historico" as ViewName, icon: History, defaultLabel: "Histórico" },
+      { key: "planos" as ViewName, icon: Star, defaultLabel: "Planos" },
+      { key: "perfil" as ViewName, icon: User, defaultLabel: "Perfil" },
+    ];
+    // Apply visibility, labels, and order
+    let tabs = raw
+      .filter(t => g(`navbar.tab_${t.key}_visible`, "true") !== "false")
+      .map(t => ({ ...t, label: g(`navbar.tab_${t.key}_label`, "") || t.defaultLabel }));
+    // Apply custom order
+    const orderStr = g("navbar.tab_order", "");
+    if (orderStr) {
+      try {
+        const order: string[] = JSON.parse(orderStr);
+        tabs.sort((a, b) => {
+          const ai = order.indexOf(a.key); const bi = order.indexOf(b.key);
+          return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+        });
+      } catch { /* use default order */ }
+    }
+    // Ensure at least 1 tab is visible
+    if (tabs.length === 0) tabs = [{ ...raw[0], label: raw[0].defaultLabel }];
+    return tabs;
+  }, [g]);
+
+  // --- State ---
+  const [activeView, setActiveView] = useState<ViewName>(defaultTab);
+  const [showLoading, setShowLoading] = useState(true);
+  const [loadingFading, setLoadingFading] = useState(false);
+  const [animateReady, setAnimateReady] = useState(false);
+
+  // Auth
+  const [authUser, setAuthUser] = useState<{ id: string; email: string } | null>(null);
+  const [clientProfile, setClientProfile] = useState<any>(null);
+
+  // Data
+  const [units, setUnits] = useState<any[]>([]);
+  const [barbers, setBarbers] = useState<any[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
+  const [schedules, setSchedules] = useState<WorkSchedule[]>([]);
+  const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]);
+  const [availabilityEvents, setAvailabilityEvents] = useState<any[]>([]); // ALL events for slot conflict check
+  const [clientSubscription, setClientSubscription] = useState<Subscription | null>(null);
+  const [goals, setGoals] = useState<any[]>([]);
+  const [needsReview, setNeedsReview] = useState(false);
+
+  // Selection
+  const [selection, setSelection] = useState<SelectionState>({
+    unit: null, barber: null, service: null, date: null, time: null,
+  });
+
+  // Modal
+  const [modalContent, setModalContent] = useState<React.ReactNode | null>(null);
+  const [modalPosition, setModalPosition] = useState<ModalPosition>("bottom");
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalIsAuth, setModalIsAuth] = useState(false);
+
+  // Navbar
+  const navRef = useRef<HTMLDivElement>(null);
+  const indicatorRef = useRef<HTMLDivElement>(null);
+
+  // -------- CSS Custom Properties --------
+  const cssVars = {
+    "--booking-primary": primary,
+    "--booking-bg": bgColor,
+    "--booking-card": cardBg,
+    "--booking-text": textColor,
+    "--booking-btn-radius": `${btnRadius}px`,
+    "--booking-btn-bg": btnBg,
+    "--booking-btn-text": btnText,
+    "--booking-card-radius": `${cardRadius}px`,
+    "--booking-navbar-bg": navbarBgColor || undefined,
+  } as React.CSSProperties;
+
+  // -------- SEO --------
+  useEffect(() => {
+    const seoTitle = g("seo.title", "");
+    if (seoTitle) document.title = seoTitle;
+    const seoDesc = g("seo.description", "");
+    if (seoDesc) {
+      let meta = document.querySelector('meta[name="description"]') as HTMLMetaElement;
+      if (!meta) { meta = document.createElement("meta"); meta.name = "description"; document.head.appendChild(meta); }
+      meta.content = seoDesc;
+    }
+  }, [g]);
+
+  // ============================================================
+  // AUTH LISTENER (Supabase direct — NOT authService)
+  // ============================================================
+  useEffect(() => {
+    if (isPreview) return; // No auth in preview iframe
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.user) {
+        setAuthUser({ id: data.session.user.id, email: data.session.user.email || "" });
+        loadClientProfile(data.session.user.id);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setAuthUser({ id: session.user.id, email: session.user.email || "" });
+        loadClientProfile(session.user.id);
+      } else {
+        setAuthUser(null);
+        setClientProfile(null);
+        setClientSubscription(null);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [isPreview]);
+
+  async function loadClientProfile(authId: string) {
+    const { data } = await supabase.from("clients").select("*").eq("authUserId", authId).single();
+    if (data) {
+      setClientProfile(data);
+      // Load subscription
+      const { data: subs } = await supabase
+        .from("subscriptions")
+        .select("*, subscription_plans(*)")
+        .eq("clientId", data.id)
+        .eq("status", "active")
+        .limit(1);
+      if (subs && subs.length > 0) {
+        const s = subs[0];
+        setClientSubscription({
+          ...s,
+          plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined,
+        });
+      }
+      // Load client events
+      loadClientEvents(data.name, data.id);
+    } else {
+      // Auto-create client record if missing (e.g. previous signup insert failed)
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const userName = user.user_metadata?.name || user.email?.split("@")[0] || "Cliente";
+        const referralCode = userName.split(" ")[0].toUpperCase().substring(0, 4) + Math.floor(1000 + Math.random() * 9000);
+        const newClient = {
+          id: crypto.randomUUID(),
+          name: userName,
+          email: user.email || "",
+          phone: user.user_metadata?.phone || "",
+          company: "",
+          status: "ACTIVE",
+          monthlyValue: 0, setupValue: 0, totalValue: 0, monthsActive: 0,
+          authUserId: user.id,
+          referralCode,
+          referralCredits: 0,
+          referralsMade: 0,
+          updatedAt: new Date().toISOString(),
+        };
+        const { error: insertErr } = await supabase.from("clients").insert(newClient);
+        if (!insertErr) {
+          setClientProfile(newClient);
+          loadClientEvents(userName, newClient.id);
+        } else {
+          console.error("Auto-create client failed:", insertErr);
+        }
+      }
+    }
+  }
+
+  async function loadClientEvents(clientName: string, clientId?: string) {
+    const cId = clientId || clientProfile?.id;
+    let query = supabase.from("calendar_events").select("*");
+    if (cId) {
+      // Prioritize clientId for accurate scoping (no cross-client data leak)
+      query = query.eq("clientId", cId);
+    } else if (clientName) {
+      // Fallback for legacy events without clientId
+      query = query.eq("clientName", clientName);
+    }
+    const { data } = await query.order("date", { ascending: false });
+    if (data) {
+      const mapped = data.map((row: any) => {
+        const d = row.date ? new Date(row.date) : new Date();
+        return {
+          ...row,
+          client: row.clientName,
+          date: d.getDate(),
+          month: d.getMonth(),
+          year: d.getFullYear(),
+        };
+      });
+      setAllEvents(mapped);
+      // Check for pending reviews
+      const hasPending = mapped.some((e: any) => {
+        const eventDate = new Date(e.year, e.month, e.date);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        return eventDate < today && !e.rating && e.status !== "cancelled";
+      });
+      setNeedsReview(hasPending);
+    }
+  }
+
+  // ============================================================
+  // DATA FETCHING
+  // ============================================================
+  useEffect(() => {
+    (async () => {
+      const [unitsRes, barbersRes, servicesRes, plansRes, schedulesRes, goalsRes] = await Promise.all([
+        supabase.from("units").select("*"),
+        supabase.from("users").select("id, name, email, avatar, role, specialties, station").eq("role", "Barber"),
+        supabase.from("services").select("*").eq("active", true),
+        supabase.from("subscription_plans").select("*").eq("active", true),
+        supabase.from("work_schedules").select("*"),
+        supabase.from("referral_goals").select("*").eq("active", true),
+      ]);
+      if (unitsRes.data) setUnits(unitsRes.data);
+      if (barbersRes.data) {
+        // Enrich barbers with unit membership
+        const { data: unitMembers } = await supabase.from("unit_members").select("userId, unitId");
+        const barberData = barbersRes.data.map((b: any) => {
+          const memberOf = (unitMembers || []).filter((um: any) => um.userId === b.id).map((um: any) => um.unitId);
+          return { ...b, unitIds: memberOf.length > 0 ? memberOf : null };
+        });
+        setBarbers(barberData);
+      }
+      if (servicesRes.data) setServices(servicesRes.data.map((s: any) => ({ ...s, price: Number(s.price) || 0, duration: Number(s.duration) || 30 })));
+      if (plansRes.data) setPlans(plansRes.data.map((p: any) => ({ ...p, price: Number(p.price) || 0, benefits: p.benefits || [] })));
+      if (schedulesRes.data) setSchedules(schedulesRes.data);
+      if (goalsRes.data) setGoals(goalsRes.data);
+      else if (goalsRes.error) console.warn("referral_goals table may not exist yet:", goalsRes.error.message);
+
+      // Load ALL events for availability checking (not just client's)
+      const { data: allEvData } = await supabase.from("calendar_events").select("id, date, startTime, endTime, barberId, unitId, status, duration").neq("status", "cancelled");
+      if (allEvData) {
+        const mapped = allEvData.map((row: any) => {
+          const d = row.date ? new Date(row.date) : new Date();
+          return { ...row, date: d.getDate(), month: d.getMonth(), year: d.getFullYear() };
+        });
+        setAvailabilityEvents(mapped);
+      }
+    })();
+  }, []);
+
+  // ============================================================
+  // LOADING SCREEN
+  // ============================================================
+  useEffect(() => {
+    const dur = parseInt(g("loading.duration", "2000"), 10) || 2000;
+    const t1 = setTimeout(() => setLoadingFading(true), dur);
+    const t2 = setTimeout(() => {
+      setShowLoading(false);
+      // Trigger view animations only AFTER loading screen is gone
+      requestAnimationFrame(() => setAnimateReady(true));
+    }, dur + 700);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
+
+  // ============================================================
+  // MODAL SYSTEM
+  // ============================================================
+  const openModal = useCallback((content: React.ReactNode, pos: ModalPosition = "bottom", isAuth = false) => {
+    setModalContent(content);
+    setModalPosition(pos);
+    setModalIsAuth(isAuth);
+    setModalVisible(false);
+    requestAnimationFrame(() => requestAnimationFrame(() => setModalVisible(true)));
+  }, []);
+
+  const closeModal = useCallback((callback?: () => void) => {
+    setModalVisible(false);
+    setTimeout(() => {
+      setModalContent(null);
+      setModalIsAuth(false);
+      if (callback) callback();
+    }, 300);
+  }, []);
+
+  // ============================================================
+  // NAVBAR INDICATOR
+  // ============================================================
+  const updateIndicator = useCallback(() => {
+    if (!navRef.current || !indicatorRef.current) return;
+    const active = navRef.current.querySelector(".active") as HTMLElement;
+    if (!active) return;
+    const navRect = navRef.current.getBoundingClientRect();
+    const rect = active.getBoundingClientRect();
+    indicatorRef.current.style.left = `${rect.left - navRect.left}px`;
+    indicatorRef.current.style.width = `${rect.width}px`;
+  }, []);
+
+  useEffect(() => {
+    updateIndicator();
+    window.addEventListener("resize", updateIndicator);
+    return () => window.removeEventListener("resize", updateIndicator);
+  }, [activeView, updateIndicator]);
+
+  // ============================================================
+  // AUTH MODALS
+  // ============================================================
+  function showLoginModal(onSuccess?: () => void) {
+    openModal(<LoginForm g={g} primary={primary} onClose={closeModal} onSwitch={(v: string) => { closeModal(() => { if (v === "signup") showSignupModal(onSuccess); else showForgotModal(); }); }} onSuccess={onSuccess} />, "center", true);
+  }
+
+  function showSignupModal(onSuccess?: () => void) {
+    openModal(<SignupForm g={g} primary={primary} onClose={closeModal} onSwitch={() => { closeModal(() => showLoginModal(onSuccess)); }} onSuccess={onSuccess} />, "center", true);
+  }
+
+  function showForgotModal() {
+    openModal(<ForgotForm g={g} primary={primary} onClose={closeModal} onSwitch={() => { closeModal(() => showLoginModal()); }} />, "center", true);
+  }
+
+  // ============================================================
+  // BOOKING FLOW
+  // ============================================================
+  const maxAdvDays = parseInt(g("booking.max_advance_days", "30"), 10);
+  const maxOpenAppts = parseInt(g("booking.max_open_appointments", "2"), 10);
+  const slotInterval = parseInt(g("booking.slot_interval", "30"), 10);
+  const closedDays = g("booking.closed_days", "0").split(",").map(Number);
+  const showPrices = g("booking.show_prices", "true") !== "false";
+  const showDuration = g("booking.show_duration", "true") !== "false";
+  const allowNoPref = g("booking.allow_no_preference", "true") !== "false";
+  const minAdvanceHours = parseInt(g("booking.min_advance_hours", "0"), 10);
+  const blockSameDay = g("booking.block_same_day", "false") === "true";
+  const maxPerBarberDay = parseInt(g("booking.max_per_barber_day", "0"), 10);
+  const cancellationHours = parseInt(g("booking.cancellation_hours", "0"), 10);
+  const rescheduleHours = parseInt(g("booking.reschedule_hours", "0"), 10);
+  const defaultStartTime = g("booking.default_start_time", "08:00");
+  const defaultEndTime = g("booking.default_end_time", "19:00");
+  const defaultBreakStart = g("booking.default_break_start", "12:00");
+  const defaultBreakEnd = g("booking.default_break_end", "13:00");
+  const confirmationMessage = g("booking.confirmation_message", "");
+
+  function updateSelection(patch: Partial<SelectionState>) {
+    setSelection((s) => ({ ...s, ...patch }));
+  }
+
+  function resetSelection() {
+    setSelection({ unit: null, barber: null, service: null, date: null, time: null });
+  }
+
+  // === Unit modal ===
+  function showUnitModal() {
+    openModal(
+      <div className="booking-modal-sheet p-5 pb-8">
+        <h3 className="booking-modal-title" style={{ color: primary }}>{g("booking.modal_title_unit", "Escolha uma unidade")}</h3>
+        <div className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar pr-1">
+          {units.map((u) => (
+            <div key={u.id} onClick={() => { updateSelection({ unit: u, barber: null, service: null, date: null, time: null }); closeModal(); }}
+              className={`booking-modal-item ${selection.unit?.id === u.id ? "active" : ""}`}>
+              {u.image ? <img src={u.image} alt={u.name} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" /> : <div className="booking-modal-avatar w-16 h-16 rounded-lg"><Store className="w-6 h-6 text-gray-500" /></div>}
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-white truncate">{u.name}</p>
+                <p className="text-xs text-gray-400 truncate"><MapPin className="w-3 h-3 inline mr-1" style={{ color: primary }} />{[u.address, u.city, u.state].filter(Boolean).join(", ")}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // === Barber modal ===
+  function showBarberModal() {
+    if (!selection.unit) return;
+    // Filter barbers by unit membership
+    const unitBarbers = barbers.filter((b: any) => {
+      // If unit_members data is loaded, filter by it
+      if (b.unitIds && Array.isArray(b.unitIds)) {
+        return b.unitIds.includes(selection.unit.id);
+      }
+      // Fallback: show all barbers (no unit_members data available)
+      return true;
+    });
+    const barberList = allowNoPref
+      ? [{ id: "__no_pref__", name: "Sem preferência", specialties: ["Será atribuído um profissional disponível"], avatar: null }, ...unitBarbers]
+      : unitBarbers;
+    openModal(
+      <div className="booking-modal-sheet p-5 pb-8">
+        <h3 className="booking-modal-title" style={{ color: primary }}>{g("booking.modal_title_barber", "Escolha um profissional")}</h3>
+        <div className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar pr-1">
+          {barberList.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">Nenhum profissional disponível nesta unidade.</p>
+          ) : barberList.map((b: any) => (
+            <div key={b.id} onClick={() => { updateSelection({ barber: b, service: selection.isFromCreditRedemption ? selection.service : null, date: null, time: null }); closeModal(); }}
+              className={`booking-modal-item ${selection.barber?.id === b.id ? "active" : ""}`}>
+              {b.avatar ? <img src={b.avatar} alt={b.name} className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
+                : <div className="booking-modal-avatar w-12 h-12 rounded-full"><User className="w-5 h-5 text-gray-500" /></div>}
+              <div className="flex-1">
+                <p className="font-semibold text-white">{b.name}</p>
+                <p className="text-xs text-gray-400">{b.specialties?.join(", ") || "Barbeiro"}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // === Service modal ===
+  function showServiceModal() {
+    if (!selection.barber) return;
+    if (selection.isFromCreditRedemption) return; // Lock during redemption
+    // Filter: online booking + unit scope (null unitId = global, matching unitId = unit-specific)
+    const filtered = services.filter((s) =>
+      s.allowsOnlineBooking !== false &&
+      (!s.unitId || s.unitId === selection.unit?.id)
+    );
+    openModal(
+      <div className="booking-modal-sheet p-5 pb-8">
+        <h3 className="booking-modal-title" style={{ color: primary }}>{g("booking.modal_title_service", "Escolha um serviço")}</h3>
+        <div className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar pr-1">
+          {filtered.map((s) => (
+            <div key={s.id} onClick={() => { updateSelection({ service: s, date: null, time: null }); closeModal(); }}
+              className={`booking-modal-item ${selection.service?.id === s.id ? "active" : ""}`}>
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                {s.image ? <img src={s.image} alt={s.name} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+                  : <div className="booking-modal-avatar w-12 h-12 rounded-lg"><Scissors className="w-5 h-5" style={{ color: primary }} /></div>}
+                <div className="min-w-0">
+                  <p className="font-semibold text-white truncate">{s.name}</p>
+                  <div className="flex gap-3 text-xs text-gray-400">
+                    {showDuration && <span><Clock className="w-3 h-3 inline mr-1" style={{ color: primary }} />{s.duration || 30} min</span>}
+                  </div>
+                </div>
+              </div>
+              {showPrices && <span className="font-bold text-lg flex-shrink-0" style={{ color: primary }}>R$ {s.price.toFixed(2)}</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // === Calendar+time modal ===
+  function showDateModal() {
+    if (!selection.service) return;
+    openModal(<CalendarModal
+      primary={primary} cardBg={cardBg} barber={selection.barber}
+      unitId={selection.unit?.id}
+      schedules={schedules} events={availabilityEvents} maxDays={maxAdvDays}
+      closedDays={closedDays} slotInterval={slotInterval} g={g}
+      onSelect={(date: Date, time: string) => { updateSelection({ date, time }); closeModal(); }}
+    />, "fullscreen");
+  }
+
+  // === Confirm booking ===
+  async function handleAgendarClick() {
+    if (!selection.unit || !selection.barber || !selection.service || !selection.date || !selection.time) return;
+
+    if (!authUser) {
+      showLoginModal();
+      return;
+    }
+
+    // Check max open
+    const openAppts = allEvents.filter((e) => e.status !== "cancelled" && e.status !== "completed");
+    if (openAppts.length >= maxOpenAppts) {
+      openModal(
+        <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+          <AlertTriangle className="w-12 h-12 mx-auto mb-4" style={{ color: "#eab308" }} />
+          <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Limite Atingido</h3>
+          <p className="text-gray-300 mb-6">Você já possui o máximo de {maxOpenAppts} agendamentos em aberto.</p>
+          <button onClick={() => closeModal()} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entendido</button>
+        </div>, "center"
+      );
+      return;
+    }
+
+    // Show summary
+    showResumoModal();
+  }
+
+  function showResumoModal() {
+    openModal(<ResumoModal
+      selection={selection} primary={primary} bgColor={bgColor} cardBg={cardBg}
+      clientSubscription={clientSubscription} onClose={closeModal}
+      onConfirm={async ({ couponCode: cpCode, couponDiscount: cpDisc, finalPrice: fp }: any) => {
+        const d = selection.date!;
+        const now = new Date().toISOString();
+        const isoDate = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
+        const newEvent = {
+          id: crypto.randomUUID(),
+          title: `${clientProfile?.name || "Cliente"} - ${selection.service!.name}`,
+          type: "APPOINTMENT",
+          startTime: selection.time,
+          endTime: addMinutesToTime(selection.time!, selection.service!.duration || 30),
+          date: isoDate,
+          clientName: clientProfile?.name || "Cliente",
+          clientId: clientProfile?.id || null,
+          barberId: selection.barber.id === "__no_pref__" ? null : selection.barber.id,
+          barberName: selection.barber.name,
+          serviceId: selection.service!.id,
+          serviceName: selection.service!.name,
+          serviceIds: JSON.stringify([selection.service!.id]),
+          duration: selection.service!.duration || 30,
+          unitId: selection.unit.id,
+          source: "app",
+          status: "confirmed",
+          finalPrice: fp ?? (selection.isFromCreditRedemption ? 0 : selection.service!.price),
+          couponCode: cpCode || null,
+          usedReferralCredit: !!selection.isFromCreditRedemption,
+          updatedAt: now,
+        };
+        const { error } = await supabase.from("calendar_events").insert(newEvent);
+        if (error) {
+          console.error("Error saving event:", error);
+          alert(`Erro ao agendar: ${error.message}`);
+          return;
+        }
+        // Deduct referral credits after successful booking
+        if (selection.isFromCreditRedemption && clientProfile) {
+          const newCredits = Math.max(0, (clientProfile.referralCredits || 0) - 50);
+          await supabase.from("clients").update({ referralCredits: newCredits, updatedAt: new Date().toISOString() }).eq("id", clientProfile.id);
+          setClientProfile((prev: any) => prev ? { ...prev, referralCredits: newCredits } : prev);
+        }
+        // Increment coupon used_count if coupon was used
+        if (cpCode && cpDisc > 0) {
+          const { data: cpData } = await supabase.from("coupons").select("used_count").eq("code", cpCode.toUpperCase()).single();
+          await supabase.from("coupons").update({ used_count: (cpData?.used_count || 0) + 1 }).eq("code", cpCode.toUpperCase());
+        }
+        // Show success
+        closeModal(() => {
+          const dateStr = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" });
+          const unitObj = selection.unit;
+          openModal(
+            <div className="p-6 text-center booking-zoom-in" style={{ borderRadius: "1rem" }}>
+              <Check className="w-16 h-16 mx-auto mb-4" style={{ color: primary }} />
+              <h3 className="text-2xl font-bold mb-6" style={{ color: primary }}>Agendamento Confirmado!</h3>
+              <div className="text-left space-y-4 text-sm mb-8">
+                <div>
+                  <p><strong className="text-gray-400">Unidade:</strong> <span className="text-white">{unitObj.name}</span></p>
+                  {unitObj.mapsUrl && <a href={unitObj.mapsUrl} target="_blank" rel="noopener noreferrer" className="block w-full text-center mt-2 py-2 px-4 rounded-xl text-white font-semibold text-sm" style={{ backgroundColor: "#0b0b0a" }}>Ver localização</a>}
+                </div>
+                <p><strong className="text-gray-400">Barbeiro:</strong> <span className="text-white">{selection.barber.name}</span></p>
+                <p><strong className="text-gray-400">Serviço:</strong> <span className="text-white">{selection.service!.name}</span></p>
+                <p><strong className="text-gray-400">Data:</strong> <span className="text-white">{dateStr}</span></p>
+                <p><strong className="text-gray-400">Horário:</strong> <span className="text-white">Às {selection.time}</span></p>
+              </div>
+              {confirmationMessage && (
+                <p className="text-sm text-gray-300 mb-6 italic">{confirmationMessage}</p>
+              )}
+              <button onClick={() => { closeModal(); resetSelection(); setActiveView("historico"); refreshEvents(); }}
+                className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Ver Meus Agendamentos</button>
+            </div>, "center"
+          );
+        });
+      }}
+    />, "center");
+  }
+
+  // Refresh events after action
+  async function refreshEvents() {
+    if (clientProfile) loadClientEvents(clientProfile.name, clientProfile.id);
+    // Also refresh availability events
+    const { data: allEvData } = await supabase.from("calendar_events").select("id, date, startTime, endTime, barberId, unitId, status, duration").neq("status", "cancelled");
+    if (allEvData) {
+      const mapped = allEvData.map((row: any) => {
+        const d = row.date ? new Date(row.date) : new Date();
+        return { ...row, date: d.getDate(), month: d.getMonth(), year: d.getFullYear() };
+      });
+      setAvailabilityEvents(mapped);
+    }
+  }
+
+  const uiScale = parseFloat(g("theme.ui_scale", "1")) || 1;
+
+  // ============================================================
+  // RENDER
+  // ============================================================
+  return (
+    <div style={{ ...cssVars, fontFamily, backgroundColor: "#000", color: textColor, minHeight: "100vh", zoom: uiScale } as any}>
+      {/* Loading Screen */}
+      {showLoading && (
+        <div className={`fixed inset-0 flex flex-col items-center justify-center p-8 z-[60] ${loadingFading ? "booking-loading-fadeout" : ""}`}
+          style={{ backgroundColor: g("loading.bg_color", "#000000") }}>
+          <div className="flex flex-col items-center text-center">
+            {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-32 h-32 mb-16 booking-fade-in object-contain" />}
+            <div className="w-10 h-10 border-4 rounded-full mb-16 booking-spin" style={{ borderColor: "#444", borderTopColor: primary }} />
+            <div className="booking-fade-in-delay">
+              <h1 className="text-lg font-bold text-white">{g("loading.title", "Elevando a sua experiência")}</h1>
+              <p className="text-gray-400 mt-2 text-xs max-w-[220px] mx-auto">{g("loading.subtitle", "Estilo e precisão em cada corte.")}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic theme styles — cascades btn/card/heading settings */}
+      <style>{`
+        .booking-app-container button[style*="background-color"] {
+          border-radius: ${btnRadius}px !important;
+        }
+        .booking-app-container .rounded-xl {
+          border-radius: ${cardRadius}px !important;
+        }
+        .booking-app-container .rounded-lg {
+          border-radius: ${Math.min(parseInt(cardRadius), 12)}px !important;
+        }
+        ${cardShadow ? '' : `.booking-app-container .rounded-xl { box-shadow: none !important; }`}
+        .booking-app-container h1, .booking-app-container h2, .booking-app-container h3 {
+          font-family: ${headingFont} !important;
+        }
+      `}</style>
+
+      {/* App Container */}
+      <div className="booking-app-container w-full flex flex-col h-screen overflow-hidden" style={{ backgroundColor: bgColor, maxWidth: 500, margin: "0 auto" }}>
+        {/* Main Content */}
+        <div className={`flex-grow overflow-y-auto booking-hide-scrollbar ${modalContent ? "booking-content-blur" : ""}`}>
+          {activeView === "agendar" && <AgendarView
+            g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
+            btnBg={btnBg} btnText={btnText} animateReady={animateReady}
+            selection={selection} allEvents={allEvents}
+            onUnitClick={showUnitModal} onBarberClick={showBarberModal}
+            onServiceClick={showServiceModal} onDateClick={showDateModal}
+            onAgendarClick={handleAgendarClick}
+            showPrices={showPrices} showDuration={showDuration}
+            maxOpenAppts={maxOpenAppts}
+          />}
+          {activeView === "historico" && <HistoricoView
+            g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
+            btnBg={btnBg} btnText={btnText}
+            authUser={authUser} clientProfile={clientProfile}
+            events={allEvents} availabilityEvents={availabilityEvents}
+            units={units} barbers={barbers} services={services}
+            schedules={schedules} closedDays={closedDays} maxAdvDays={maxAdvDays}
+            slotInterval={slotInterval}
+            onLogin={() => showLoginModal()} openModal={openModal} closeModal={closeModal}
+            onRefresh={refreshEvents}
+            setActiveView={setActiveView} updateSelection={updateSelection}
+            resetSelection={resetSelection}
+          />}
+          {activeView === "planos" && <PlanosView
+            g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
+            btnBg={btnBg} btnText={btnText}
+            plans={plans} subscription={clientSubscription} services={services}
+            authUser={authUser} clientProfile={clientProfile}
+            onLogin={() => showLoginModal()} openModal={openModal} closeModal={closeModal}
+            onRefresh={refreshEvents} setActiveView={setActiveView}
+          />}
+          {activeView === "perfil" && <PerfilView
+            g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
+            btnBg={btnBg} btnText={btnText}
+            authUser={authUser} clientProfile={clientProfile}
+            goals={goals} services={services}
+            onLogin={() => showLoginModal()} openModal={openModal} closeModal={closeModal}
+            onLogout={async () => { await supabase.auth.signOut(); setAuthUser(null); setClientProfile(null); }}
+            onProfileUpdate={(p: any) => setClientProfile(p)}
+            setActiveView={setActiveView} updateSelection={updateSelection}
+            resetSelection={resetSelection}
+          />}
+          {/* Footer */}
+          {(() => {
+            const ftText = g("footer.text", "");
+            const ftLogo = g("footer.logo", "");
+            const ftInsta = g("footer.instagram", "");
+            const ftFb = g("footer.facebook", "");
+            const ftTiktok = g("footer.tiktok", "");
+            const ftWa = g("footer.whatsapp", "");
+            const ftBgColor = g("footer.bg_color", "") || "transparent";
+            const ftTextColor = g("footer.text_color", "") || "#9ca3af";
+            const hasSocial = ftInsta || ftFb || ftTiktok || ftWa;
+            const hasFooter = ftText || ftLogo || hasSocial;
+            if (!hasFooter) return null;
+            return (
+              <div className="booking-footer" style={{ backgroundColor: ftBgColor, color: ftTextColor }}>
+                {ftLogo && <img src={ftLogo} alt="Logo" className="w-12 h-12 mx-auto mb-3 object-contain" />}
+                {hasSocial && (
+                  <div className="flex justify-center gap-3 mb-3">
+                    {ftInsta && <a href={ftInsta} target="_blank" rel="noopener noreferrer" title="Instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg></a>}
+                    {ftFb && <a href={ftFb} target="_blank" rel="noopener noreferrer" title="Facebook"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg></a>}
+                    {ftTiktok && <a href={ftTiktok} target="_blank" rel="noopener noreferrer" title="TikTok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg></a>}
+                    {ftWa && <a href={`https://wa.me/${ftWa.replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" title="WhatsApp"><MessageCircle className="w-5 h-5" /></a>}
+                  </div>
+                )}
+                {ftText && <p className="text-xs" style={{ color: ftTextColor }}>{ftText}</p>}
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* Gradient Fade */}
+      <div className="booking-nav-fade" style={{ background: `linear-gradient(to top, ${bgColor} 0%, ${bgColor}CC 50%, transparent 100%)` }} />
+
+      {/* WhatsApp Floating Button */}
+      {g("extras.whatsapp_float", "false") === "true" && g("extras.whatsapp_number", "") && (
+        <a
+          href={`https://wa.me/${g("extras.whatsapp_number", "").replace(/\D/g, "")}?text=${encodeURIComponent(g("extras.whatsapp_message", "Olá! Gostaria de agendar um horário."))}`}
+          target="_blank" rel="noopener noreferrer"
+          className="booking-whatsapp-float"
+        >
+          <MessageCircle />
+        </a>
+      )}
+
+      {/* Floating Pill Navbar */}
+      <div ref={navRef} className={`booking-navbar ${modalContent ? "booking-content-blur" : ""}`}>
+        <div ref={indicatorRef} className="booking-nav-indicator" style={{ backgroundColor: `${navbarActiveColor}20` }} />
+        {tabDefs.map((item) => (
+          <div key={item.key}
+            className={`booking-nav-item ${activeView === item.key ? "active" : ""}`}
+            style={{ color: activeView === item.key ? navbarActiveColor : "#94a3b8" }}
+            onClick={() => setActiveView(item.key)}>
+            <div className="relative">
+              <item.icon style={{ width: 18, height: 18 }} />
+              {item.key === "historico" && needsReview && (
+                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#ef4444" }} />
+              )}
+            </div>
+            {navbarShowLabels && <span>{item.label}</span>}
+          </div>
+        ))}
+      </div>
+
+      {/* Modal Overlay — Bottom Sheet / Center Dialog / Fullscreen */}
+      {modalContent && (
+        <div className="fixed inset-0 z-50 flex justify-center booking-modal-backdrop"
+          style={{
+            alignItems: modalPosition !== "bottom" ? "center" : "flex-end",
+            padding: modalPosition === "fullscreen" ? 0 : modalPosition === "center" ? "1rem" : 0,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget && !modalIsAuth) closeModal(); }}>
+          <div className={`w-full booking-modal-enter booking-hide-scrollbar ${modalVisible ? "booking-modal-enter-active" : ""}`}
+            style={{
+              maxWidth: modalPosition === "fullscreen" ? "100%" : 420,
+              maxHeight: modalPosition === "fullscreen" ? "100dvh" : "85vh",
+              height: modalPosition === "fullscreen" ? "100dvh" : undefined,
+              overflowY: "auto",
+              ...(modalPosition === "fullscreen"
+                ? { backgroundColor: "transparent", borderRadius: 0, color: textColor }
+                : modalPosition !== "bottom"
+                  ? { backgroundColor: "#1a1a1a", borderRadius: "1rem", color: textColor }
+                  : {}),
+            }}>
+            {modalContent}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// AGENDAR VIEW
+// ============================================================
+function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, allEvents, onUnitClick, onBarberClick, onServiceClick, onDateClick, onAgendarClick, showPrices, showDuration, maxOpenAppts }: any) {
+  const heroVideo = g("hero.bg_video", "");
+  const heroImage = g("hero.bg_image", "");
+  const heroTitle = g("hero.title", "Agende seu horário");
+  const heroSubtitle = g("hero.subtitle", "Escolha os serviços e agende com facilidade.");
+  const heroLogo = g("hero.logo", "") || g("loading.logo", "");
+  const showLogo = g("hero.show_logo", "true") !== "false";
+  const allSelected = selection.unit && selection.barber && selection.service && selection.date && selection.time;
+
+  const openAppts = allEvents.filter((e: CalendarEvent) => e.status !== "cancelled" && e.status !== "completed");
+  const isMaxed = openAppts.length >= maxOpenAppts;
+
+  // Today's appointment reminder
+  const today = new Date();
+  const todaysAppt = allEvents.find((e: CalendarEvent) => {
+    if (e.status === "cancelled" || e.status === "completed") return false;
+    return e.date === today.getDate() && e.month === today.getMonth() && e.year === today.getFullYear();
+  });
+
+  return (
+    <div className={`relative flex flex-col ${animateReady ? "" : "booking-anim-paused"}`} style={{ minHeight: "100%" }}>
+      {/* Hero Background */}
+      <div className="booking-video-bg">
+        {heroVideo ? (
+          <video autoPlay muted loop playsInline poster={heroImage || undefined}><source src={heroVideo} type="video/mp4" /></video>
+        ) : heroImage ? (
+          <img src={heroImage} alt="Hero" />
+        ) : null}
+        <div className="booking-video-overlay" style={{ background: g("hero.overlay_color", "rgba(0,0,0,0.7)") }} />
+      </div>
+
+      {/* Reminder */}
+      {todaysAppt && (
+        <div className="relative z-10 m-6 p-4 rounded-r-lg border-l-4" style={{ backgroundColor: `${primary}15`, borderColor: primary }}>
+          <p className="font-bold text-sm" style={{ color: primary }}>🔔 Lembrete</p>
+          <p className="text-sm text-gray-300">Seu horário é hoje às <strong className="text-white">{todaysAppt.startTime}</strong>.</p>
+        </div>
+      )}
+
+      {/* Hero Content */}
+      <div className="relative z-10 flex-grow flex flex-col justify-end p-6">
+        <div className="text-center mb-8">
+          {showLogo && heroLogo && <img src={heroLogo} alt="Logo" className="w-32 h-32 mb-4 mx-auto object-contain booking-fade-in" />}
+          <h1 className="text-3xl font-bold text-white booking-fade-in-delay">{heroTitle}</h1>
+          <div className="w-24 h-1 mx-auto my-3 rounded booking-underline" style={{ backgroundColor: primary }} />
+          <p className="text-gray-200 booking-fade-in-delay">{heroSubtitle}</p>
+        </div>
+      </div>
+
+      {/* Selection Cards */}
+      <div className="relative z-10 p-6 pt-0 pb-24 space-y-4" style={{ background: `linear-gradient(to top, ${bgColor}, transparent)` }}>
+        <SelectionCard delay="100" icon={<Store className="w-5 h-5" style={{ color: primary }} />}
+          text={selection.unit?.name || g("booking.label_unit", "Selecionar unidade")} selected={!!selection.unit}
+          disabled={false} onClick={onUnitClick} cardBg={cardBg} />
+        <SelectionCard delay="200" icon={<User className="w-5 h-5" style={{ color: primary }} />}
+          text={selection.barber?.name || g("booking.label_barber", "Selecionar barbeiro")} selected={!!selection.barber}
+          disabled={!selection.unit} onClick={onBarberClick} cardBg={cardBg} />
+
+        {/* Service card — locked during redemption */}
+        {selection.isFromCreditRedemption && selection.service ? (
+          <div className="booking-selection-item flex items-center justify-between p-4 rounded-lg booking-slide-up booking-delay-300"
+            style={{ backgroundColor: cardBg, borderColor: primary, borderWidth: 2 }}>
+            <div className="flex items-center gap-4">
+              <Gift className="w-5 h-5" style={{ color: primary }} />
+              <div>
+                <span className="text-white font-bold">{selection.service.name}</span>
+                <p className="text-xs text-gray-400">Recompensa de indicação!</p>
+              </div>
+            </div>
+            <Lock className="w-4 h-4 text-gray-500" />
+          </div>
+        ) : (
+          <SelectionCard delay="300" icon={<Scissors className="w-5 h-5" style={{ color: primary }} />}
+            text={selection.service ? `${selection.service.name}${showPrices ? ` — R$ ${selection.service.price.toFixed(2)}` : ""}` : g("booking.label_service", "Selecionar serviço")}
+            selected={!!selection.service} disabled={!selection.barber} onClick={onServiceClick} cardBg={cardBg} />
+        )}
+
+        <SelectionCard delay="400" icon={<Calendar className="w-5 h-5" style={{ color: primary }} />}
+          text={selection.date && selection.time ? `${selection.time} — ${WEEKDAYS_FULL[selection.date.getDay()]}, ${selection.date.getDate()} de ${MONTHS_PT[selection.date.getMonth()]}` : g("booking.label_datetime", "Selecionar data e hora")}
+          selected={!!selection.time} disabled={!selection.service} onClick={onDateClick} cardBg={cardBg} />
+
+        <button onClick={onAgendarClick} disabled={!allSelected || isMaxed}
+          className={`w-full py-3.5 mt-4 rounded-xl font-bold text-sm tracking-wide booking-slide-up booking-delay-500 ${allSelected && !isMaxed ? "booking-btn-active" : "booking-btn-inactive"}`}
+          style={allSelected && !isMaxed ? { backgroundColor: primary, color: bgColor, boxShadow: `0 0 24px ${primary}40` } : undefined}>
+          {isMaxed ? `Máximo de ${maxOpenAppts} agendamentos em aberto` : g("booking.label_submit", "Agendar")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SelectionCard({ delay, icon, text, selected, disabled, onClick, cardBg }: any) {
+  return (
+    <div onClick={disabled ? undefined : onClick}
+      className={`booking-selection-item flex items-center justify-between p-4 rounded-lg booking-slide-up booking-delay-${delay} ${disabled ? "disabled" : ""} ${selected ? "selected" : ""}`}
+      style={disabled ? { pointerEvents: "none" as const } : undefined}>
+      <div className="flex items-center gap-4 min-w-0">
+        {icon}
+        <span className={`truncate ${selected ? "text-white font-semibold" : "text-gray-400"}`}>{text}</span>
+      </div>
+      <ChevronRight className="w-4 h-4 text-gray-500 flex-shrink-0" />
+    </div>
+  );
+}
+
+// ============================================================
+// CALENDAR MODAL
+// ============================================================
+function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, maxDays, closedDays, slotInterval, g, onSelect }: any) {
+  const [viewDate, setViewDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [periodo, setPeriodo] = useState<"manha" | "tarde">("manha");
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const maxDate = new Date(today); maxDate.setDate(maxDate.getDate() + maxDays);
+
+  const month = viewDate.getMonth();
+  const year = viewDate.getFullYear();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // Auto-select first available date on mount
+  useEffect(() => {
+    for (let i = 0; i <= maxDays; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      d.setHours(0, 0, 0, 0);
+      if (!closedDays.includes(d.getDay())) {
+        if (barber && barber.id !== "__no_pref__") {
+          const ws = schedules.find((s: WorkSchedule) => s.memberId === barber.id && s.dayOfWeek === d.getDay());
+          if (ws && ws.isOff) continue;
+        }
+        setSelectedDate(d);
+        break;
+      }
+    }
+  }, []);
+
+  function isDayAvailable(day: number): boolean {
+    const d = new Date(year, month, day);
+    if (d < today || d > maxDate) return false;
+    if (closedDays.includes(d.getDay())) return false;
+    if (barber && barber.id !== "__no_pref__") {
+      const ws = schedules.find((s: WorkSchedule) => s.memberId === barber.id && s.dayOfWeek === d.getDay());
+      if (ws && ws.isOff) return false;
+    }
+    return true;
+  }
+
+  function getAvailableSlots(): string[] {
+    if (!selectedDate) return [];
+    const barberId = barber?.id === "__no_pref__" ? null : barber?.id;
+    // Use store_settings defaults when barber has no individual schedule
+    const defStart = g("booking.default_start_time", "08:00");
+    const defEnd = g("booking.default_end_time", "19:00");
+    const defBreakS = g("booking.default_break_start", "12:00");
+    const defBreakE = g("booking.default_break_end", "13:00");
+    let startTime = defStart, endTime = defEnd, breakStart = defBreakS, breakEnd = defBreakE;
+    if (barberId) {
+      const ws = schedules.find((s: WorkSchedule) => s.memberId === barberId && s.dayOfWeek === selectedDate.getDay());
+      if (ws) {
+        startTime = ws.startTime || defStart;
+        endTime = ws.endTime || defEnd;
+        breakStart = ws.breakStart || "";
+        breakEnd = ws.breakEnd || "";
+      }
+    }
+    let slots = generateTimeSlots(startTime, endTime, slotInterval);
+    slots = slots.filter((s) => !isInBreak(s, breakStart, breakEnd));
+
+    const dayEvents = events.filter((e: any) =>
+      e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear()
+      && e.status !== "cancelled" && (!barberId || e.barberId === barberId)
+      && (!unitId || e.unitId === unitId)
+    );
+
+    // Max per barber per day
+    const maxPerDay = parseInt(g("booking.max_per_barber_day", "0"), 10);
+    if (maxPerDay > 0 && barberId) {
+      const barberDayCount = dayEvents.length;
+      if (barberDayCount >= maxPerDay) return []; // No slots — barber is full for the day
+    }
+
+    // Filter out slots that would overlap with existing events (considering duration)
+    slots = slots.filter((slot) => {
+      const [sh, sm] = slot.split(":").map(Number);
+      const slotStart = sh * 60 + sm;
+      return !dayEvents.some((e: any) => {
+        const [eH, eM] = (e.startTime || "00:00").split(":").map(Number);
+        const eventStart = eH * 60 + eM;
+        const eventEnd = eventStart + (e.duration || slotInterval);
+        return slotStart >= eventStart && slotStart < eventEnd;
+      });
+    });
+
+    // Filter by min advance hours and block same day
+    const now = new Date();
+    const minAdvHours = parseInt(g("booking.min_advance_hours", "0"), 10);
+    const blockToday = g("booking.block_same_day", "false") === "true";
+    const isToday = selectedDate.toDateString() === now.toDateString();
+
+    if (isToday && blockToday) return []; // Block same-day bookings entirely
+
+    if (isToday || minAdvHours > 0) {
+      const cutoff = now.getHours() * 60 + now.getMinutes() + (isToday ? Math.max(minAdvHours * 60, 0) : 0);
+      slots = slots.filter((s) => {
+        const [h, m] = s.split(":").map(Number);
+        if (isToday && h * 60 + m <= cutoff) return false;
+        // For future days, min_advance_hours is checked at booking time, not slot level
+        return true;
+      });
+    }
+
+    return slots;
+  }
+
+  const slots = getAvailableSlots();
+  const morningSlots = slots.filter((s) => parseInt(s) < 12);
+  const afternoonSlots = slots.filter((s) => parseInt(s) >= 12);
+  const displaySlots = periodo === "manha" ? morningSlots : afternoonSlots;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100%", width: "100%", padding: "1rem 0.75rem", boxSizing: "border-box" }}>
+      <div style={{ width: "100%", maxWidth: 400 }}>
+        <h3 className="text-lg font-bold mb-3 text-center" style={{ color: primary }}>{g("booking.modal_title_calendar", "Data do agendamento")}</h3>
+
+        {/* Month nav */}
+        <div className="flex items-center justify-between mb-3 px-2">
+          <button onClick={() => { const prev = new Date(year, month - 1); if (prev >= new Date(today.getFullYear(), today.getMonth())) setViewDate(prev); }} className="p-1"><ChevronLeft className="w-5 h-5 text-white" /></button>
+          <span className="font-bold text-base text-white">{MONTHS_PT[month]} {year}</span>
+          <button onClick={() => { const next = new Date(year, month + 1); if (next <= new Date(maxDate.getFullYear(), maxDate.getMonth())) setViewDate(next); }} className="p-1"><ChevronRight className="w-5 h-5 text-white" /></button>
+        </div>
+
+        {/* Day headers */}
+        <div className="booking-calendar-grid mb-1">
+          {WEEKDAYS_PT.map((d) => <span key={d} className="text-xs font-semibold" style={{ color: primary }}>{d}</span>)}
+        </div>
+
+        {/* Calendar days */}
+        <div className="booking-calendar-grid mb-4">
+          {Array.from({ length: firstDay }).map((_, i) => <span key={`e-${i}`} />)}
+          {Array.from({ length: daysInMonth }).map((_, i) => {
+            const day = i + 1;
+            const available = isDayAvailable(day);
+            const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+            const isSelected = selectedDate && day === selectedDate.getDate() && month === selectedDate.getMonth() && year === selectedDate.getFullYear();
+            return (
+              <div key={day}
+                onClick={() => { if (available) { setSelectedDate(new Date(year, month, day)); setPeriodo("manha"); } }}
+                className={`booking-calendar-day ${available ? "" : "unavailable"} ${isToday ? "today" : ""}`}
+                style={{
+                  backgroundColor: isSelected ? primary : available ? "#374151" : "transparent",
+                  color: isSelected ? "#111" : available ? "#fff" : "#6b7280",
+                  fontWeight: isSelected ? 700 : 500, cursor: available ? "pointer" : "not-allowed",
+                  borderColor: isToday && !isSelected ? primary : "transparent",
+                  width: 34, height: 34, fontSize: "0.875rem",
+                }}>
+                {day}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Time period toggle */}
+        <h3 className="font-bold text-center mb-3 text-white text-sm">Escolha o melhor horário</h3>
+        <div className="flex gap-2 mb-3">
+          {(["manha", "tarde"] as const).map((p) => (
+            <button key={p} onClick={() => setPeriodo(p)}
+              className="flex-1 py-2 rounded-lg font-semibold text-sm transition-colors"
+              style={{ backgroundColor: periodo === p ? primary : "#4a4a4a", color: periodo === p ? "#111" : "#ccc" }}>
+              {p === "manha" ? "Manhã" : "Tarde"}
+            </button>
+          ))}
+        </div>
+
+        {/* Time slots */}
+        <div className="grid grid-cols-4 gap-2 max-h-40 overflow-y-auto booking-scrollbar">
+          {selectedDate ? (displaySlots.length > 0 ? displaySlots.map((t) => (
+            <div key={t} onClick={() => onSelect(selectedDate, t)}
+              className="booking-time-slot p-2.5 rounded-lg text-center text-sm font-medium cursor-pointer hover:opacity-80"
+              style={{ backgroundColor: "#374151", color: "#fff" }}>
+              {t}
+            </div>
+          )) : (
+            <p className="col-span-4 text-gray-400 text-sm text-center py-3">Não há horários disponíveis para este período.</p>
+          )) : (
+            <p className="col-span-4 text-gray-400 text-sm text-center py-3">Selecione uma data para ver os horários</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// RESUMO MODAL (with coupon, subscription coverage, credit)
+// ============================================================
+function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, onClose, onConfirm }: any) {
+  const [loading, setLoading] = useState(false);
+  const [couponCode, setCouponCode] = useState("");
+  const [couponDiscount, setCouponDiscount] = useState(0);
+  const [couponMsg, setCouponMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [couponLoading, setCouponLoading] = useState(false);
+
+  const price = selection.service?.price || 0;
+  const dateStr = selection.date?.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" });
+
+  const isCreditRedemption = !!selection.isFromCreditRedemption;
+  // TODO: Check subscription coverage when subscription system is fully wired
+  const isCovered = false;
+
+  let finalPrice = price;
+  let creditHtml = null;
+  let planHtml = null;
+
+  if (isCreditRedemption) {
+    finalPrice = 0;
+    creditHtml = (
+      <>
+        <div className="flex justify-between text-green-400 text-sm">
+          <span>Resgate de Crédito</span>
+          <span>- R$ {price.toFixed(2)}</span>
+        </div>
+        <div className="p-3 rounded-r-lg text-sm mt-3 border-l-4" style={{ backgroundColor: `${primary}15`, borderColor: primary, color: primary }}>
+          <p className="font-bold">Serviço resgatado com seus créditos de indicação!</p>
+        </div>
+      </>
+    );
+  } else if (isCovered) {
+    finalPrice = 0;
+    planHtml = (
+      <>
+        <div className="flex justify-between text-green-400 text-sm">
+          <span>Incluso no seu plano</span>
+          <span>- R$ {price.toFixed(2)}</span>
+        </div>
+        <div className="p-3 rounded-r-lg text-sm mt-3 border-l-4" style={{ backgroundColor: `${primary}15`, borderColor: primary, color: primary }}>
+          <p className="font-bold">Este serviço será abatido do seu plano.</p>
+        </div>
+      </>
+    );
+  } else {
+    finalPrice = price * (1 - couponDiscount);
+  }
+
+  async function applyCoupon() {
+    if (!couponCode.trim()) return;
+    setCouponLoading(true);
+    // Check coupon in DB
+    const { data } = await supabase.from("coupons").select("*").eq("code", couponCode.toUpperCase()).eq("active", true).limit(1);
+    setTimeout(() => {
+      if (data && data.length > 0) {
+        const c = data[0];
+        // Validate expiry dates
+        const now = new Date().toISOString();
+        if (c.valid_until && now > c.valid_until) {
+          setCouponDiscount(0);
+          setCouponMsg({ text: "Cupom expirado.", ok: false });
+          setCouponLoading(false);
+          return;
+        }
+        if (c.valid_from && now < c.valid_from) {
+          setCouponDiscount(0);
+          setCouponMsg({ text: "Cupom ainda não está válido.", ok: false });
+          setCouponLoading(false);
+          return;
+        }
+        // Validate usage limit
+        if (c.max_uses && c.used_count >= c.max_uses) {
+          setCouponDiscount(0);
+          setCouponMsg({ text: "Cupom esgotado.", ok: false });
+          setCouponLoading(false);
+          return;
+        }
+        // Validate min amount
+        if (c.min_amount && price < c.min_amount) {
+          setCouponDiscount(0);
+          setCouponMsg({ text: `Valor mínimo: R$ ${Number(c.min_amount).toFixed(2)}`, ok: false });
+          setCouponLoading(false);
+          return;
+        }
+        const discVal = c.discount_value || 10;
+        const disc = (c.discount_type === 'fixed') ? discVal / price : discVal / 100;
+        setCouponDiscount(disc);
+        setCouponMsg({ text: c.discount_type === 'fixed' ? `Cupom de R$${discVal.toFixed(2)} aplicado!` : `Cupom de ${discVal}% aplicado!`, ok: true });
+      } else {
+        setCouponDiscount(0);
+        setCouponMsg({ text: "Cupom inválido.", ok: false });
+      }
+      setCouponLoading(false);
+    }, 800);
+  }
+
+  return (
+    <div className="p-6 booking-auth" style={{ borderRadius: "1rem" }}>
+      <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Resumo do Agendamento</h3>
+      <div className="text-left space-y-3 text-sm mb-6">
+        <p><strong className="text-gray-400">Unidade:</strong><br /><span className="text-white">{selection.unit?.name}</span></p>
+        <p><strong className="text-gray-400">Data:</strong><br /><span className="text-white">{dateStr} às {selection.time}</span></p>
+        <p><strong className="text-gray-400">Profissional:</strong><br /><span className="text-white">{selection.barber?.name}</span></p>
+        <p><strong className="text-gray-400">Serviço:</strong><br /><span className="text-white">{selection.service?.name}</span></p>
+      </div>
+
+      <div className="border-t border-gray-700 pt-4">
+        {/* Coupon section - hidden if covered or credit redemption */}
+        {!isCovered && !isCreditRedemption && (
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <input type="text" value={couponCode} onChange={(e) => setCouponCode(e.target.value.toUpperCase())} placeholder="Cupom de desconto" className="flex-1 p-2 rounded-lg bg-[#333] border border-[#555] text-white text-sm" />
+              <button onClick={applyCoupon} disabled={couponLoading} className="px-4 py-2 rounded-lg text-sm font-bold" style={{ backgroundColor: primary, color: bgColor }}>
+                {couponLoading ? <Loader2 className="w-4 h-4 booking-spin" /> : "Aplicar"}
+              </button>
+            </div>
+            {couponMsg && <p className={`text-sm ${couponMsg.ok ? "text-green-400" : "text-red-400"}`}>{couponMsg.text}</p>}
+          </div>
+        )}
+
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-400">Subtotal</span>
+            <span className="text-white">R$ {price.toFixed(2)}</span>
+          </div>
+          {creditHtml}
+          {planHtml}
+          {couponDiscount > 0 && !isCovered && !isCreditRedemption && (
+            <div className="flex justify-between text-green-400">
+              <span>Desconto Cupom</span>
+              <span>- R$ {(price * couponDiscount).toFixed(2)}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-bold text-lg border-t border-gray-700 pt-2 mt-2">
+            <span className="text-white">Total</span>
+            <span style={{ color: primary }}>R$ {finalPrice.toFixed(2)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-8 grid grid-cols-2 gap-4">
+        <button onClick={() => onClose()} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        <button onClick={async () => { setLoading(true); try { await onConfirm({ couponCode, couponDiscount, finalPrice }); } catch (e) { console.error(e); } finally { setLoading(false); } }} disabled={loading}
+          className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
+          {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Confirmar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// HISTORICO VIEW (with details, reschedule, cancel, rate)
+// ============================================================
+function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, events, availabilityEvents, units, barbers, services, schedules, closedDays, maxAdvDays, slotInterval, onLogin, openModal, closeModal, onRefresh, setActiveView, updateSelection, resetSelection }: any) {
+  if (!authUser) {
+    return (
+      <div className="p-6 h-full flex flex-col items-center justify-center text-center min-h-[80vh]">
+        <History className="w-16 h-16 text-gray-600 mb-4" />
+        <h1 className="text-2xl font-bold" style={{ color: primary }}>Histórico de Serviços</h1>
+        <p className="text-gray-400 mt-2 mb-6">Crie uma conta ou faça login para ver seus agendamentos.</p>
+        <button onClick={onLogin} className="py-3 px-8 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entrar ou Cadastrar</button>
+      </div>
+    );
+  }
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const abertos = events.filter((e: CalendarEvent) => {
+    if (e.status === "cancelled" || e.status === "completed") return false;
+    const eventDate = new Date(e.year, e.month, e.date);
+    return eventDate >= todayStart;
+  });
+  const historico = events.filter((e: CalendarEvent) => {
+    if (e.status === "cancelled") return false;
+    const eventDate = new Date(e.year, e.month, e.date);
+    return eventDate < todayStart || e.status === "completed";
+  });
+
+  // Show appointment details
+  function showDetalhes(ev: CalendarEvent) {
+    const eventDate = new Date(ev.year, ev.month, ev.date);
+    const dateStr = eventDate.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" });
+    const isOpen = eventDate >= todayStart && ev.status !== "completed";
+    const unit = units.find((u: any) => u.id === ev.unitId);
+
+    openModal(
+      <div className="p-6" style={{ borderRadius: "1rem" }}>
+        <h3 className="text-xl font-bold mb-6 text-center" style={{ color: primary }}>Detalhes do Agendamento</h3>
+        <div className="space-y-4 text-sm mb-6">
+          {unit && (
+            <div>
+              <p className="text-gray-400 font-semibold">Unidade</p>
+              <p className="text-white font-bold">{unit.name}</p>
+              {unit.mapsUrl && <a href={unit.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs flex items-center gap-1 mt-1" style={{ color: primary }}><MapPin className="w-3 h-3" />Ver no mapa <ExternalLink className="w-3 h-3" /></a>}
+            </div>
+          )}
+          <div>
+            <p className="text-gray-400 font-semibold">Data e Hora</p>
+            <p className="text-white capitalize">{dateStr} às {ev.startTime}</p>
+          </div>
+          <div>
+            <p className="text-gray-400 font-semibold">Profissional</p>
+            <p className="text-white">{ev.barberName || "A definir"}</p>
+          </div>
+          <div>
+            <p className="text-gray-400 font-semibold">Serviço</p>
+            <p className="text-white">{ev.serviceName || ev.title}</p>
+          </div>
+          {ev.finalPrice != null && (
+            <div>
+              <p className="text-gray-400 font-semibold">Valor</p>
+              <p className="text-white font-bold" style={{ color: primary }}>R$ {Number(ev.finalPrice).toFixed(2)}</p>
+            </div>
+          )}
+          {ev.usedReferralCredit && (
+            <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${primary}20`, color: primary }}>Crédito</span>
+          )}
+        </div>
+
+        {(() => {
+          // Calculate hours until event for cancel/reschedule restrictions
+          const evDate = new Date(ev.year, ev.month, ev.date);
+          const [evH, evM] = (ev.startTime || "00:00").split(":").map(Number);
+          evDate.setHours(evH, evM, 0, 0);
+          const hoursUntil = (evDate.getTime() - Date.now()) / (1000 * 60 * 60);
+          const cancelMin = parseInt(g("booking.cancellation_hours", "0"), 10);
+          const reschedMin = parseInt(g("booking.reschedule_hours", "0"), 10);
+          const canCancel = cancelMin <= 0 || hoursUntil >= cancelMin;
+          const canReschedule = reschedMin <= 0 || hoursUntil >= reschedMin;
+
+          if (isOpen) {
+            return (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <button onClick={() => { if (canCancel) closeModal(() => showCancelConfirm(ev)); }}
+                    className="py-3 font-semibold rounded-lg border border-red-800 text-red-400"
+                    style={{ opacity: canCancel ? 1 : 0.4 }} disabled={!canCancel}>Cancelar</button>
+                  <button onClick={() => { if (canReschedule) closeModal(() => showRemarcarModal(ev)); }}
+                    className="py-3 font-bold rounded-lg"
+                    style={{ backgroundColor: primary, color: bgColor, opacity: canReschedule ? 1 : 0.4 }}
+                    disabled={!canReschedule}>Remarcar</button>
+                </div>
+                {(!canCancel || !canReschedule) && (
+                  <p className="text-xs text-gray-500 text-center">
+                    {!canCancel && `Cancelamento requer ${cancelMin}h de antecedência. `}
+                    {!canReschedule && `Remarcação requer ${reschedMin}h de antecedência.`}
+                  </p>
+                )}
+              </div>
+            );
+          }
+          return (
+            <div className="grid grid-cols-2 gap-4">
+              <button onClick={() => {
+                closeModal(() => {
+                  resetSelection();
+                  const unit = units.find((u: any) => u.id === ev.unitId);
+                  const barber = barbers.find((b: any) => b.id === ev.barberId);
+                  const service = services.find((s: any) => s.id === ev.serviceId);
+                  updateSelection({ unit, barber, service });
+                  setActiveView("agendar");
+                });
+              }} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>
+                <RefreshCw className="w-4 h-4 inline mr-1" />Agendar Novamente
+              </button>
+              {!ev.rating ? (
+                <button onClick={() => closeModal(() => showAvaliacaoModal(ev))} className="py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
+                  <Star className="w-4 h-4 inline mr-1" />Avaliar
+                </button>
+              ) : (
+                <div className="py-3 text-center">
+                  <div className="flex justify-center gap-0.5">
+                    {[1, 2, 3, 4, 5].map((s) => <Star key={s} className="w-4 h-4" style={{ color: s <= ev.rating ? "#fbbf24" : "#6b7280", fill: s <= ev.rating ? "#fbbf24" : "none" }} />)}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Sua avaliação</p>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>, "center"
+    );
+  }
+
+  function showCancelConfirm(ev: CalendarEvent) {
+    openModal(
+      <CancelConfirmModal ev={ev} primary={primary} bgColor={bgColor} onBack={() => closeModal(() => showDetalhes(ev))}
+        onConfirm={async () => {
+          await supabase.from("calendar_events").update({ status: "cancelled", updatedAt: new Date().toISOString() }).eq("id", ev.id);
+          closeModal(() => {
+            openModal(
+              <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+                <Check className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
+                <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Agendamento Cancelado</h3>
+                <p className="text-gray-300 mb-6">Seu agendamento foi cancelado com sucesso.</p>
+                <button onClick={() => { closeModal(); onRefresh(); }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Fechar</button>
+              </div>, "center"
+            );
+          });
+        }}
+      />, "center"
+    );
+  }
+
+  function showRemarcarModal(ev: CalendarEvent) {
+    openModal(
+      <RemarcarModal ev={ev} primary={primary} bgColor={bgColor} cardBg={cardBg}
+        barbers={barbers} schedules={schedules} events={availabilityEvents} maxDays={maxAdvDays}
+        closedDays={closedDays} slotInterval={slotInterval}
+        onBack={() => closeModal(() => showDetalhes(ev))}
+        onConfirm={async (newDate: Date, newTime: string) => {
+          const isoDate = new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate()).toISOString();
+          await supabase.from("calendar_events").update({
+            date: isoDate,
+            startTime: newTime,
+            endTime: addMinutesToTime(newTime, ev.duration || 30),
+            updatedAt: new Date().toISOString(),
+          }).eq("id", ev.id);
+          closeModal(() => {
+            openModal(
+              <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+                <Check className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
+                <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Agendamento Remarcado!</h3>
+                <p className="text-gray-300 mb-6">Seu horário foi atualizado com sucesso.</p>
+                <button onClick={() => { closeModal(); onRefresh(); }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Fechar</button>
+              </div>, "center"
+            );
+          });
+        }}
+      />, "center"
+    );
+  }
+
+  function showAvaliacaoModal(ev: CalendarEvent) {
+    openModal(
+      <AvaliacaoModal ev={ev} primary={primary} bgColor={bgColor}
+        onClose={() => closeModal()}
+        onSubmit={async (rating: number, comment: string) => {
+          await supabase.from("calendar_events").update({ rating, ratingComment: comment, updatedAt: new Date().toISOString() }).eq("id", ev.id);
+          // Also save to client_reviews for structured review data
+          try {
+            await supabase.from("client_reviews").insert({
+              id: crypto.randomUUID(),
+              clientId: clientProfile?.id,
+              calendarEventId: ev.id,
+              barberId: ev.barberId,
+              rating,
+              comment,
+              createdAt: new Date().toISOString(),
+            });
+          } catch {}
+          closeModal(() => {
+            openModal(
+              <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+                <Check className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
+                <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Avaliação Enviada!</h3>
+                <p className="text-gray-300 mb-6">Obrigado pelo seu feedback!</p>
+                <button onClick={() => { closeModal(); onRefresh(); }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Fechar</button>
+              </div>, "center"
+            );
+          });
+        }}
+      />, "center"
+    );
+  }
+
+  return (
+    <div className="p-6 pb-24">
+      <div className="text-center mb-8 pt-4">
+        <h2 className="text-3xl font-bold text-white">Meus <span style={{ color: primary }}>Agendamentos</span></h2>
+        <div className="w-20 h-1 mx-auto mt-2 rounded-full booking-underline" style={{ backgroundColor: primary }} />
+      </div>
+
+      {abertos.length > 0 && (
+        <>
+          <h3 className="text-xl font-semibold mb-4" style={{ color: primary }}>Agendamento em aberto</h3>
+          <div className="space-y-4 mb-8">
+            {abertos.map((e: CalendarEvent) => {
+              const eventDate = new Date(e.year, e.month, e.date);
+              const dateStr = eventDate.toLocaleDateString("pt-BR");
+              const unit = units.find((u: any) => u.id === e.unitId);
+              const tagHtml = e.usedInPlan
+                ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(59,130,246,0.2)", color: "#60a5fa" }}>Plano</span>
+                : e.usedReferralCredit
+                ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(34,197,94,0.2)", color: "#4ade80" }}>Crédito</span>
+                : null;
+              return (
+                <div key={e.id} className="booking-history-card cursor-pointer hover:opacity-90 transition-opacity" style={{ backgroundColor: cardBg }}
+                  onClick={() => showDetalhes(e)}>
+                  <div className="pb-3">
+                    <div className="flex items-start">
+                      <h4 className="font-bold text-lg text-white flex-grow">{unit?.name || e.serviceName || e.title}</h4>
+                      {tagHtml}
+                    </div>
+                    <div className="flex justify-between text-sm mt-2 mb-4" style={{ color: "#d1d5db" }}>
+                      <span><Calendar className="w-3 h-3 inline mr-2" style={{ color: primary }} />{dateStr}</span>
+                      <span><Clock className="w-3 h-3 inline mr-2" style={{ color: primary }} />{e.startTime}</span>
+                    </div>
+                    <div className="flex items-center">
+                      <div className="w-10 h-10 rounded-full mr-4 flex items-center justify-center text-sm font-bold" style={{ backgroundColor: "#374151", color: primary }}>
+                        {(e.barberName || "?").charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-400">Barbeiro</p>
+                        <p className="font-semibold text-white">{e.barberName || "A definir"}</p>
+                      </div>
+                      <div className="ml-auto text-right">
+                        <p className="text-sm text-gray-400">Serviço</p>
+                        <p className="font-semibold text-white">{e.serviceName || e.title}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="border-t border-gray-700 mt-3 pt-3 text-center">
+                    <span className="font-semibold text-sm" style={{ color: primary }}>Ver detalhes</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {historico.length > 0 && (
+        <>
+          <h3 className="text-xl font-semibold mb-4" style={{ color: primary }}>Histórico de serviços</h3>
+          <div className="space-y-4">
+            {historico.map((e: CalendarEvent) => {
+              const eventDate = new Date(e.year, e.month, e.date);
+              const dateStr = eventDate.toLocaleDateString("pt-BR", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+              const unit = units.find((u: any) => u.id === e.unitId);
+              const tagHtml = e.usedInPlan
+                ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(59,130,246,0.2)", color: "#60a5fa" }}>Plano</span>
+                : e.usedReferralCredit
+                ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(34,197,94,0.2)", color: "#4ade80" }}>Crédito</span>
+                : null;
+              return (
+                <div key={e.id} className="booking-history-card" style={{ backgroundColor: cardBg }}>
+                  <p className="text-sm text-gray-400 mb-2"><Calendar className="w-3 h-3 inline mr-2" style={{ color: primary }} />{dateStr}</p>
+                  <p className="text-sm text-gray-400 mb-4"><Clock className="w-3 h-3 inline mr-2" style={{ color: primary }} />{e.startTime}</p>
+                  <div className="border-t border-gray-700 pt-3">
+                    <div className="flex justify-between items-start">
+                      <p className="font-semibold text-white mb-2">{unit?.name || e.serviceName || e.title}</p>
+                      {tagHtml}
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <div>
+                        <p className="text-gray-400">Barbeiro</p>
+                        <p className="text-white">{e.barberName || "Barbeiro"}</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400">Serviço</p>
+                        <p className="text-white">{e.serviceName || e.title}</p>
+                      </div>
+                    </div>
+                  </div>
+                  {e.rating ? (
+                    <div className="flex justify-center items-center mt-3 pt-3 border-t border-gray-700">
+                      {[1, 2, 3, 4, 5].map((s) => <Star key={s} className="w-4 h-4" style={{ color: s <= e.rating! ? "#fbbf24" : "#6b7280", fill: s <= e.rating! ? "#fbbf24" : "none" }} />)}
+                    </div>
+                  ) : (
+                    <div className="mt-3 pt-3 border-t border-gray-700 grid grid-cols-2 gap-3">
+                      <button onClick={() => showDetalhes(e)} className="py-2 text-sm font-bold rounded-lg border-2 transition-colors" style={{ borderColor: primary, color: primary, backgroundColor: "transparent" }}>Avaliar</button>
+                      <button onClick={() => {
+                        const svc = services.find((s: Service) => s.id === e.serviceId);
+                        const barber = barbers.find((b: any) => b.id === e.barberId);
+                        resetSelection();
+                        if (unit) updateSelection({ unit });
+                        if (barber) updateSelection({ barber });
+                        if (svc) updateSelection({ service: svc });
+                        setActiveView("agendar");
+                      }} className="py-2 text-sm font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Agendar Novamente</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {abertos.length === 0 && historico.length === 0 && (
+        <div className="text-center py-16">
+          <Calendar className="w-12 h-12 mx-auto text-gray-600 mb-4" />
+          <p className="text-gray-400">Nenhum agendamento encontrado.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Cancel Confirm Modal ---
+function CancelConfirmModal({ ev, primary, bgColor, onBack, onConfirm }: any) {
+  const [loading, setLoading] = useState(false);
+  return (
+    <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+      <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-red-500" />
+      <h3 className="text-xl font-bold mb-3 text-white">Confirmar Cancelamento</h3>
+      <p className="text-gray-300 mb-6">Você tem certeza que deseja cancelar este agendamento? Esta ação não pode ser desfeita.</p>
+      <div className="grid grid-cols-2 gap-4">
+        <button onClick={onBack} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        <button onClick={async () => { setLoading(true); await onConfirm(); }} disabled={loading}
+          className="py-3 font-bold rounded-lg bg-red-600 text-white">
+          {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Cancelar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- Remarcar Modal ---
+function RemarcarModal({ ev, primary, bgColor, cardBg, barbers, schedules, events, maxDays, closedDays, slotInterval, onBack, onConfirm }: any) {
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  const [viewDate, setViewDate] = useState(new Date());
+  const [periodo, setPeriodo] = useState<"manha" | "tarde">("manha");
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const maxDate = new Date(today); maxDate.setDate(maxDate.getDate() + 7); // Remarcar limited to 7 days
+
+  const month = viewDate.getMonth();
+  const year = viewDate.getFullYear();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const barber = barbers.find((b: any) => b.id === ev.barberId);
+
+  function isDayAvailable(day: number): boolean {
+    const d = new Date(year, month, day);
+    if (d < today || d > maxDate) return false;
+    if (closedDays.includes(d.getDay())) return false;
+    if (barber) {
+      const ws = schedules.find((s: WorkSchedule) => s.memberId === barber.id && s.dayOfWeek === d.getDay());
+      if (ws && ws.isOff) return false;
+    }
+    return true;
+  }
+
+  function getSlots(): string[] {
+    if (!selectedDate) return [];
+    const barberId = barber?.id;
+    let st = "08:00", et = "19:00", bs = "", be = "";
+    if (barberId) {
+      const ws = schedules.find((s: WorkSchedule) => s.memberId === barberId && s.dayOfWeek === selectedDate.getDay());
+      if (ws) { st = ws.startTime || st; et = ws.endTime || et; bs = ws.breakStart || ""; be = ws.breakEnd || ""; }
+    }
+    let slots = generateTimeSlots(st, et, slotInterval);
+    slots = slots.filter((s) => !isInBreak(s, bs, be));
+    const dayEvts = events.filter((e: any) => e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear() && e.status !== "cancelled" && e.id !== ev.id && (!barberId || e.barberId === barberId) && (!ev.unitId || e.unitId === ev.unitId));
+    // Duration-aware overlap check
+    slots = slots.filter((slot) => {
+      const [sh, sm] = slot.split(":").map(Number);
+      const slotStart = sh * 60 + sm;
+      return !dayEvts.some((e: any) => {
+        const [eH, eM] = (e.startTime || "00:00").split(":").map(Number);
+        const eventStart = eH * 60 + eM;
+        const eventEnd = eventStart + (e.duration || slotInterval);
+        return slotStart >= eventStart && slotStart < eventEnd;
+      });
+    });
+    if (selectedDate.toDateString() === new Date().toDateString()) {
+      const now = new Date();
+      slots = slots.filter((s) => { const [h, m] = s.split(":").map(Number); return h * 60 + m > now.getHours() * 60 + now.getMinutes(); });
+    }
+    return slots;
+  }
+
+  const slots = getSlots();
+  const morningSlots = slots.filter((s) => parseInt(s) < 12);
+  const afternoonSlots = slots.filter((s) => parseInt(s) >= 12);
+  const displaySlots = periodo === "manha" ? morningSlots : afternoonSlots;
+
+  return (
+    <div className="p-6" style={{ borderRadius: "1rem" }}>
+      <h3 className="text-xl font-bold mb-4 text-center" style={{ color: primary }}>Remarcar Horário</h3>
+
+      <div className="flex items-center justify-between mb-4 px-2">
+        <button onClick={() => { const prev = new Date(year, month - 1); if (prev >= new Date(today.getFullYear(), today.getMonth())) setViewDate(prev); }} className="p-1"><ChevronLeft className="w-5 h-5 text-white" /></button>
+        <span className="font-bold text-lg text-white">{MONTHS_PT[month]} {year}</span>
+        <button onClick={() => { const next = new Date(year, month + 1); if (next <= new Date(maxDate.getFullYear(), maxDate.getMonth())) setViewDate(next); }} className="p-1"><ChevronRight className="w-5 h-5 text-white" /></button>
+      </div>
+
+      <div className="booking-calendar-grid mb-2">
+        {WEEKDAYS_PT.map((d) => <span key={d} className="text-xs font-semibold" style={{ color: primary }}>{d}</span>)}
+      </div>
+      <div className="booking-calendar-grid mb-6">
+        {Array.from({ length: firstDay }).map((_, i) => <span key={`e-${i}`} />)}
+        {Array.from({ length: daysInMonth }).map((_, i) => {
+          const day = i + 1;
+          const available = isDayAvailable(day);
+          const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+          const isSelected = selectedDate && day === selectedDate.getDate() && month === selectedDate.getMonth() && year === selectedDate.getFullYear();
+          return (
+            <div key={day}
+              onClick={() => { if (available) { setSelectedDate(new Date(year, month, day)); setSelectedTime(null); setPeriodo("manha"); } }}
+              className={`booking-calendar-day ${available ? "" : "unavailable"} ${isToday ? "today" : ""}`}
+              style={{
+                backgroundColor: isSelected ? primary : available ? "#374151" : "transparent",
+                color: isSelected ? "#111" : available ? "#fff" : "#6b7280",
+                fontWeight: isSelected ? 700 : 500, cursor: available ? "pointer" : "not-allowed",
+              }}>
+              {day}
+            </div>
+          );
+        })}
+      </div>
+
+      <h3 className="font-bold text-center mb-4 text-white">Escolha o novo horário</h3>
+      <div className="flex gap-2 mb-4">
+        {(["manha", "tarde"] as const).map((p) => (
+          <button key={p} onClick={() => setPeriodo(p)} className="flex-1 py-2 rounded-lg font-semibold text-sm"
+            style={{ backgroundColor: periodo === p ? primary : "#4a4a4a", color: periodo === p ? "#111" : "#ccc" }}>
+            {p === "manha" ? "Manhã" : "Tarde"}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-4 gap-2 mb-6">
+        {selectedDate ? (displaySlots.length > 0 ? displaySlots.map((t) => (
+          <div key={t} onClick={() => setSelectedTime(t)}
+            className="booking-time-slot p-3 rounded-lg text-center text-sm font-medium cursor-pointer"
+            style={{ backgroundColor: selectedTime === t ? primary : "#374151", color: selectedTime === t ? "#111" : "#fff" }}>
+            {t}
+          </div>
+        )) : <p className="col-span-4 text-gray-400 text-sm text-center">Sem horários disponíveis.</p>
+        ) : <p className="col-span-4 text-gray-400 text-sm text-center">Selecione uma data.</p>}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <button onClick={onBack} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        <button onClick={() => { if (selectedDate && selectedTime) onConfirm(selectedDate, selectedTime); }}
+          disabled={!selectedDate || !selectedTime}
+          className={`py-3 font-bold rounded-lg ${selectedDate && selectedTime ? "" : "opacity-50"}`}
+          style={{ backgroundColor: primary, color: bgColor }}>
+          Confirmar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- Avaliação Modal ---
+function AvaliacaoModal({ ev, primary, bgColor, onClose, onSubmit }: any) {
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState("");
+  const [loading, setLoading] = useState(false);
+  const commentLabel = rating > 0 && rating < 3 ? "Algo em que podemos melhorar?" : "Deixar um comentário (opcional)";
+
+  return (
+    <div className="p-6 booking-auth" style={{ borderRadius: "1rem" }}>
+      <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Avaliar atendimento</h3>
+      <div className="text-left space-y-3 text-sm mb-6">
+        <p><strong className="text-gray-400">Profissional:</strong><br /><span className="text-white">{ev.barberName}</span></p>
+        <p><strong className="text-gray-400">Serviço:</strong><br /><span className="text-white">{ev.serviceName || ev.title}</span></p>
+      </div>
+      <div className="border-t border-b border-gray-700 py-6">
+        <p className="text-center font-semibold mb-4 text-white">Como foi seu atendimento?</p>
+        <div className="flex justify-center gap-2">
+          {[1, 2, 3, 4, 5].map((s) => (
+            <button key={s} onClick={() => setRating(s)} className="booking-star text-4xl transition-transform hover:scale-110"
+              style={{ color: s <= rating ? "#fbbf24" : "#6b7280" }}>
+              ★
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mt-6">
+        <p className="font-semibold mb-2 text-white transition-opacity">{commentLabel}</p>
+        <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} placeholder="Deixe seu comentário aqui..."
+          className="w-full p-3 rounded-lg" />
+      </div>
+      <button onClick={async () => { setLoading(true); await onSubmit(rating, comment); }} disabled={rating === 0 || loading}
+        className={`w-full py-3 mt-6 font-bold rounded-lg ${rating > 0 ? "" : "opacity-50"}`}
+        style={{ backgroundColor: primary, color: bgColor }}>
+        {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Avaliar"}
+      </button>
+    </div>
+  );
+}
+
+// ============================================================
+// PLANOS VIEW
+// ============================================================
+function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services, authUser, clientProfile, onLogin, openModal, closeModal, onRefresh, setActiveView }: any) {
+
+  function showBeneficiosModal() {
+    openModal(
+      <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+        <Award className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
+        <h3 className="text-2xl font-bold mb-2" style={{ color: primary }}>Benefícios Exclusivos</h3>
+        <p className="text-gray-400 mb-8">Veja as vantagens de ser um assinante.</p>
+        <div className="text-left space-y-5">
+          {[
+            { icon: "⚡", title: "Agilidade e Conveniência", desc: "Agende seus horários de forma rápida e fácil." },
+            { icon: "🏷️", title: "Descontos em Produtos", desc: "Preços especiais em nossa linha de produtos para cabelo e barba." },
+            { icon: "➕", title: "Serviços Adicionais com Desconto", desc: "Descontos exclusivos em serviços como hidratação e pigmentação." },
+            { icon: "⭐", title: "Prioridade e Exclusividade", desc: "Seja o primeiro a saber de novidades e eventos especiais." },
+          ].map(({ icon, title, desc }) => (
+            <div key={title} className="flex items-start gap-4">
+              <span className="text-xl">{icon}</span>
+              <div>
+                <h4 className="font-bold text-white">{title}</h4>
+                <p className="text-sm text-gray-400">{desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={() => closeModal()} className="w-full mt-8 py-3 font-semibold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entendido</button>
+      </div>, "center"
+    );
+  }
+
+  function showGerenciarModal() {
+    if (!subscription?.plan) return;
+    openModal(
+      <div className="p-6" style={{ borderRadius: "1rem" }}>
+        <h3 className="text-2xl font-bold text-center mb-8" style={{ color: primary }}>Gerenciar Assinatura</h3>
+        <div className="p-5 rounded-lg mb-6" style={{ backgroundColor: "#2a2a2a" }}>
+          <h4 className="font-bold text-lg mb-3 text-white">Meu Plano</h4>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">{subscription.plan.name}</span>
+            <span className="font-bold text-white">R$ {Number(subscription.plan.price).toFixed(2)}/mês</span>
+          </div>
+        </div>
+        <div className="space-y-3">
+          <button onClick={() => closeModal(() => showBeneficiosModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+            <span className="flex items-center gap-3"><Award className="w-5 h-5" style={{ color: primary }} />Ver benefícios</span>
+            <ChevronRight className="w-4 h-4 text-gray-500" />
+          </button>
+          <button className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+            <span className="flex items-center gap-3"><Pause className="w-5 h-5" style={{ color: primary }} />Pausar assinatura</span>
+            <ChevronRight className="w-4 h-4 text-gray-500" />
+          </button>
+          <button className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+            <span className="flex items-center gap-3 text-red-500"><XCircle className="w-5 h-5" />Cancelar assinatura</span>
+            <ChevronRight className="w-4 h-4 text-gray-500" />
+          </button>
+        </div>
+        <div className="mt-6 pt-6 border-t border-gray-700">
+          <button onClick={() => closeModal()} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        </div>
+      </div>, "center"
+    );
+  }
+
+  return (
+    <div className="p-6 pb-24">
+      {subscription && subscription.plan && (
+        <div className="pt-4 mb-8">
+          <div className="text-center mb-6">
+            <h2 className="text-3xl font-bold text-white">Plano <span style={{ color: primary }}>Atual</span></h2>
+            <div className="w-20 h-1 mx-auto mt-2 rounded-full booking-underline" style={{ backgroundColor: primary }} />
+          </div>
+          <div className="p-5 rounded-2xl border border-gray-800" style={{ backgroundColor: "#1e1e1e" }}>
+            <div className="flex justify-between items-center mb-5">
+              <h3 className="font-bold text-white text-lg">{subscription.plan.name}</h3>
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ backgroundColor: "#22c55e33", color: "#4ade80" }}>Ativo</span>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-4 gap-3">
+                {Array.from({ length: subscription.plan.maxUsesPerMonth || 4 }).map((_: any, i: number) => {
+                  const isUsed = i < (subscription.usesThisMonth || 0);
+                  return (
+                    <div key={i} className="booking-service-icon" style={{
+                      backgroundColor: isUsed ? "#374151" : "#1e1e1e",
+                      color: isUsed ? "#9ca3af" : primary,
+                      border: isUsed ? "none" : `1px solid ${primary}`,
+                    }}>
+                      <Scissors className="w-5 h-5" />
+                      <span className="text-xs mt-1">{isUsed ? "Usado" : "Livre"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div>
+                <div className="flex justify-between mb-1 text-xs font-medium" style={{ color: "#d1d5db" }}>
+                  <span>Progresso</span>
+                  <span>{subscription.usesThisMonth || 0} de {subscription.plan.maxUsesPerMonth || 4}</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2.5">
+                  <div className="h-2.5 rounded-full booking-progress-bar" style={{ backgroundColor: primary, width: `${Math.min(100, ((subscription.usesThisMonth || 0) / (subscription.plan.maxUsesPerMonth || 4)) * 100)}%` }} />
+                </div>
+              </div>
+            </div>
+            <div className="border-t border-gray-700 my-5" />
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={showGerenciarModal} className="py-2 text-sm font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Gerenciar</button>
+              <button onClick={showBeneficiosModal} className="py-2 text-sm font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Benefícios</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="text-center mb-6">
+        <h2 className="text-3xl font-bold text-white">Nossos <span style={{ color: primary }}>Planos</span></h2>
+        <div className="w-20 h-1 mx-auto mt-2 rounded-full booking-underline" style={{ backgroundColor: primary }} />
+        <p className="text-gray-300 mt-4 text-sm">Economize com nossos planos e aproveite serviços de qualidade.</p>
+      </div>
+
+      <div className="space-y-6">
+        {plans.filter((p: SubscriptionPlan) => p.availableForSale !== false).map((plan: SubscriptionPlan) => {
+          const isCurrent = subscription?.planId === plan.id;
+          return (
+            <div key={plan.id} className="booking-plan-card rounded-xl overflow-hidden" style={{ backgroundColor: "#000", borderColor: isCurrent ? primary : "#444" }}>
+              {isCurrent && <div className="text-center py-1.5 font-bold text-sm" style={{ backgroundColor: primary, color: bgColor }}>SEU PLANO ATUAL</div>}
+              <div className="p-6">
+                <h3 className="text-xl font-bold mb-2 text-white">{plan.name}</h3>
+                <div className="flex items-baseline mb-6">
+                  <span className="text-4xl font-bold" style={{ color: primary }}>R${plan.price.toFixed(2)}</span>
+                  <span className="text-gray-400 ml-1">/{plan.recurrence === "monthly" ? "mês" : plan.recurrence}</span>
+                </div>
+                <ul className="space-y-3 mb-8 text-gray-300 text-sm">
+                  {(plan.benefits || []).map((b: string, i: number) => (
+                    <li key={i} className="flex items-start"><Check className="w-4 h-4 mr-3 mt-0.5 flex-shrink-0" style={{ color: primary }} /><span>{b}</span></li>
+                  ))}
+                </ul>
+                <button disabled={isCurrent}
+                  onClick={() => { if (!authUser) onLogin(); }}
+                  className="w-full py-3 font-bold rounded-lg transition-colors"
+                  style={{ backgroundColor: isCurrent ? "#4a4a4a" : primary, color: isCurrent ? "#888" : bgColor, cursor: isCurrent ? "not-allowed" : "pointer" }}>
+                  {isCurrent ? "Seu Plano Atual" : "Assinar Plano"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer CTA */}
+      <div className="text-center mt-10 pt-6 border-t border-gray-700">
+        <p className="text-gray-400 mb-6">Não tem certeza de qual plano escolher? Entre em contato conosco.</p>
+        <div className="space-y-4">
+          <button onClick={() => setActiveView("agendar")} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Agendar Horário</button>
+          <button onClick={() => {
+            const whatsapp = g("contact.whatsapp", "");
+            if (whatsapp) window.open(`https://wa.me/${whatsapp.replace(/\D/g, "")}`, "_blank");
+          }} className="w-full py-3 font-bold rounded-lg border-2 transition-colors" style={{ borderColor: primary, color: primary, backgroundColor: "transparent" }}>Fale Conosco</button>
+          <button className="w-full py-2.5 text-sm font-medium rounded-lg transition-colors" style={{ backgroundColor: "#222", color: "#9ca3af" }}>Termos e Serviços</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// PERFIL VIEW (complete)
+// ============================================================
+function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goals, services, onLogin, openModal, closeModal, onLogout, onProfileUpdate, setActiveView, updateSelection, resetSelection }: any) {
+  const [creditsExpanded, setCreditsExpanded] = useState(false);
+
+  if (!authUser) {
+    return (
+      <div className="p-6 h-full flex flex-col items-center justify-center text-center min-h-[80vh]">
+        <User className="w-16 h-16 text-gray-600 mb-4" />
+        <h1 className="text-2xl font-bold" style={{ color: primary }}>Meu Perfil</h1>
+        <p className="text-gray-400 mt-2 mb-6">Faça login para acessar seu perfil e gerenciar sua conta.</p>
+        <button onClick={onLogin} className="py-3 px-8 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entrar ou Cadastrar</button>
+      </div>
+    );
+  }
+
+  const firstName = clientProfile?.name?.split(" ")[0] || "Visitante";
+  const credits = clientProfile?.referralCredits || 0;
+  const referrals = clientProfile?.referralsMade || 0;
+
+  function showEditarPerfilModal() {
+    openModal(
+      <EditarPerfilModal primary={primary} bgColor={bgColor} clientProfile={clientProfile}
+        onClose={() => closeModal()} onSave={async (data: any) => {
+          // Convert birthday from DD/MM/AAAA to YYYY-MM-DD if present
+          const saveData = { ...data };
+          if (saveData.birthday && saveData.birthday.includes('/')) {
+            const parts = saveData.birthday.split('/');
+            if (parts.length === 3 && parts[2].length === 4) {
+              saveData.birthday = `${parts[2]}-${parts[1]}-${parts[0]}`;
+            }
+          }
+          await supabase.from("clients").update({ ...saveData, updatedAt: new Date().toISOString() }).eq("id", clientProfile.id);
+          onProfileUpdate({ ...clientProfile, ...saveData });
+          closeModal(() => {
+            openModal(
+              <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+                <Check className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
+                <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Perfil Atualizado!</h3>
+                <p className="text-gray-300 mb-6">Suas informações foram salvas com sucesso.</p>
+                <button onClick={() => closeModal()} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Fechar</button>
+              </div>, "center"
+            );
+          });
+        }}
+      />, "center"
+    );
+  }
+
+  function showIndiqueAmigoModal() {
+    const code = clientProfile?.referralCode || "VINNX10";
+    const msg = `Fala, mestre! ✂️ Estou te dando um desconto no seu primeiro serviço. Use meu código *${code}* no agendamento.`;
+    const waUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+
+    openModal(
+      <IndiqueAmigoModal primary={primary} bgColor={bgColor} code={code} waUrl={waUrl} onClose={() => closeModal()} />, "center"
+    );
+  }
+
+  function showCashbackModal() {
+    openModal(
+      <div className="p-6" style={{ borderRadius: "1rem" }}>
+        <div className="text-center mb-6">
+          <CreditCard className="w-12 h-12 mx-auto mb-3" style={{ color: primary }} />
+          <h3 className="text-2xl font-bold" style={{ color: primary }}>Programa de Cashback</h3>
+          <p className="text-gray-400 text-sm">Acumule créditos e troque por benefícios!</p>
+        </div>
+        <div className="space-y-6">
+          <div className="p-4 rounded-lg" style={{ backgroundColor: "#2a2a2a" }}>
+            <h4 className="font-bold mb-3 text-center" style={{ color: primary }}>Como Acumular Créditos</h4>
+            <div className="space-y-4 text-sm">
+              <div className="flex items-start gap-3">
+                <span className="font-bold w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0" style={{ backgroundColor: primary, color: bgColor }}><Scissors className="w-4 h-4" /></span>
+                <div><p className="font-bold text-white">R$ 2 por Serviço</p><p className="text-gray-400">A cada serviço concluído, você ganha R$ 2,00 de cashback.</p></div>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="font-bold w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0" style={{ backgroundColor: primary, color: bgColor }}><Share2 className="w-4 h-4" /></span>
+                <div><p className="font-bold text-white">R$ 10 por Indicação</p><p className="text-gray-400">Quando um amigo usa seu código, você ganha R$ 10,00.</p></div>
+              </div>
+            </div>
+          </div>
+          <div className="p-4 rounded-lg text-center" style={{ backgroundColor: "#2a2a2a" }}>
+            <h4 className="font-bold mb-3" style={{ color: primary }}>Como Usar seu Crédito</h4>
+            <p className="text-gray-400 text-sm">Seu saldo pode ser usado para resgatar serviços na barbearia ou descontos em produtos exclusivos.</p>
+            <Gift className="w-8 h-8 mx-auto mt-4" style={{ color: primary }} />
+          </div>
+        </div>
+        <button onClick={() => closeModal()} className="w-full mt-6 py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Entendi!</button>
+      </div>, "center"
+    );
+  }
+
+  function showNotificacoesModal() {
+    openModal(<NotificacoesModal primary={primary} bgColor={bgColor} clientProfile={clientProfile} onClose={() => closeModal()} onSave={(p: any) => onProfileUpdate(p)} />, "center");
+  }
+
+  function showAlterarSenhaModal() {
+    openModal(<AlterarSenhaModal primary={primary} bgColor={bgColor} onClose={() => closeModal()} />, "center");
+  }
+
+  function showFaleConoscoModal() {
+    const whatsapp = g("contact.whatsapp", "");
+    openModal(
+      <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+        <MessageCircle className="w-12 h-12 mx-auto mb-4 text-green-500" />
+        <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Fale Conosco</h3>
+        <p className="text-gray-300 mb-6">Deseja abrir uma conversa no WhatsApp para tirar suas dúvidas?</p>
+        <div className="grid grid-cols-2 gap-4">
+          <button onClick={() => closeModal()} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+          <a href={`https://wa.me/${whatsapp.replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer"
+            className="py-3 font-bold rounded-lg bg-green-600 text-white flex items-center justify-center gap-2">
+            <MessageCircle className="w-4 h-4" />WhatsApp
+          </a>
+        </div>
+      </div>, "center"
+    );
+  }
+
+  function handleResgateCredito() {
+    if (credits < 50) return;
+    openModal(
+      <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+        <Gift className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
+        <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Resgatar Crédito</h3>
+        <p className="text-gray-300 mb-6">Você está prestes a usar R$ 50,00 dos seus créditos para resgatar um serviço. Deseja continuar?</p>
+        <div className="grid grid-cols-2 gap-4">
+          <button onClick={() => closeModal()} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Cancelar</button>
+          <button onClick={async () => {
+            // Don't deduct credits yet — deduct after booking is confirmed
+            // Just set up selection for booking with credit flag
+            resetSelection();
+            const firstService = services[0];
+            if (firstService) updateSelection({ service: firstService, isFromCreditRedemption: true });
+            closeModal(() => setActiveView("agendar"));
+          }} className="py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Sim, Resgatar</button>
+        </div>
+      </div>, "center"
+    );
+  }
+
+  return (
+    <div className="p-6 pb-24">
+      {/* Avatar + Name */}
+      <div className="text-center pt-8 mb-8">
+        <div className="relative inline-block">
+          {clientProfile?.profilePic || clientProfile?.avatar ? (
+            <img src={clientProfile.profilePic || clientProfile.avatar} alt="Avatar" className="w-24 h-24 rounded-full object-cover mx-auto border-4" style={{ borderColor: primary }} />
+          ) : (
+            <div className="w-24 h-24 rounded-full mx-auto flex items-center justify-center text-3xl font-bold" style={{ backgroundColor: "#374151", color: primary }}>
+              {firstName.charAt(0).toUpperCase()}
+            </div>
+          )}
+          <button onClick={showEditarPerfilModal} className="absolute bottom-0 right-0 w-8 h-8 rounded-full flex items-center justify-center border-2 border-gray-800" style={{ backgroundColor: "#374151" }}>
+            <Camera className="w-4 h-4 text-white" />
+          </button>
+        </div>
+        <h2 className="text-2xl font-bold mt-4 text-white">{clientProfile?.name || "Visitante"}</h2>
+        <p className="text-gray-400 text-sm">{authUser.email}</p>
+      </div>
+
+      {/* Credits card */}
+      <div className="p-5 rounded-2xl border border-gray-800 mb-6" style={{ background: "linear-gradient(to bottom, #2a2a2a, #1e1e1e)" }}>
+        <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setCreditsExpanded(!creditsExpanded)}>
+          <h3 className="font-bold text-white">Créditos de Indicação</h3>
+          <div className="flex items-center gap-2">
+            <Gift className="w-5 h-5" style={{ color: primary }} />
+            {creditsExpanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+          </div>
+        </div>
+        <div className="text-3xl font-bold mb-2" style={{ color: primary }}>R$ {credits.toFixed(2)}</div>
+        <p className="text-xs text-gray-400">{referrals} indicações realizadas</p>
+
+        {/* Congrats card when credits >= 50 */}
+        {credits >= 50 && (
+          <div className="mt-4 p-5 rounded-2xl text-center relative overflow-hidden booking-zoom-in" style={{ background: "linear-gradient(135deg, #2a2a2a, #111111)", border: `2px solid ${primary}` }}>
+            <div className="relative z-10">
+              <Gift className="w-12 h-12 mx-auto mb-3 booking-tada" style={{ color: primary }} />
+              <p className="font-bold text-xl text-white">Parabéns! Você conseguiu!</p>
+              <p className="text-5xl font-black my-2" style={{ color: primary }}>R$ {credits.toFixed(2).replace(".", ",")}</p>
+              <p className="text-base font-semibold mb-5 text-gray-300">em créditos para usar</p>
+              <button onClick={handleResgateCredito} className="w-full py-3 font-bold rounded-lg transition-all shadow-xl" style={{ backgroundColor: primary, color: bgColor }}>Resgatar Corte Grátis</button>
+            </div>
+          </div>
+        )}
+
+        {/* Expandable details */}
+        <div className={`booking-credit-details ${creditsExpanded ? "expanded" : ""}`}>
+          {clientProfile?.referralCode && (
+            <div className="mt-4 p-3 rounded-lg text-center" style={{ backgroundColor: "#111", border: "2px dashed #666" }}>
+              <p className="text-xs text-gray-400 mb-1">Seu código de indicação</p>
+              <p className="font-bold text-white tracking-wider text-lg">{clientProfile.referralCode}</p>
+              <button onClick={() => {
+                copyToClipboard(clientProfile.referralCode);
+              }} className="mt-2 px-4 py-1.5 rounded-md text-sm font-bold" style={{ backgroundColor: primary, color: bgColor }}>
+                <Copy className="w-3 h-3 inline mr-1" />COPIAR
+              </button>
+            </div>
+          )}
+
+          <button onClick={() => showCashbackModal()} className="w-full mt-3 text-left p-3 rounded-lg flex items-center gap-3 hover:opacity-80" style={{ backgroundColor: "#2a2a2a" }}>
+            <CreditCard className="w-5 h-5" style={{ color: primary }} />
+            <span className="text-sm text-gray-300">Como funciona o cashback?</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Referral goals */}
+      {goals.length > 0 && (
+        <div className="p-5 rounded-2xl border border-gray-800 mb-6" style={{ backgroundColor: "#1e1e1e" }}>
+          <h3 className="font-semibold mb-4 text-center" style={{ color: primary }}>Metas de Indicação</h3>
+          <div className="space-y-6">
+            {goals.map((goal: any) => {
+              const progress = Math.min(referrals / goal.target, 1);
+              const reached = referrals >= goal.target;
+              const redeemed = clientProfile?.redeemedGoals?.includes(goal.id);
+              return (
+                <div key={goal.id} className="flex items-center space-x-4">
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${reached ? "shadow-lg" : "border-2 border-gray-600"}`}
+                    style={{ backgroundColor: reached ? primary : "rgba(75,85,99,0.5)" }}>
+                    <Gift className="w-5 h-5" style={{ color: reached ? bgColor : primary }} />
+                  </div>
+                  <div className="flex-grow">
+                    <div className="flex justify-between items-baseline mb-1">
+                      <p className={`font-bold text-sm ${reached ? "" : "text-white"}`} style={reached ? { color: primary } : {}}>{goal.prize}</p>
+                      <p className={`text-xs ${reached ? "font-bold" : ""}`} style={{ color: reached ? primary : "#d1d5db" }}>{reached ? "Concluído!" : `${referrals}/${goal.target}`}</p>
+                    </div>
+                    <div className="w-full bg-gray-700 rounded-full h-2">
+                      <div className="h-2 rounded-full booking-progress-bar" style={{ backgroundColor: reached ? primary : primary, width: `${progress * 100}%` }} />
+                    </div>
+                    {reached && !redeemed && (
+                      <div className="pt-2">
+                        <button className="text-xs font-bold py-1.5 px-3 rounded-full transition-all" style={{ backgroundColor: primary, color: bgColor }}>Resgatar</button>
+                      </div>
+                    )}
+                    {redeemed && (
+                      <div className="pt-2">
+                        <span className="text-xs font-bold py-1.5 px-3 rounded-full" style={{ backgroundColor: "#374151", color: "#d1d5db" }}>Resgatado</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Info */}
+      <div className="p-5 rounded-2xl border border-gray-800 mb-6" style={{ backgroundColor: "#1e1e1e" }}>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-bold text-white">Informações Pessoais</h3>
+          <button onClick={showEditarPerfilModal}><Edit3 className="w-4 h-4" style={{ color: primary }} /></button>
+        </div>
+        <div className="space-y-4 text-sm">
+          <div>
+            <div className="flex items-center gap-2 text-gray-400 mb-1"><Phone className="w-3 h-3" /><span>Telefone</span></div>
+            <p className="text-white font-medium pl-5">{clientProfile?.phone || "—"}</p>
+          </div>
+          <div>
+            <div className="flex items-center gap-2 text-gray-400 mb-1"><Mail className="w-3 h-3" /><span>Email</span></div>
+            <p className="text-white font-medium pl-5 truncate">{authUser.email}</p>
+          </div>
+          {clientProfile?.birthday && (
+            <div>
+              <div className="flex items-center gap-2 text-gray-400 mb-1"><Gift className="w-3 h-3" /><span>Aniversário</span></div>
+              <p className="text-white font-medium pl-5">{clientProfile.birthday.includes('-') ? clientProfile.birthday.split('-').reverse().join('/') : clientProfile.birthday}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="space-y-3 mb-8">
+        {[
+          { icon: Share2, label: "Indique um Amigo", onClick: showIndiqueAmigoModal },
+          { icon: CreditCard, label: "Cashback", onClick: showCashbackModal },
+          { icon: Bell, label: "Notificações", onClick: showNotificacoesModal },
+          { icon: Lock, label: "Alterar Senha", onClick: showAlterarSenhaModal },
+          { icon: MessageCircle, label: "Fale Conosco", onClick: showFaleConoscoModal },
+        ].map(({ icon: Icon, label, onClick }) => (
+          <button key={label} onClick={onClick} className="w-full text-left p-4 rounded-xl border border-gray-800 flex items-center justify-between hover:border-gray-700 transition-colors"
+            style={{ backgroundColor: "#1e1e1e" }}>
+            <span className="flex items-center gap-3"><Icon className="w-5 h-5" style={{ color: primary }} />{label}</span>
+            <ChevronRight className="w-4 h-4 text-gray-500" />
+          </button>
+        ))}
+      </div>
+
+      {/* Logout */}
+      <button onClick={() => {
+        openModal(
+          <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+            <LogOut className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
+            <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Confirmar Saída</h3>
+            <p className="text-gray-300 mb-6">Você tem certeza que deseja sair da sua conta?</p>
+            <div className="grid grid-cols-2 gap-4">
+              <button onClick={() => closeModal()} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Ficar</button>
+              <button onClick={() => { closeModal(); onLogout(); }} className="py-3 font-bold rounded-lg bg-red-600 text-white">Sair</button>
+            </div>
+          </div>, "center"
+        );
+      }} className="w-full py-3 font-semibold rounded-lg border border-red-800 text-red-400 hover:bg-red-900/20 transition-colors">
+        <LogOut className="w-4 h-4 inline mr-2" />Sair da Conta
+      </button>
+
+      {/* Criado por */}
+      <div className="mt-16 mb-8 text-center">
+        <p className="text-sm text-gray-500">Criado por <span className="font-semibold text-gray-400">VINNX</span></p>
+      </div>
+    </div>
+  );
+}
+
+// --- Editar Perfil Modal ---
+function EditarPerfilModal({ primary, bgColor, clientProfile, onClose, onSave }: any) {
+  const [name, setName] = useState(clientProfile?.name || "");
+  const [phone, setPhone] = useState(clientProfile?.phone || "");
+  const [email, setEmail] = useState(clientProfile?.email || "");
+  const bdRaw = clientProfile?.birthday || "";
+  const bdDisplay = bdRaw.includes('-') ? bdRaw.split('-').reverse().join('/') : bdRaw;
+  const [birthday, setBirthday] = useState(bdDisplay);
+  const [loading, setLoading] = useState(false);
+
+  const hasChanged = name !== (clientProfile?.name || "") || phone !== (clientProfile?.phone || "") || email !== (clientProfile?.email || "") || birthday !== bdDisplay;
+  const valid = name.trim().length > 0 && hasChanged;
+
+  return (
+    <div className="p-6 booking-auth" style={{ borderRadius: "1rem" }}>
+      <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Editar Perfil</h3>
+      <div className="space-y-4">
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome" className="w-full p-3 rounded-lg" />
+        <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))} placeholder="Telefone (celular)" className="w-full p-3 rounded-lg" inputMode="numeric" />
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full p-3 rounded-lg" />
+        <div>
+          <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))} placeholder="Data de aniversário (DD/MM/AAAA)" className="w-full p-3 rounded-lg" maxLength={10} inputMode="numeric" />
+          <p className="text-xs text-gray-400 mt-2 text-center"><Gift className="w-3 h-3 inline mr-1" style={{ color: primary }} />Informe seu aniversário para mimos e descontos especiais!</p>
+        </div>
+      </div>
+      <div className="mt-6 grid grid-cols-2 gap-4">
+        <button onClick={onClose} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        <button onClick={async () => { setLoading(true); await onSave({ name, phone: phone.replace(/\D/g, ""), email, birthday }); }}
+          disabled={!valid || loading} className={`py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
+          style={{ backgroundColor: primary, color: bgColor }}>
+          {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Salvar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- Indique Amigo Modal ---
+function IndiqueAmigoModal({ primary, bgColor, code, waUrl, onClose }: any) {
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <div className="p-6" style={{ borderRadius: "1rem" }}>
+      <div className="text-center mb-6">
+        <Gift className="w-12 h-12 mx-auto mb-3" style={{ color: primary }} />
+        <h3 className="text-2xl font-bold" style={{ color: primary }}>Indique e Ganhe!</h3>
+        <p className="text-gray-400 text-sm">Convide seus amigos e ganhem benefícios juntos.</p>
+      </div>
+      <div className="p-4 rounded-lg mb-6" style={{ backgroundColor: "#2a2a2a" }}>
+        <h4 className="font-bold mb-3 text-center" style={{ color: primary }}>Como funciona?</h4>
+        <div className="space-y-3 text-sm">
+          <div className="flex items-start gap-3">
+            <span className="font-bold w-6 h-6 flex items-center justify-center rounded-full flex-shrink-0 text-xs" style={{ backgroundColor: primary, color: bgColor }}>1</span>
+            <p className="text-gray-400">Seu amigo usa seu código e ganha <strong className="text-white">20% OFF</strong> no primeiro serviço.</p>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="font-bold w-6 h-6 flex items-center justify-center rounded-full flex-shrink-0 text-xs" style={{ backgroundColor: primary, color: bgColor }}>2</span>
+            <p className="text-gray-400">Após o primeiro serviço dele, você ganha <strong className="text-white">R$10 de crédito</strong>.</p>
+          </div>
+        </div>
+      </div>
+      <div className="text-center mb-6">
+        <p className="text-sm text-gray-400 mb-2">Compartilhe seu código de indicação</p>
+        <div className="flex items-center justify-between p-3 rounded-lg" style={{ backgroundColor: "#111", border: "2px dashed #666" }}>
+          <span className="font-bold tracking-wider text-white text-lg">{code}</span>
+          <button onClick={() => { copyToClipboard(code); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+            className="px-4 py-2 rounded-md text-sm font-bold" style={{ backgroundColor: primary, color: bgColor }}>
+            {copied ? "COPIADO!" : "COPIAR"}
+          </button>
+        </div>
+      </div>
+      <div className="space-y-3">
+        <a href={waUrl} target="_blank" rel="noopener noreferrer"
+          className="flex items-center justify-center gap-2 w-full py-3 font-bold rounded-lg bg-green-500 text-white">
+          <MessageCircle className="w-5 h-5" />Compartilhar via WhatsApp
+        </a>
+        <button onClick={onClose} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+      </div>
+    </div>
+  );
+}
+
+// --- Notificações Modal ---
+function NotificacoesModal({ primary, bgColor, clientProfile, onClose, onSave }: any) {
+  const prefs = clientProfile?.notificationPreferences || {};
+  const [emailNotif, setEmailNotif] = useState(prefs.email !== false);
+  const [whatsappNotif, setWhatsappNotif] = useState(prefs.whatsapp !== false);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSave() {
+    setLoading(true);
+    const notificationPreferences = { email: emailNotif, whatsapp: whatsappNotif };
+    if (clientProfile?.id) {
+      await supabase.from("clients").update({ notificationPreferences, updatedAt: new Date().toISOString() }).eq("id", clientProfile.id);
+      if (onSave) onSave({ ...clientProfile, notificationPreferences });
+    }
+    setLoading(false);
+    onClose();
+  }
+
+  return (
+    <div className="p-6" style={{ borderRadius: "1rem" }}>
+      <h3 className="text-2xl font-bold text-center mb-2" style={{ color: primary }}>Notificações</h3>
+      <p className="text-center text-gray-400 text-sm mb-8">Defina suas preferências de notificação.</p>
+      <div className="space-y-4">
+        {[
+          { label: "Notificações por e-mail", value: emailNotif, toggle: () => setEmailNotif(!emailNotif) },
+          { label: "Notificações por WhatsApp", value: whatsappNotif, toggle: () => setWhatsappNotif(!whatsappNotif) },
+        ].map(({ label, value, toggle }) => (
+          <div key={label} onClick={toggle} className="flex justify-between items-center p-4 rounded-lg cursor-pointer" style={{ backgroundColor: "#2a2a2a" }}>
+            <span className="text-white font-medium">{label}</span>
+            <div className="relative w-11 h-6 rounded-full transition-colors" style={{ backgroundColor: value ? primary : "#6b7280" }}>
+              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${value ? "left-6" : "left-1"}`} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-6 grid grid-cols-2 gap-4">
+        <button onClick={onClose} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        <button onClick={handleSave} disabled={loading} className="py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
+          {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Salvar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- Alterar Senha Modal ---
+function AlterarSenhaModal({ primary, bgColor, onClose }: any) {
+  const [current, setCurrent] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+
+  const valid = current.length >= 6 && newPw.length >= 6 && newPw === confirm && newPw !== current;
+
+  async function handleChange() {
+    setLoading(true); setError("");
+    // Re-authenticate with current password first
+    const { data: session } = await supabase.auth.getSession();
+    const userEmail = session?.session?.user?.email;
+    if (!userEmail) { setError("Sessão expirada. Faça login novamente."); setLoading(false); return; }
+    const { error: signInErr } = await supabase.auth.signInWithPassword({ email: userEmail, password: current });
+    if (signInErr) { setError("Senha atual incorreta."); setLoading(false); return; }
+    // Now update
+    const { error: err } = await supabase.auth.updateUser({ password: newPw });
+    if (err) { setError(err.message); setLoading(false); return; }
+    setSuccess(true);
+    setLoading(false);
+  }
+
+  if (success) {
+    return (
+      <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+        <Lock className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
+        <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Senha Alterada!</h3>
+        <p className="text-gray-300 mb-6">Sua senha foi atualizada com sucesso.</p>
+        <button onClick={onClose} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Fechar</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 booking-auth" style={{ borderRadius: "1rem" }}>
+      <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Alterar Senha</h3>
+      <div className="space-y-4">
+        <div className="relative">
+          <label className="text-sm font-semibold text-gray-400 mb-1 block">Senha Atual</label>
+          <input type={showPw ? "text" : "password"} value={current} onChange={(e) => setCurrent(e.target.value)} placeholder="••••••" className="w-full p-3 rounded-lg" />
+        </div>
+        <div className="relative">
+          <label className="text-sm font-semibold text-gray-400 mb-1 block">Nova Senha</label>
+          <input type={showPw ? "text" : "password"} value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="••••••" className="w-full p-3 rounded-lg" />
+        </div>
+        <div className="relative">
+          <label className="text-sm font-semibold text-gray-400 mb-1 block">Confirmar Nova Senha</label>
+          <input type={showPw ? "text" : "password"} value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••" className="w-full p-3 rounded-lg" />
+        </div>
+        <button type="button" onClick={() => setShowPw(!showPw)} className="text-xs flex items-center gap-1" style={{ color: primary }}>
+          {showPw ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}{showPw ? "Ocultar" : "Mostrar"} senhas
+        </button>
+        {newPw && confirm && newPw !== confirm && <p className="text-red-400 text-sm">As senhas não conferem.</p>}
+        {newPw && current && newPw === current && <p className="text-red-400 text-sm">A nova senha não pode ser igual à atual.</p>}
+        {error && <p className="text-red-400 text-sm">{error}</p>}
+      </div>
+      <div className="mt-6 grid grid-cols-2 gap-4">
+        <button onClick={onClose} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        <button onClick={handleChange} disabled={!valid || loading} className={`py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
+          style={{ backgroundColor: primary, color: bgColor }}>
+          {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Salvar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// AUTH FORMS
+// ============================================================
+function LoginForm({ g, primary, onClose, onSwitch, onSuccess }: any) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const valid = email.includes("@") && password.length >= 6;
+
+  async function handleLogin() {
+    setLoading(true); setError("");
+    const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+    if (err) { setError("Email ou senha inválidos."); setLoading(false); return; }
+    onClose(() => { if (onSuccess) onSuccess(); });
+  }
+
+  return (
+    <div className="p-6 text-center booking-auth">
+      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-16 h-16 mb-4 mx-auto object-contain" />}
+      <h2 className="text-2xl font-bold text-white mb-2">Acesse sua conta</h2>
+      <div className="w-24 h-0.5 mx-auto mb-8" style={{ backgroundColor: primary }} />
+      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full p-3 rounded-lg mb-4" />
+      <div className="relative mb-4">
+        <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Senha" className="w-full p-3 rounded-lg pr-10" />
+        <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
+          {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+        </button>
+      </div>
+      {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+      <button onClick={handleLogin} disabled={!valid || loading} className={`w-full py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
+        style={{ backgroundColor: primary, color: "#111" }}>
+        {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Login"}
+      </button>
+      <button onClick={() => onSwitch("forgot")} className="text-sm text-gray-400 mt-4 block mx-auto hover:underline">Esqueceu a senha?</button>
+      <p className="text-sm text-gray-400 mt-2">Não possui conta? <button onClick={() => onSwitch("signup")} className="font-bold hover:underline" style={{ color: primary }}>Faça seu cadastro</button></p>
+      <button onClick={() => onClose()} className="mt-8 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar</button>
+    </div>
+  );
+}
+
+function SignupForm({ g, primary, onClose, onSwitch, onSuccess }: any) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const valid = name.trim().split(" ").length >= 2 && phone.replace(/\D/g, "").length === 11 && email.includes("@") && password.length >= 6 && password === confirmPw;
+
+  async function handleSignup() {
+    setLoading(true); setError("");
+    const { data, error: err } = await supabase.auth.signUp({ email, password, options: { data: { name, phone: phone.replace(/\D/g, "") } } });
+    if (err) {
+      const msg = err.message.includes("already registered") ? "Este email já está cadastrado. Faça login." : err.message;
+      setError(msg); setLoading(false); return;
+    }
+    if (data.user) {
+      // Check if email confirmation is required
+      if (data.user.identities && data.user.identities.length === 0) {
+        setError("Este email já está cadastrado. Tente fazer login.");
+        setLoading(false);
+        return;
+      }
+      const referralCode = name.split(" ")[0].toUpperCase().substring(0, 4) + Math.floor(1000 + Math.random() * 9000);
+      const { error: insertErr } = await supabase.from("clients").insert({
+        id: crypto.randomUUID(),
+        name, email, phone: phone.replace(/\D/g, ""),
+        company: "",
+        status: "ACTIVE",
+        monthlyValue: 0, setupValue: 0, totalValue: 0, monthsActive: 0,
+        authUserId: data.user.id,
+        referralCode,
+        referralCredits: 0,
+        referralsMade: 0,
+        updatedAt: new Date().toISOString(),
+      });
+      if (insertErr) {
+        console.error("Error creating client profile:", insertErr);
+        // Don't block the user — the auto-create in loadClientProfile will handle it
+      }
+      // Small delay to let onAuthStateChange pick up the session
+      await new Promise(r => setTimeout(r, 500));
+    }
+    onClose(() => { if (onSuccess) onSuccess(); });
+  }
+
+  return (
+    <div className="p-6 text-center booking-auth">
+      <h2 className="text-2xl font-bold text-white mb-2">Criar conta</h2>
+      <p className="text-gray-400 text-sm mb-6">Preencha o formulário com seus dados</p>
+      <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome e Sobrenome" className="w-full p-3 rounded-lg mb-4" />
+      <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))} placeholder="Telefone (celular)" className="w-full p-3 rounded-lg mb-4" inputMode="numeric" />
+      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full p-3 rounded-lg mb-4" />
+      <div className="relative mb-4">
+        <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Senha (mín. 6 caracteres)" className="w-full p-3 rounded-lg pr-10" />
+        <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
+          {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+        </button>
+      </div>
+      <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Confirme a senha" className="w-full p-3 rounded-lg mb-4" />
+      {password && confirmPw && password !== confirmPw && <p className="text-red-400 text-sm mb-2">As senhas não conferem.</p>}
+      {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+      <button onClick={handleSignup} disabled={!valid || loading} className={`w-full py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
+        style={{ backgroundColor: primary, color: "#111" }}>
+        {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Criar conta"}
+      </button>
+      <p className="text-xs text-gray-400 mt-4">Ao se cadastrar, você aceita os Termos de Uso e Política de Privacidade.</p>
+      <button onClick={() => onSwitch()} className="mt-6 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar</button>
+    </div>
+  );
+}
+
+function ForgotForm({ g, primary, onClose, onSwitch }: any) {
+  const [email, setEmail] = useState("");
+  const [sent, setSent] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function handleReset() {
+    setLoading(true);
+    await supabase.auth.resetPasswordForEmail(email);
+    setSent(true); setLoading(false);
+  }
+
+  return (
+    <div className="p-6 text-center booking-auth">
+      <h2 className="text-2xl font-bold text-white mb-2">Redefinir senha</h2>
+      {sent ? (
+        <>
+          <p className="text-gray-400 text-sm mb-6">Enviamos um link de redefinição para <strong className="text-white">{email}</strong>. Verifique sua caixa de entrada.</p>
+          <button onClick={() => onSwitch()} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: "#111" }}>Ir para Login</button>
+        </>
+      ) : (
+        <>
+          <p className="text-gray-400 text-sm mb-6">Informe seu e-mail para receber um link de redefinição de senha.</p>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Seu e-mail" className="w-full p-3 rounded-lg mb-4" />
+          <button onClick={handleReset} disabled={!email.includes("@") || loading} className={`w-full py-3 font-bold rounded-lg ${email.includes("@") ? "" : "opacity-50"}`}
+            style={{ backgroundColor: primary, color: "#111" }}>
+            {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Enviar"}
+          </button>
+          <button onClick={() => onSwitch()} className="mt-6 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar para Login</button>
+        </>
+      )}
+    </div>
+  );
+}

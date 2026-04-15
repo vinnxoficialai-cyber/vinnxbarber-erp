@@ -234,6 +234,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 totalVisits: c.totalVisits ?? 0,
                 gender: c.gender || undefined,
                 cpfCnpj: c.cpfCnpj || undefined,
+                unitId: c.unitId || undefined,
             }));
 
             const contracts: Contract[] = (contractsRes.data || []).map(c => ({
@@ -302,6 +303,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                     t.status === 'PENDING' ? 'Pending' : 'Overdue',
                 clientId: t.clientId || undefined,
                 accountId: t.accountId,
+                unitId: t.unitId || undefined,
             }));
 
             const personalTasks: PersonalTask[] = (tasksRes.data || []).map(t => ({
@@ -371,6 +373,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 allowsOnlineBooking: s.allowsOnlineBooking ?? true,
                 registerAllProfessionals: s.registerAllProfessionals ?? true,
                 image: s.image || undefined,
+                unitId: s.unitId || undefined,
             }));
 
             const projects: Project[] = (projectsRes.data || []).map(p => ({
@@ -644,6 +647,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 active: p.active ?? true,
                 createdAt: p.createdAt,
                 updatedAt: p.updatedAt,
+                unitId: p.unitId || undefined,
             }));
 
             const comandas: Comanda[] = (comandasRes.data || []).map(c => ({
@@ -677,6 +681,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                     totalPrice: Number(i.totalPrice) || 0,
                     createdAt: i.createdAt,
                 })),
+                unitId: c.unitId || undefined,
             }));
 
             // Multi-Unit data mapping

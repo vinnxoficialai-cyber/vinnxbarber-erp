@@ -19,6 +19,7 @@ import {
 } from '../lib/dataService';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 
 interface AssinaturasProps { isDarkMode: boolean; currentUser: TeamMember; }
 type PageTab = 'plans' | 'subscribers' | 'dashboard' | 'history' | 'integration';
@@ -51,7 +52,9 @@ const defaultPlanForm = (): SubscriptionPlan => ({
 });
 
 export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUser }) => {
-    const { permissions: contextPermissions, services, clients, members, products, transactions, comandas } = useAppData();
+    const { permissions: contextPermissions } = useAppData();
+    const { filteredServices: services, filteredClients: clients, filteredMembers: members, filteredProducts: products, filteredTransactions: transactions, filteredComandas: comandas, selectedUnitId } = useFilteredData();
+    const isUnitFiltering = selectedUnitId !== 'all';
     const { canCreate } = usePermissions(currentUser, contextPermissions);
     const confirm = useConfirm();
     const toast = useToast();
@@ -102,22 +105,28 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
     useEffect(() => { (async () => { setLoading(true); try { const [p, s] = await Promise.all([getSubscriptionPlans(), getSubscriptions()]); setPlans(p); setSubscriptions(s); } finally { setLoading(false); } })(); }, []);
     const formatCurrency = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+    // Unit-filtered subscriptions
+    const unitClientIds = useMemo(() => new Set(clients.map(c => c.id)), [clients]);
+    const unitSubscriptions = useMemo(() =>
+        isUnitFiltering ? subscriptions.filter(s => unitClientIds.has(s.clientId)) : subscriptions,
+        [subscriptions, unitClientIds, isUnitFiltering]);
+
     // KPIs
     const kpis = useMemo(() => {
-        const act = subscriptions.filter(s => s.status === 'active');
+        const act = unitSubscriptions.filter(s => s.status === 'active');
         const mrr = act.reduce((s, sub) => s + (sub.plan?.price || 0), 0);
-        const cancelled = subscriptions.filter(s => s.status === 'cancelled').length;
-        const paused = subscriptions.filter(s => s.status === 'paused').length;
-        const overdue = subscriptions.filter(s => s.status === 'overdue').length;
-        const churn = subscriptions.length > 0 ? (cancelled / subscriptions.length * 100) : 0;
+        const cancelled = unitSubscriptions.filter(s => s.status === 'cancelled').length;
+        const paused = unitSubscriptions.filter(s => s.status === 'paused').length;
+        const overdue = unitSubscriptions.filter(s => s.status === 'overdue').length;
+        const churn = unitSubscriptions.length > 0 ? (cancelled / unitSubscriptions.length * 100) : 0;
         const avg = act.length > 0 ? mrr / act.length : 0;
         const totalRevenue = mrr * 12;
         const planDist = plans.map(p => {
-            const subs = subscriptions.filter(s => s.planId === p.id && s.status === 'active');
+            const subs = unitSubscriptions.filter(s => s.planId === p.id && s.status === 'active');
             const revenue = subs.length * p.price;
             return { name: p.name, count: subs.length, revenue, pct: mrr > 0 ? (revenue / mrr) * 100 : 0 };
         });
-        const retentionRate = subscriptions.length > 0 ? ((subscriptions.length - cancelled) / subscriptions.length * 100) : 100;
+        const retentionRate = unitSubscriptions.length > 0 ? ((unitSubscriptions.length - cancelled) / unitSubscriptions.length * 100) : 100;
         const ltv = avg * 12 * (retentionRate / 100);
 
         // Date filter for dashboard
@@ -135,7 +144,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         };
 
         // Enterprise metrics
-        const newSales = subscriptions.filter(s => filterByDate(s.createdAt)).length;
+        const newSales = unitSubscriptions.filter(s => filterByDate(s.createdAt)).length;
         const freqAvg = act.length > 0 ? act.reduce((s, sub) => s + sub.usesThisMonth, 0) / act.length : 0;
 
         // Client subscriber IDs
@@ -152,7 +161,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         const extraServicesRevenue = subComandas.reduce((s, c) => s + (c.items || []).filter(i => i.type === 'service').reduce((x, i) => x + i.totalPrice, 0), 0);
         const extraProductsRevenue = subComandas.reduce((s, c) => s + (c.items || []).filter(i => i.type === 'product').reduce((x, i) => x + i.totalPrice, 0), 0);
 
-        // Occupation rate: comandas / (active members × business days in period × estimated daily slots)
+        // Occupation rate: comandas / (active members x business days in period x estimated daily slots)
         const activeMembers = members.filter(m => m.status === 'Active').length;
         const daysInPeriod = dateFrom ? Math.max(1, Math.ceil((now.getTime() - dateFrom.getTime()) / 86400000)) : 30;
         const businessDays = Math.ceil(daysInPeriod * 5 / 7);
@@ -165,7 +174,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         // Top clients by visits
         const topVisits = [...act].sort((a, b) => b.usesThisMonth - a.usesThisMonth).slice(0, 10);
         // New subscribers filtered by period
-        const newSubscribers = subscriptions.filter(s => filterByDate(s.createdAt) && s.status === 'active').slice(0, 10);
+        const newSubscribers = unitSubscriptions.filter(s => filterByDate(s.createdAt) && s.status === 'active').slice(0, 10);
 
         // Professional performance (filtered by period)
         const profPerf = members.filter(m => m.status === 'Active').map(m => {
@@ -187,7 +196,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             topVisits, newSubscribers, profPerf, totalAllRevenue,
             occupationRate, subOccupation, nonSubOccupation,
         };
-    }, [subscriptions, plans, comandas, members, dashPeriod]);
+    }, [unitSubscriptions, plans, comandas, members, dashPeriod]);
     const [dashSubTab, setDashSubTab] = useState<'visits' | 'extras' | 'products' | 'new'>('visits');
     const [profSubTab, setProfSubTab] = useState<'productivity' | 'sales'>('productivity');
 
@@ -647,7 +656,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             {/* ═══ PLAN SUBSCRIBERS MODAL ═══ */}
             {planSubsModalPlanId && (() => {
                 const modalPlan = plans.find(p => p.id === planSubsModalPlanId);
-                const planSubs = subscriptions.filter(s => s.planId === planSubsModalPlanId && (!planSubsSearch || (s.clientName || '').toLowerCase().includes(planSubsSearch.toLowerCase())));
+                const planSubs = unitSubscriptions.filter(s => s.planId === planSubsModalPlanId && (!planSubsSearch || (s.clientName || '').toLowerCase().includes(planSubsSearch.toLowerCase())));
                 return (
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                         <div className={`${bgCard} border ${borderCol} rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]`}>
@@ -754,7 +763,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             <Crown size={48} className={`${textSub} opacity-20 mb-3`} /><p className={`${textSub} text-sm`}>Nenhum plano cadastrado.</p>
                         </div>
                     ) : plans.map(plan => {
-                        const subsCount = subscriptions.filter(s => s.planId === plan.id && s.status === 'active').length;
+                        const subsCount = unitSubscriptions.filter(s => s.planId === plan.id && s.status === 'active').length;
                         return (
                             <div key={plan.id} className={`${bgCard} border ${borderCol} rounded-xl overflow-hidden ${shadowClass} flex flex-col`}>
                                 <div className="p-5 flex-1">

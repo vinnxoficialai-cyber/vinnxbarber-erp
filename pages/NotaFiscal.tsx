@@ -5,6 +5,7 @@ import {
     AlertTriangle, DollarSign, BarChart3, RefreshCw
 } from 'lucide-react';
 import { useAppData } from '../hooks/useAppData';
+import { useFilteredData } from '../hooks/useFilteredData';
 import { useSelectedUnit } from '../context/UnitContext';
 import { useConfirm } from '../components/ConfirmModal';
 import { useToast } from '../components/Toast';
@@ -42,7 +43,8 @@ interface NotaFiscalProps {
 }
 
 export default function NotaFiscal({ isDarkMode, currentUser }: NotaFiscalProps) {
-    const { members, comandas, subscriptions, subscriptionPlans, services } = useAppData();
+    const { subscriptions, subscriptionPlans } = useAppData();
+    const { filteredMembers: members, filteredComandas: comandas, filteredServices: services } = useFilteredData();
     const confirm = useConfirm();
     const toast = useToast();
 

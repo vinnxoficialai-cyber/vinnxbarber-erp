@@ -19,6 +19,7 @@ import {
 import { uploadBase64Image, isBase64 } from '../lib/storage';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 import { supabase } from '../lib/supabase';
 
 interface ProdutosProps {
@@ -61,7 +62,8 @@ const MOVEMENT_TYPES: Record<string, { label: string; color: string; icon: React
 };
 
 export const Produtos: React.FC<ProdutosProps> = ({ isDarkMode, currentUser }) => {
-    const { products, setProducts, comandas, permissions: contextPermissions } = useAppData();
+    const { setProducts, permissions: contextPermissions } = useAppData();
+    const { filteredProducts: products, filteredComandas: comandas } = useFilteredData();
     const { canCreate, canEdit, canDelete } = usePermissions(currentUser, contextPermissions);
     const confirm = useConfirm();
     const toast = useToast();

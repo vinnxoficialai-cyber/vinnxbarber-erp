@@ -11,6 +11,7 @@ import { useConfirm } from '../components/ConfirmModal';
 import { useToast } from '../components/Toast';
 import { saveCalendarEvent, deleteCalendarEvent, getWorkSchedules, saveAppSettings, saveClient, createComandaFromAppointment, saveComanda } from '../lib/dataService';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 import { useSelectedUnit } from '../context/UnitContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { HistoryModal, eventToHistoryItem } from '../components/HistoryModal';
@@ -304,14 +305,18 @@ const DraggableCard: React.FC<{
 // ══════════════════════════════════════════════════════════════
 export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
   const {
-    calendarEvents: events, setCalendarEvents, clients: contextClients, members, services, refresh,
-    permissions: contextPermissions, comandas, setComandas
+    setCalendarEvents, refresh,
+    permissions: contextPermissions, setComandas
   } = useAppData();
+  const {
+    filteredCalendarEvents: events, filteredClients: contextClients,
+    filteredMembers: members, filteredServices: services,
+    filteredComandas: comandas, selectedUnitId
+  } = useFilteredData();
   const [inlineClients, setInlineClients] = useState<Client[]>([]);
   const clients = useMemo(() => [...contextClients, ...inlineClients], [contextClients, inlineClients]);
   const { isAdminOrManager } = usePermissions(currentUser, contextPermissions);
   const isAdmin = isAdminOrManager;
-  const { selectedUnitId } = useSelectedUnit();
 
   // ── State ──────────────────────────────────────────────────
   const [view, setView] = useState<ViewMode>('day');

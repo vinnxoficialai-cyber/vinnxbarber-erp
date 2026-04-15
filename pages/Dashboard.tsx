@@ -13,6 +13,7 @@ import { StatCard } from '../components/StatCard';
 import { formatCurrency } from '../utils';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 import { useSelectedUnit } from '../context/UnitContext';
 import { getSubscriptions } from '../lib/dataService';
 import { TeamMember, Subscription } from '../types';
@@ -42,13 +43,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentUser: userProp }) =
 
   // ===== DATA FROM CENTRALIZED CONTEXT =====
   const {
-    clients, transactions, calendarEvents: events, members,
-    bankAccounts, permissions, loading, comandas, products,
+    bankAccounts, permissions, loading,
     recurringExpenses, refresh,
   } = useAppData();
 
-  // Multi-unit context
-  const { selectedUnitId, isFiltering: isUnitFiltering } = useSelectedUnit();
+  // Unit-filtered data
+  const {
+    filteredClients: clients, filteredTransactions: transactions,
+    filteredCalendarEvents: events, filteredMembers: members,
+    filteredComandas: comandas, filteredProducts: products,
+    selectedUnitId,
+  } = useFilteredData();
+
+  const isUnitFiltering = selectedUnitId !== 'all';
 
   // Refresh data on Dashboard mount
   useEffect(() => { refresh(true); }, []);
@@ -95,9 +102,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentUser: userProp }) =
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [insightsTab, setInsightsTab] = useState<'assinantes' | 'avulsos'>('assinantes');
 
-  // Active barbers for the filter dropdown
+  // Active barbers for performance (exclude Admin/Manager — they don't perform services)
   const activeBarbers = useMemo(() =>
-    members.filter(m => m.status === 'Active'),
+    members.filter(m => m.status === 'Active' && m.role !== 'Admin' && m.role !== 'Manager'),
     [members]);
 
   // Date range helper — month-based, with optional day filter
@@ -219,10 +226,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentUser: userProp }) =
     return clients.filter(c => c.status === 'Active' && !clientsWithComanda.has(c.id)).length;
   }, [clients, periodClosedComandas]);
 
-  // Assinantes Ativos
+  // Assinantes Ativos (filtered by unit clients)
+  const unitClientIds = useMemo(() => new Set(clients.map(c => c.id)), [clients]);
+  const unitSubscriptions = useMemo(() =>
+    isUnitFiltering ? subscriptions.filter(s => unitClientIds.has(s.clientId)) : subscriptions,
+    [subscriptions, unitClientIds, isUnitFiltering]);
+
   const activeSubscribers = useMemo(() =>
-    subscriptions.filter(s => s.status === 'active').length,
-    [subscriptions]);
+    unitSubscriptions.filter(s => s.status === 'active').length,
+    [unitSubscriptions]);
 
   // Produtos com Estoque Baixo
   const lowStockProducts = useMemo(() =>
@@ -257,11 +269,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentUser: userProp }) =
       .reduce((acc, t) => acc + Math.abs(t.amount), 0),
     [transactions, currentMonth, currentYear]);
 
-  // MRR (from subscriptions — plan is already joined by getSubscriptions)
+  // MRR (from subscriptions — filtered by unit)
   const mrr = useMemo(() => {
-    const active = subscriptions.filter(s => s.status === 'active');
+    const active = unitSubscriptions.filter(s => s.status === 'active');
     return active.reduce((acc, sub) => acc + (sub.plan?.price || 0), 0);
-  }, [subscriptions]);
+  }, [unitSubscriptions]);
 
   // Contas Pendentes + Atrasadas
   const pendingAmount = useMemo(() =>
@@ -294,13 +306,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentUser: userProp }) =
     });
   }, [transactions, comandas, currentYear]);
 
-  // Próximos Agendamentos
-  const upcomingAppointments = useMemo(() =>
-    events
+  // Próximos Agendamentos (strictly filtered by unit)
+  const upcomingAppointments = useMemo(() => {
+    // When filtering by unit, only show events that belong to this unit
+    // For events without unitId, fall back to barberId matching unit members
+    const memberIds = isUnitFiltering ? new Set(members.map(m => m.id)) : null;
+    return events
       .filter(event => {
         const eventDate = new Date(event.year, event.month, event.date);
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        return eventDate >= today;
+        if (eventDate < today) return false;
+        // Unit filter: if filtering, only show events for this unit
+        if (isUnitFiltering && memberIds) {
+          if (event.unitId) return event.unitId === selectedUnitId;
+          // Fallback: match by barber belonging to this unit
+          if (event.barberId) return memberIds.has(event.barberId);
+          return false; // No unitId AND no barberId → skip
+        }
+        return true;
       })
       .sort((a, b) => {
         const dateA = new Date(a.year, a.month, a.date);
@@ -308,8 +331,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentUser: userProp }) =
         if (dateA.getTime() !== dateB.getTime()) return dateA.getTime() - dateB.getTime();
         return (a.startTime || '').localeCompare(b.startTime || '');
       })
-      .slice(0, 5),
-    [events, now]);
+      .slice(0, 5);
+  }, [events, members, isUnitFiltering, selectedUnitId, now]);
 
   // Performance por Barbeiro
   const barberPerformance = useMemo(() => {
@@ -706,7 +729,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentUser: userProp }) =
           {/* Insights Card (Aniq style — 3 concentric rings + toggle) */}
           {isAdminOrManager && (() => {
             const subscriberClientIds = new Set(
-              subscriptions.filter(s => s.status === 'active').map(s => s.clientId)
+              unitSubscriptions.filter(s => s.status === 'active').map(s => s.clientId)
             );
             const closedInPeriod = filteredComandas.filter(c => c.status === 'closed' && inPeriod(c.closedAt || c.openedAt));
             const subComandas = closedInPeriod.filter(c => c.clientId && subscriberClientIds.has(c.clientId));

@@ -6,6 +6,7 @@ import {
     Filter, Clock, CheckCircle, XCircle,
 } from 'lucide-react';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 import { TeamMember } from '../types';
 
 interface RelatoriosProps {
@@ -25,7 +26,7 @@ const TABS: { key: ReportTab; label: string; icon: React.ElementType }[] = [
 ];
 
 export const Relatorios: React.FC<RelatoriosProps> = ({ isDarkMode, currentUser }) => {
-    const { clients, members, services, products, transactions, comandas } = useAppData();
+    const { filteredClients: clients, filteredMembers: members, filteredServices: services, filteredProducts: products, filteredTransactions: transactions, filteredComandas: comandas } = useFilteredData();
     const textMain = isDarkMode ? 'text-slate-50' : 'text-slate-900';
     const textSub = isDarkMode ? 'text-slate-400' : 'text-slate-600';
     const bgCard = isDarkMode ? 'bg-dark-surface' : 'bg-white';

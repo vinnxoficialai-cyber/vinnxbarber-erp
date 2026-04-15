@@ -1,14 +1,17 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { Search, Filter, Plus, X, User, Mail, Phone, Shield, Briefcase, Lock, Image as ImageIcon, Upload, Trash2, MoreHorizontal, Eye, EyeOff, CheckCircle2, Trophy, TrendingUp, CalendarClock, DollarSign, FileText, Percent, Loader2, Building2, CreditCard, Banknote, Wallet, Scissors, Crown, ShoppingBag, BarChart3, Star, Users, PieChart, Target } from 'lucide-react';
-import { TeamMember, Client, Contract, ClientReview, Comanda, Subscription } from '../types';
+import { Search, Filter, Plus, X, User, Mail, Phone, Shield, Briefcase, Lock, Image as ImageIcon, Upload, Trash2, MoreHorizontal, Eye, EyeOff, CheckCircle2, Trophy, TrendingUp, CalendarClock, DollarSign, FileText, Percent, Loader2, Building2, CreditCard, Banknote, Wallet, Scissors, Crown, ShoppingBag, BarChart3, Star, Users, PieChart, Target, Download, ChevronDown, MapPin } from 'lucide-react';
+import { TeamMember, Client, Contract, ClientReview, Comanda, Subscription, Unit } from '../types';
 import { CustomDropdown } from '../components/CustomDropdown';
 import { useConfirm } from '../components/ConfirmModal';
 import { usePasswordConfirm } from '../components/PasswordConfirmModal';
 import { useToast } from '../components/Toast';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
+import { useSelectedUnit } from '../context/UnitContext';
 import { uploadBase64Image, isBase64 } from '../lib/storage';
-import { saveMember, deleteMember } from '../lib/dataService';
+import { saveMember, deleteMember, saveUnitMembersBulk, saveUnitMember, removeUnitMemberByUser } from '../lib/dataService';
+import { authService } from '../lib/auth';
 
 interface TeamProps {
   members: TeamMember[];
@@ -26,7 +29,8 @@ const IndicatorsTab: React.FC<{
   memberId: string; isDarkMode: boolean; textMain: string; textSub: string;
   bgCard: string; borderCol: string; bgInput: string;
 }> = ({ memberId, isDarkMode, textMain, textSub, bgCard, borderCol }) => {
-  const { clients, comandas, subscriptions } = useAppData();
+  const { subscriptions } = useAppData();
+  const { filteredClients: clients, filteredComandas: comandas } = useFilteredData();
 
   const stats = useMemo(() => {
     // Clientes da Cadeira
@@ -204,7 +208,8 @@ const ReviewsTab: React.FC<{
   memberId: string; isDarkMode: boolean; textMain: string; textSub: string;
   bgCard: string; borderCol: string;
 }> = ({ memberId, isDarkMode, textMain, textSub, borderCol }) => {
-  const { clientReviews, clients } = useAppData();
+  const { clientReviews } = useAppData();
+  const { filteredClients: clients } = useFilteredData();
 
   const barberReviews = useMemo(() =>
     (clientReviews || []).filter(r => r.barberId === memberId).sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()),
@@ -309,9 +314,20 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importSearch, setImportSearch] = useState('');
+  const [importSelected, setImportSelected] = useState<Set<string>>(new Set());
+  const [importLoading, setImportLoading] = useState(false);
+  const [showAddDropdown, setShowAddDropdown] = useState(false);
   const confirm = useConfirm();
   const passwordConfirm = usePasswordConfirm();
   const toast = useToast();
+
+  // Unit context
+  const { selectedUnitId } = useSelectedUnit();
+  const { units, unitMembers, setUnitMembers } = useAppData();
+  const isFilteringUnit = selectedUnitId !== 'all';
+  const selectedUnit = units.find(u => u.id === selectedUnitId);
 
   // Access Control
   const { permissions: contextPermissions } = useAppData();
@@ -337,7 +353,7 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
 
   // Form State
   // Form State
-  const [activeTab, setActiveTab] = useState<'profile' | 'contract' | 'financial' | 'indicators' | 'reviews'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'contract' | 'financial' | 'indicators' | 'reviews' | 'units'>('profile');
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -574,6 +590,26 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
       } else {
         setMembers([...members, memberData]);
         toast.success('Colaborador adicionado', `${formData.name} foi adicionado à equipe.`);
+
+        // Auto-link new member to selected unit
+        if (isFilteringUnit && memberData.role !== 'Admin' && memberData.role !== 'Manager') {
+          await saveUnitMember({
+            id: `temp_${Date.now()}`,
+            unitId: selectedUnitId,
+            userId: memberData.id,
+            role: 'member',
+            isPrimary: true,
+          });
+          // Update local state instead of full refresh
+          setUnitMembers(prev => [...prev, {
+            id: `local_${Date.now()}`,
+            unitId: selectedUnitId,
+            userId: memberData.id,
+            role: 'member',
+            isPrimary: true,
+            createdAt: new Date().toISOString(),
+          }]);
+        }
       }
       setIsModalOpen(false);
     } catch (err) {
@@ -587,22 +623,24 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
   const handleDelete = async (id: string) => {
     const member = members.find(m => m.id === id);
 
-    // Confirm action with modal
-    const confirmDelete = await confirm({
-      title: 'Excluir Colaborador',
-      message: `Tem certeza que deseja remover "${member?.name || 'este colaborador'}"? Esta ação não pode ser desfeita.`,
-      variant: 'danger',
-      confirmLabel: 'Excluir',
-      cancelLabel: 'Cancelar'
-    });
-
-    if (!confirmDelete) return;
-
     // Check if user is Admin
     if (!isAdmin) {
       toast.error('Sem permissão', 'Apenas administradores podem excluir colaboradores.');
       return;
     }
+
+    // Confirm action with password
+    const confirmDelete = await passwordConfirm({
+      title: 'Excluir Colaborador',
+      message: `Para remover "${member?.name || 'este colaborador'}", confirme sua senha. Esta ação não pode ser desfeita.`,
+      action: 'Confirmar Exclusão',
+      onValidate: async (password: string) => {
+        const { error } = await authService.signIn(currentUser.email, password);
+        return !error;
+      }
+    });
+
+    if (!confirmDelete) return;
 
     // Persistir deleção no Supabase
     const result = await deleteMember(id);
@@ -706,6 +744,15 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
                   className={`pb-2 text-sm font-medium transition-colors border-b-2 ${activeTab === 'reviews' ? 'border-primary text-primary' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
                 >
                   Avaliações
+                </button>
+              )}
+              {editingId && isAdminOrManager && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('units')}
+                  className={`pb-2 text-sm font-medium transition-colors border-b-2 ${activeTab === 'units' ? 'border-primary text-primary' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                >
+                  Unidades
                 </button>
               )}
             </div>
@@ -1111,6 +1158,144 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
                 <ReviewsTab memberId={editingId} isDarkMode={isDarkMode} textMain={textMain} textSub={textSub} bgCard={bgCard} borderCol={borderCol} />
               )}
 
+              {/* TAB: Unidades */}
+              {activeTab === 'units' && editingId && (() => {
+                const editingMember = members.find(m => m.id === editingId);
+                const isGlobalRole = editingMember?.role === 'Admin' || editingMember?.role === 'Manager';
+                const memberLinks = unitMembers.filter(um => um.userId === editingId);
+                const linkedUnitIds = new Set(memberLinks.map(um => um.unitId));
+
+                const handleToggleUnit = async (unitId: string, isLinked: boolean) => {
+                  try {
+                    if (isLinked) {
+                      await removeUnitMemberByUser(unitId, editingId);
+                      // Update local state
+                      setUnitMembers(prev => prev.filter(um => !(um.unitId === unitId && um.userId === editingId)));
+                      toast.success('Removido', 'Colaborador desvinculado da unidade.');
+                    } else {
+                      await saveUnitMember({ id: `temp_${Date.now()}`, unitId, userId: editingId, role: 'member', isPrimary: false });
+                      // Update local state
+                      setUnitMembers(prev => [...prev, {
+                        id: `local_${Date.now()}`,
+                        unitId,
+                        userId: editingId,
+                        role: 'member',
+                        isPrimary: false,
+                        createdAt: new Date().toISOString(),
+                      }]);
+                      toast.success('Vinculado', 'Colaborador vinculado a unidade.');
+                    }
+                  } catch {
+                    toast.error('Erro', 'Falha ao atualizar vinculo.');
+                  }
+                };
+
+                return (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                    {/* Header info */}
+                    <div className={`flex items-start gap-3 p-3.5 rounded-lg border ${isGlobalRole
+                      ? isDarkMode ? 'bg-violet-500/5 border-violet-500/20' : 'bg-violet-50 border-violet-200'
+                      : isDarkMode ? 'bg-blue-500/5 border-blue-500/20' : 'bg-blue-50 border-blue-200'
+                      }`}>
+                      {isGlobalRole ? (
+                        <Shield size={18} className="text-violet-500 mt-0.5 shrink-0" />
+                      ) : (
+                        <Building2 size={18} className="text-blue-500 mt-0.5 shrink-0" />
+                      )}
+                      <div>
+                        <p className={`text-sm font-semibold ${textMain}`}>
+                          {isGlobalRole ? 'Acesso global' : 'Vincular a unidades'}
+                        </p>
+                        <p className={`text-xs ${textSub} mt-0.5`}>
+                          {isGlobalRole
+                            ? 'Gestores (Admin/Manager) aparecem automaticamente em todas as unidades.'
+                            : 'Selecione as unidades onde este colaborador deve atuar. Ele aparecera apenas nas unidades marcadas.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Unit list */}
+                    <div className="space-y-3">
+                      {units.filter(u => u.status === 'active').map(unit => {
+                        const isLinked = isGlobalRole || linkedUnitIds.has(unit.id);
+                        return (
+                          <button
+                            key={unit.id}
+                            type="button"
+                            disabled={isGlobalRole}
+                            onClick={() => handleToggleUnit(unit.id, isLinked)}
+                            className={`w-full flex items-start gap-4 p-4 rounded-xl border text-left transition-all ${isLinked
+                              ? isDarkMode
+                                ? 'bg-primary/5 border-primary/30 ring-1 ring-primary/10'
+                                : 'bg-primary/5 border-primary/25 ring-1 ring-primary/10'
+                              : isDarkMode
+                                ? 'bg-dark border-dark-border hover:border-slate-500'
+                                : 'bg-white border-slate-200 hover:border-slate-400 hover:shadow-sm'
+                              } ${isGlobalRole ? 'opacity-80 cursor-default' : 'cursor-pointer'}`}
+                          >
+                            {/* Checkbox */}
+                            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-1 transition-colors ${isLinked ? 'bg-primary border-primary' : isDarkMode ? 'border-slate-600' : 'border-slate-300'
+                              }`}>
+                              {isLinked && <CheckCircle2 size={14} className="text-white" />}
+                            </div>
+
+                            {/* Unit logo */}
+                            <div className={`w-11 h-11 rounded-lg flex items-center justify-center shrink-0 border overflow-hidden ${isDarkMode ? 'bg-dark border-dark-border' : 'bg-slate-100 border-slate-200'
+                              }`}>
+                              {unit.profileImage ? (
+                                <img src={unit.profileImage} alt={unit.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <Building2 size={20} className={isDarkMode ? 'text-slate-600' : 'text-slate-400'} />
+                              )}
+                            </div>
+
+                            {/* Info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <p className={`text-sm font-bold ${textMain} truncate`}>{unit.name}</p>
+                                {isLinked && !isGlobalRole && (
+                                  <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                                    Vinculado
+                                  </span>
+                                )}
+                              </div>
+                              {unit.tradeName && (
+                                <p className={`text-xs ${textSub} truncate mb-1`}>{unit.tradeName}</p>
+                              )}
+                              <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] ${textSub}`}>
+                                {unit.address && (
+                                  <span className="flex items-center gap-1 truncate">
+                                    <MapPin size={10} className="shrink-0" /> {unit.address} — {unit.city}/{unit.state}
+                                  </span>
+                                )}
+                                {unit.phone && (
+                                  <span className="flex items-center gap-1">
+                                    <Phone size={10} className="shrink-0" /> {unit.phone}
+                                  </span>
+                                )}
+                                {unit.managerName && (
+                                  <span className="flex items-center gap-1">
+                                    <User size={10} className="shrink-0" /> {unit.managerName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {units.filter(u => u.status === 'active').length === 0 && (
+                      <div className={`text-center py-10 ${textSub}`}>
+                        <Building2 size={40} className="mx-auto mb-3 opacity-20" />
+                        <p className="text-sm font-medium">Nenhuma unidade ativa cadastrada.</p>
+                        <p className="text-xs mt-1">Cadastre unidades na tela de Unidades para vincular colaboradores.</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
             </form>
 
             {/* Footer — FORA do form, pinado no rodapé */}
@@ -1165,12 +1350,40 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
             <Filter size={20} />
           </button>
           {canAddMember && (
-            <button
-              onClick={() => handleOpenModal()}
-              className="px-4 py-2 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg text-sm transition-colors flex items-center gap-2"
-            >
-              <Plus size={18} /> Novo Colaborador
-            </button>
+            <div className="relative">
+              <div className="flex">
+                <button
+                  onClick={() => handleOpenModal()}
+                  className="px-4 py-2 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg rounded-r-none text-sm transition-colors flex items-center gap-2"
+                >
+                  <Plus size={18} /> Adicionar
+                </button>
+                <button
+                  onClick={() => setShowAddDropdown(!showAddDropdown)}
+                  className="px-2 py-2 bg-primary hover:bg-primary-600 text-white rounded-lg rounded-l-none border-l border-white/20 transition-colors"
+                >
+                  <ChevronDown size={16} />
+                </button>
+              </div>
+              {showAddDropdown && (
+                <div className={`absolute right-0 top-full mt-1 w-full min-w-max rounded-lg border shadow-xl z-50 overflow-hidden ${isDarkMode ? 'bg-dark-surface border-dark-border' : 'bg-white border-slate-200'}`}>
+                  <button
+                    onClick={() => { setShowAddDropdown(false); handleOpenModal(); }}
+                    className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2.5 transition-colors whitespace-nowrap ${isDarkMode ? 'hover:bg-dark text-slate-200' : 'hover:bg-slate-50 text-slate-700'}`}
+                  >
+                    <Plus size={14} className="text-primary" /> Adicionar Membro
+                  </button>
+                  {isFilteringUnit && (
+                    <button
+                      onClick={() => { setShowAddDropdown(false); setIsImportModalOpen(true); setImportSearch(''); setImportSelected(new Set()); }}
+                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2.5 transition-colors border-t whitespace-nowrap ${isDarkMode ? 'hover:bg-dark text-slate-200 border-dark-border' : 'hover:bg-slate-50 text-slate-700 border-slate-100'}`}
+                    >
+                      <Download size={14} className="text-blue-500" /> Importar Membro
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -1211,6 +1424,30 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
                   {member.role === 'Admin' ? <Shield size={10} /> : <Briefcase size={10} />}
                   {member.role}
                 </div>
+
+                {/* Unit Badges */}
+                {(() => {
+                  const memberUnits = unitMembers
+                    .filter(um => um.userId === member.id)
+                    .map(um => units.find(u => u.id === um.unitId))
+                    .filter(Boolean) as Unit[];
+                  const activeUnits = units.filter(u => u.status === 'active');
+                  const isGlobal = member.role === 'Admin' || member.role === 'Manager';
+                  const isInAllUnits = !isGlobal && activeUnits.length > 0 && memberUnits.length >= activeUnits.length;
+                  return (isGlobal || memberUnits.length > 0) ? (
+                    <div className="flex flex-wrap gap-1 justify-center mb-2">
+                      {(isGlobal || isInAllUnits) ? (
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-semibold ${isDarkMode ? 'bg-violet-500/15 text-violet-400 border border-violet-500/20' : 'bg-violet-50 text-violet-600 border border-violet-200'}`}>
+                          <MapPin size={8} /> Todas as unidades
+                        </span>
+                      ) : memberUnits.map(u => (
+                        <span key={u.id} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-semibold ${isDarkMode ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-emerald-50 text-emerald-600 border border-emerald-200'}`}>
+                          <MapPin size={8} /> {u.tradeName || u.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null;
+                })()}
 
                 {/* Tenure (Time with Company) */}
                 <div className={`text-xs ${textSub} mb-4 flex items-center gap-1`}>
@@ -1270,10 +1507,192 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
       </div>
 
       {filteredMembers.length === 0 && (
-        <div className={`text-center py-12 ${textSub}`}>
-          <p>Nenhum colaborador encontrado.</p>
+        <div className={`text-center py-16 ${textSub}`}>
+          <Users size={48} className="mx-auto mb-4 opacity-30" />
+          <p className="text-lg font-semibold mb-1">Nenhum colaborador nesta unidade</p>
+          <p className="text-sm mb-4">Adicione um novo colaborador ou importe de outra unidade.</p>
+          {isFilteringUnit && canAddMember && (
+            <button
+              onClick={() => { setIsImportModalOpen(true); setImportSearch(''); setImportSelected(new Set()); }}
+              className="px-4 py-2 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg text-sm transition-colors inline-flex items-center gap-2"
+            >
+              <Download size={16} /> Importar Colaboradores
+            </button>
+          )}
         </div>
       )}
+
+      {/* Import Modal */}
+      {isImportModalOpen && (() => {
+        // Get members NOT in this unit (exclude Admin/Manager since they're global)
+        const currentUnitMemberIds = new Set(unitMembers.filter(um => um.unitId === selectedUnitId).map(um => um.userId));
+        const importableMembers = members.filter(m =>
+          m.role !== 'Admin' && m.role !== 'Manager' &&
+          !currentUnitMemberIds.has(m.id)
+        );
+        const filtered = importableMembers.filter(m =>
+          m.name.toLowerCase().includes(importSearch.toLowerCase()) ||
+          m.email.toLowerCase().includes(importSearch.toLowerCase())
+        );
+
+        const handleImport = async () => {
+          if (importSelected.size === 0) return;
+          setImportLoading(true);
+          try {
+            const result = await saveUnitMembersBulk(selectedUnitId, Array.from(importSelected));
+            if (result.success) {
+              toast.success('Colaboradores importados', `${importSelected.size} colaborador(es) vinculado(s) a ${selectedUnit?.name || 'esta unidade'}.`);
+              // Update local state instead of full refresh
+              const now = new Date().toISOString();
+              const newLinks = Array.from(importSelected).map(userId => ({
+                id: `local_${Date.now()}_${userId}`,
+                unitId: selectedUnitId,
+                userId,
+                role: 'member',
+                isPrimary: false,
+                createdAt: now,
+              }));
+              setUnitMembers(prev => [...prev, ...newLinks]);
+              setIsImportModalOpen(false);
+            } else {
+              toast.error('Erro', result.error || 'Falha ao importar.');
+            }
+          } catch {
+            toast.error('Erro', 'Falha ao importar colaboradores.');
+          } finally {
+            setImportLoading(false);
+          }
+        };
+
+        const toggleSelect = (id: string) => {
+          const next = new Set(importSelected);
+          if (next.has(id)) next.delete(id); else next.add(id);
+          setImportSelected(next);
+        };
+
+        const toggleAll = () => {
+          if (importSelected.size === filtered.length) {
+            setImportSelected(new Set());
+          } else {
+            setImportSelected(new Set(filtered.map(m => m.id)));
+          }
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <div className={`${bgCard} border ${borderCol} rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[80vh]`}>
+              {/* Header */}
+              <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                <div>
+                  <h3 className={`font-semibold text-lg ${textMain}`}>Importar Colaboradores</h3>
+                  <p className={`text-xs ${textSub} mt-0.5`}>Selecione colaboradores de outras unidades para vincular a <strong>{selectedUnit?.name}</strong></p>
+                </div>
+                <button onClick={() => setIsImportModalOpen(false)} className={`${textSub} hover:${textMain}`}>
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Search */}
+              <div className="p-3 border-b" style={{ borderColor: isDarkMode ? 'rgb(55,65,81)' : 'rgb(226,232,240)' }}>
+                <div className="relative">
+                  <Search size={16} className={`absolute left-3 top-1/2 -translate-y-1/2 ${textSub}`} />
+                  <input
+                    type="text"
+                    value={importSearch}
+                    onChange={e => setImportSearch(e.target.value)}
+                    placeholder="Buscar por nome ou email..."
+                    className={`w-full pl-9 pr-4 py-2 rounded-lg border text-sm focus:outline-none focus:ring-1 focus:ring-primary ${isDarkMode ? 'bg-dark border-dark-border text-slate-200' : 'bg-white border-slate-300 text-slate-700'}`}
+                  />
+                </div>
+              </div>
+
+              {/* Select all bar */}
+              {filtered.length > 0 && (
+                <div className={`px-4 py-2 flex items-center justify-between border-b text-xs ${isDarkMode ? 'border-dark-border' : 'border-slate-100'}`}>
+                  <button onClick={toggleAll} className={`font-medium ${textSub} hover:text-primary transition-colors`}>
+                    {importSelected.size === filtered.length ? 'Desmarcar todos' : `Selecionar todos (${filtered.length})`}
+                  </button>
+                  {importSelected.size > 0 && (
+                    <span className="text-primary font-semibold">{importSelected.size} selecionado(s)</span>
+                  )}
+                </div>
+              )}
+
+              {/* List */}
+              <div className="flex-1 overflow-y-auto p-2">
+                {filtered.length === 0 ? (
+                  <div className={`text-center py-10 ${textSub}`}>
+                    <Users size={36} className="mx-auto mb-3 opacity-30" />
+                    <p className="text-sm">Nenhum colaborador disponivel para importar.</p>
+                    <p className="text-xs mt-1">Todos ja estao vinculados a esta unidade.</p>
+                  </div>
+                ) : filtered.map(m => {
+                  const isSelected = importSelected.has(m.id);
+                  const memberUnits = unitMembers
+                    .filter(um => um.userId === m.id)
+                    .map(um => units.find(u => u.id === um.unitId)?.name)
+                    .filter(Boolean);
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => toggleSelect(m.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg mb-1 text-left transition-colors ${isSelected
+                        ? isDarkMode ? 'bg-primary/10 border border-primary/30' : 'bg-primary/5 border border-primary/20'
+                        : isDarkMode ? 'hover:bg-dark border border-transparent' : 'hover:bg-slate-50 border border-transparent'
+                        }`}
+                    >
+                      {/* Checkbox */}
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isSelected ? 'bg-primary border-primary' : isDarkMode ? 'border-slate-600' : 'border-slate-300'
+                        }`}>
+                        {isSelected && <CheckCircle2 size={14} className="text-white" />}
+                      </div>
+                      {/* Avatar */}
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${isDarkMode ? 'bg-dark border border-dark-border' : 'bg-slate-100 border border-slate-200'}`}>
+                        {m.image ? (
+                          <img src={m.image} alt={m.name} className="w-full h-full rounded-full object-cover" />
+                        ) : (
+                          <span className={`text-sm font-bold ${textSub}`}>{m.name.charAt(0)}</span>
+                        )}
+                      </div>
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-semibold ${textMain} truncate`}>{m.name}</p>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] ${textSub}`}>{m.role}</span>
+                          {memberUnits.length > 0 && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${isDarkMode ? 'bg-dark text-slate-500' : 'bg-slate-100 text-slate-400'}`}>
+                              {memberUnits.join(', ')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Footer */}
+              <div className={`p-4 border-t ${borderCol} flex justify-end gap-3 ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                <button
+                  onClick={() => setIsImportModalOpen(false)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${isDarkMode ? 'border-dark-border text-slate-400 hover:text-white' : 'border-slate-300 text-slate-600 hover:text-slate-800'}`}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleImport}
+                  disabled={importSelected.size === 0 || importLoading}
+                  className={`px-5 py-2 rounded-lg text-sm font-semibold text-white transition-colors flex items-center gap-2 ${importSelected.size === 0 ? 'bg-slate-400 cursor-not-allowed' : 'bg-primary hover:bg-primary-600'
+                    }`}
+                >
+                  {importLoading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                  Importar {importSelected.size > 0 ? `(${importSelected.size})` : ''}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

@@ -219,7 +219,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
       const permissionsToSave: RolePermission[] = Object.entries(permissionsMatrix).map(([role, perms]) => ({
         id: permissions.find(p => p.role === role)?.id || '', // Maintain ID if possible, though upsert handles it
         role: role as any,
-        permissions: perms,
+        permissions: perms as RolePermission['permissions'],
         updatedAt: new Date().toISOString()
       }));
 

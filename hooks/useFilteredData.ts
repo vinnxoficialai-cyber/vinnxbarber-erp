@@ -1,59 +1,86 @@
 import { useMemo } from 'react';
 import { useAppData } from '../context/AppDataContext';
 import { useSelectedUnit } from '../context/UnitContext';
+import {
+    Client, TeamMember, Service, CalendarEvent, Comanda,
+    Product, Transaction
+} from '../types';
 
 /**
- * useFilteredData — Unit-filtered data hook
- * 
- * Applies unit-level filtering to operational data.
- * Usage: replace useAppData() with useFilteredData() in pages that need unit filtering.
- * 
- * Filtered entities:
- *   - comandas (by unitId)
- *   - transactions (by unitId)
- *   - products (null unitId = global, shown in all)
- *   - services (null unitId = global, shown in all)
- *   - clients (derived: only those attended at the selected unit)
- *   - members (derived: only those assigned via unit_members)
- * 
- * Global (not filtered):
- *   - settings, permissions, notifications, etc.
+ * Hook that provides unit-filtered versions of all major data lists.
+ * When selectedUnitId === 'all', returns all data (unfiltered).
+ * When a specific unit is selected, filters each list by unitId.
+ * Members are filtered via the unit_members N:N relationship.
  */
 export function useFilteredData() {
-    const data = useAppData();
-    const { selectedUnitId } = useSelectedUnit();
+    const {
+        clients, members, services, calendarEvents,
+        comandas, products, transactions, unitMembers,
+    } = useAppData();
 
-    return useMemo(() => {
-        // 'all' = no filtering, return everything
-        if (selectedUnitId === 'all') return data;
+    const { selectedUnitId, isFiltering } = useSelectedUnit();
 
-        // Filter operational entities by unitId
-        const filteredComandas = data.comandas.filter(c => c.unitId === selectedUnitId);
-        const filteredTransactions = data.transactions.filter(t => (t as any).unitId === selectedUnitId);
-        const filteredProducts = data.products.filter(p => !p.unitId || p.unitId === selectedUnitId);
-        // Services: null unitId = global (show in all), specific unitId = unit-exclusive
-        const filteredServices = data.services.filter(s => !s.unitId || s.unitId === selectedUnitId);
-
-        // Derived: clients who have been attended at this unit (via comandas)
-        const unitClientIds = new Set(filteredComandas.filter(c => c.clientId).map(c => c.clientId));
-        const filteredClients = data.clients.filter(c => unitClientIds.has(c.id));
-
-        // Derived: members assigned to this unit (via unit_members)
-        const unitMemberUserIds = new Set(
-            data.unitMembers
+    // Members: Admin/Manager always global; others filtered via unit_members N:N table
+    const filteredMembers = useMemo<TeamMember[]>(() => {
+        if (!isFiltering) return members;
+        const linkedUserIds = new Set(
+            unitMembers
                 .filter(um => um.unitId === selectedUnitId)
                 .map(um => um.userId)
         );
-        const filteredMembers = data.members.filter(m => unitMemberUserIds.has(m.id));
+        return members.filter(m => {
+            // Admin and Manager always appear in all units
+            if (m.role === 'Admin' || m.role === 'Manager') return true;
+            // Others only if linked via unit_members
+            return linkedUserIds.has(m.id);
+        });
+    }, [members, unitMembers, selectedUnitId, isFiltering]);
 
-        return {
-            ...data,
-            comandas: filteredComandas,
-            transactions: filteredTransactions,
-            products: filteredProducts,
-            services: filteredServices,
-            clients: filteredClients,
-            members: filteredMembers,
-        };
-    }, [data, selectedUnitId]);
+    // Clients: filtered by unitId field (no unitId = only visible in "Todas")
+    const filteredClients = useMemo<Client[]>(() => {
+        if (!isFiltering) return clients;
+        return clients.filter(c => c.unitId === selectedUnitId);
+    }, [clients, selectedUnitId, isFiltering]);
+
+    // Services: filtered by unitId field
+    const filteredServices = useMemo<Service[]>(() => {
+        if (!isFiltering) return services;
+        return services.filter(s => s.unitId === selectedUnitId || !s.unitId);
+    }, [services, selectedUnitId, isFiltering]);
+
+    // Calendar Events: filtered by unitId field
+    const filteredCalendarEvents = useMemo<CalendarEvent[]>(() => {
+        if (!isFiltering) return calendarEvents;
+        return calendarEvents.filter(e => e.unitId === selectedUnitId || !e.unitId);
+    }, [calendarEvents, selectedUnitId, isFiltering]);
+
+    // Comandas: filtered by unitId field
+    const filteredComandas = useMemo<Comanda[]>(() => {
+        if (!isFiltering) return comandas;
+        return comandas.filter(c => c.unitId === selectedUnitId || !c.unitId);
+    }, [comandas, selectedUnitId, isFiltering]);
+
+    // Products: filtered by unitId field
+    const filteredProducts = useMemo<Product[]>(() => {
+        if (!isFiltering) return products;
+        return products.filter(p => p.unitId === selectedUnitId || !p.unitId);
+    }, [products, selectedUnitId, isFiltering]);
+
+    // Transactions: filtered by unitId field
+    const filteredTransactions = useMemo<Transaction[]>(() => {
+        if (!isFiltering) return transactions;
+        return transactions.filter(t => t.unitId === selectedUnitId || !t.unitId);
+    }, [transactions, selectedUnitId, isFiltering]);
+
+    return {
+        filteredMembers,
+        filteredClients,
+        filteredServices,
+        filteredCalendarEvents,
+        filteredComandas,
+        filteredProducts,
+        filteredTransactions,
+        selectedUnitId,
+        isFiltering,
+    };
 }

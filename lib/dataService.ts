@@ -265,6 +265,7 @@ interface SupabaseClient {
     preferredBarberId?: string;
     totalVisits?: number;
     lastVisit?: string;
+    unitId?: string;
 }
 
 function clientToSupabase(client: Client): Partial<SupabaseClient> {
@@ -292,6 +293,7 @@ function clientToSupabase(client: Client): Partial<SupabaseClient> {
         preferredBarberId: client.preferredBarberId || null,
         totalVisits: client.totalVisits || 0,
         lastVisit: client.lastVisit || null,
+        unitId: client.unitId || null,
     };
 }
 
@@ -425,6 +427,7 @@ interface SupabaseTransaction {
     status: 'COMPLETED' | 'PENDING' | 'OVERDUE';
     clientId?: string;
     accountId?: string;
+    unitId?: string;
 }
 
 function transactionToSupabase(transaction: Transaction): Partial<SupabaseTransaction> {
@@ -440,6 +443,7 @@ function transactionToSupabase(transaction: Transaction): Partial<SupabaseTransa
             transaction.status === 'Pending' ? 'PENDING' : 'OVERDUE',
         clientId: transaction.clientId,
         accountId: transaction.accountId,
+        unitId: transaction.unitId || null,
     };
 }
 
@@ -862,6 +866,7 @@ export async function saveService(service: Service): Promise<{ success: boolean;
             allowsOnlineBooking: service.allowsOnlineBooking ?? true,
             registerAllProfessionals: service.registerAllProfessionals ?? true,
             image: service.image || null,
+            unitId: service.unitId || null,
             updatedAt: now,
         };
 
@@ -1859,6 +1864,37 @@ export async function closeComanda(
     }
 }
 
+// Reopen a closed comanda: set status back to 'open', clear payment fields
+export async function reopenComanda(comandaId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+        const now = new Date().toISOString();
+        const { data: comanda, error: fetchError } = await supabase
+            .from('comandas')
+            .select('totalAmount')
+            .eq('id', comandaId)
+            .single();
+        if (fetchError || !comanda) throw fetchError || new Error('Comanda not found');
+
+        const { error } = await supabase
+            .from('comandas')
+            .update({
+                status: 'open',
+                closedAt: null,
+                closedBy: null,
+                paymentMethod: null,
+                discountAmount: 0,
+                finalAmount: Number(comanda.totalAmount) || 0,
+                updatedAt: now,
+            })
+            .eq('id', comandaId);
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error reopening comanda:', err);
+        return { success: false, error: err.message };
+    }
+}
+
 // Create a comanda automatically from an appointment (calendar event)
 export async function createComandaFromAppointment(
     event: CalendarEvent,
@@ -2524,6 +2560,50 @@ export async function deleteUnitMember(id: string): Promise<{ success: boolean; 
     }
 }
 
+/** Bulk-link multiple users to a unit (used by Import modal) */
+export async function saveUnitMembersBulk(
+    unitId: string,
+    userIds: string[],
+    role: string = 'member'
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const now = new Date().toISOString();
+        const rows = userIds.map(userId => ({
+            unitId,
+            userId,
+            role,
+            isPrimary: false,
+            createdAt: now,
+        }));
+        // Use upsert to avoid duplicate errors; onConflict on unitId+userId
+        const { error } = await supabase.from('unit_members').upsert(rows, { onConflict: 'unitId,userId' });
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error bulk-saving unit members:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/** Remove a user from a unit by userId + unitId pair */
+export async function removeUnitMemberByUser(
+    unitId: string,
+    userId: string
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const { error } = await supabase
+            .from('unit_members')
+            .delete()
+            .eq('unitId', unitId)
+            .eq('userId', userId);
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error removing unit member:', err);
+        return { success: false, error: err.message };
+    }
+}
+
 // ============================================
 // NOTA FISCAL — Professional Fiscal Data
 // ============================================
@@ -2902,91 +2982,5 @@ export async function saveFiscalSettings(
     }
 }
 
-// ═══════════════════════════════════════════════════════════
-// ██  SITE SETTINGS (Editor do Site de Agendamento)  ██
-// ═══════════════════════════════════════════════════════════
+// SITE SETTINGS removed — migrated to store_settings table + useStoreCustomization hook
 
-import type { SiteSettings } from '../types';
-
-export async function getSiteSettings(): Promise<SiteSettings | null> {
-    try {
-        const { data, error } = await supabase
-            .from('site_settings')
-            .select('*')
-            .eq('id', 'default')
-            .single();
-
-        if (error || !data) return null;
-
-        return {
-            id: data.id,
-            isActive: data.isActive ?? false,
-            primaryColor: data.primaryColor || '#00bf62',
-            logoUrl: data.logoUrl || undefined,
-            heroImageUrl: data.heroImageUrl || undefined,
-            sectionsVisible: data.sectionsVisible || { reviews: true, team: true, promotions: false, social: true },
-            businessName: data.businessName || undefined,
-            slogan: data.slogan || undefined,
-            address: data.address || undefined,
-            phone: data.phone || undefined,
-            aboutText: data.aboutText || undefined,
-            ctaButtonText: data.ctaButtonText || 'Agendar Agora',
-            businessHours: data.businessHours || [],
-            visibleServiceIds: data.visibleServiceIds || [],
-            whatsappNumber: data.whatsappNumber || undefined,
-            whatsappEnabled: data.whatsappEnabled ?? false,
-            instagramHandle: data.instagramHandle || undefined,
-            googleMapsUrl: data.googleMapsUrl || undefined,
-            googleAnalyticsId: data.googleAnalyticsId || undefined,
-            updatedAt: data.updatedAt || undefined,
-            updatedBy: data.updatedBy || undefined,
-        };
-    } catch (err: any) {
-        console.error('Error loading site settings:', err);
-        return null;
-    }
-}
-
-export async function saveSiteSettings(
-    settings: Partial<SiteSettings>,
-    userId?: string
-): Promise<{ success: boolean; error?: string }> {
-    try {
-        const now = new Date().toISOString();
-        const dbData: Record<string, any> = {
-            id: 'default',
-            updatedAt: now,
-            updatedBy: userId || null,
-        };
-
-        // Only include fields that were passed
-        if (settings.isActive !== undefined) dbData.isActive = settings.isActive;
-        if (settings.primaryColor !== undefined) dbData.primaryColor = settings.primaryColor;
-        if (settings.logoUrl !== undefined) dbData.logoUrl = settings.logoUrl || null;
-        if (settings.heroImageUrl !== undefined) dbData.heroImageUrl = settings.heroImageUrl || null;
-        if (settings.sectionsVisible !== undefined) dbData.sectionsVisible = settings.sectionsVisible;
-        if (settings.businessName !== undefined) dbData.businessName = settings.businessName || null;
-        if (settings.slogan !== undefined) dbData.slogan = settings.slogan || null;
-        if (settings.address !== undefined) dbData.address = settings.address || null;
-        if (settings.phone !== undefined) dbData.phone = settings.phone || null;
-        if (settings.aboutText !== undefined) dbData.aboutText = settings.aboutText || null;
-        if (settings.ctaButtonText !== undefined) dbData.ctaButtonText = settings.ctaButtonText || 'Agendar Agora';
-        if (settings.businessHours !== undefined) dbData.businessHours = settings.businessHours;
-        if (settings.visibleServiceIds !== undefined) dbData.visibleServiceIds = settings.visibleServiceIds;
-        if (settings.whatsappNumber !== undefined) dbData.whatsappNumber = settings.whatsappNumber || null;
-        if (settings.whatsappEnabled !== undefined) dbData.whatsappEnabled = settings.whatsappEnabled;
-        if (settings.instagramHandle !== undefined) dbData.instagramHandle = settings.instagramHandle || null;
-        if (settings.googleMapsUrl !== undefined) dbData.googleMapsUrl = settings.googleMapsUrl || null;
-        if (settings.googleAnalyticsId !== undefined) dbData.googleAnalyticsId = settings.googleAnalyticsId || null;
-
-        const { error } = await supabase
-            .from('site_settings')
-            .upsert(dbData, { onConflict: 'id' });
-
-        if (error) throw error;
-        return { success: true };
-    } catch (err: any) {
-        console.error('Error saving site settings:', err);
-        return { success: false, error: err.message };
-    }
-}

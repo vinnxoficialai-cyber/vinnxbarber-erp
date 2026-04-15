@@ -4,6 +4,7 @@ import { Client, PipelineStage, ClientInteraction, TeamMember } from '../types';
 import { useToast } from '../components/Toast';
 import { saveClientInteraction, savePipelineStage, saveClient } from '../lib/dataService';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 import { usePermissions } from '../hooks/usePermissions';
 
 interface PipelineProps {
@@ -26,7 +27,8 @@ const STAGES: { id: PipelineStage; label: string; color: string; probability: nu
 const INACTIVITY_DAYS = 7;
 
 export const Pipeline: React.FC<PipelineProps> = ({ currentUser, isDarkMode }) => {
-    const { clients, pipelineStages, clientInteractions, refresh, setClients, setPipelineStages, setClientInteractions, permissions: contextPermissions } = useAppData();
+    const { pipelineStages, clientInteractions, refresh, setClients, setPipelineStages, setClientInteractions, permissions: contextPermissions } = useAppData();
+    const { filteredClients: clients } = useFilteredData();
 
     // Permissions
     // Guard: prevent crash if currentUser is not loaded yet

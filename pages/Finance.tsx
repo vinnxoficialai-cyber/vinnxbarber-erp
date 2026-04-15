@@ -5,6 +5,7 @@ import { useConfirm } from '../components/ConfirmModal';
 import { useToast } from '../components/Toast';
 import { saveTransaction, deleteTransaction } from '../lib/dataService';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 import { CustomDropdown } from '../components/CustomDropdown';
 
 type ViewStatus = 'all' | 'realized' | 'forecast';
@@ -19,7 +20,8 @@ interface FinanceProps {
 
 export const Finance: React.FC<FinanceProps> = ({ isDarkMode }) => {
   // Use App Data Context
-  const { transactions, setTransactions, clients, contracts, members, refresh } = useAppData();
+  const { setTransactions, contracts, refresh } = useAppData();
+  const { filteredTransactions: transactions, filteredClients: clients, filteredMembers: members, selectedUnitId } = useFilteredData();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -238,23 +240,9 @@ export const Finance: React.FC<FinanceProps> = ({ isDarkMode }) => {
       createdAt: editingId ? formData.createdAt : new Date().toISOString().split('T')[0],
       status: formData.status,
       clientId: formData.selectedClientId || undefined,
-      // Wait, let me check types.ts
-      // Transaction interface: clientId?: number;
-      // Client interface: id: string;
-      // This is a mismatch in the current codebase types. 
-      // SafeStorage used number, but Supabase uses UUID string.
-      // Prisma schema defines clientId as String? on Transaction relation? 
-      // Checking local types.ts again: clientId?: number; 
-      // Checking schema.prisma: clientId String?
-      // I should cast or parse. Since Client.id is UUID string, Transaction.clientId should be string.
-      // But types.ts says number. I will cast to any to fix type error for now or keep As Is if it works.
-      // Actually, if I send Number(uuid), it becomes NaN. 
-      // I should update types.ts properly later. For now, I will assume types.ts might be wrong or I need to fix it.
-      // In this refactor, I will change clientId to be string-compatible or ignore the type error if necessary.
-      // Let's assume Transaction.clientId in types.ts is actually string or I should cast.
-      // Looking at previous Finance.tsx, it was doing `userInfo.clientId ? Number(formData.selectedClientId)`.
-      // If client IDs are UUIDs, this will break.
-      // I will assume for this step that I should pass it as is (string) and maybe type cast.
+      unitId: editingId
+        ? transactions.find(t => t.id === editingId)?.unitId || (selectedUnitId !== 'all' ? selectedUnitId : undefined)
+        : (selectedUnitId !== 'all' ? selectedUnitId : undefined),
     };
 
     // FIX: Client ID type mismatch handling

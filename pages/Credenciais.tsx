@@ -3,6 +3,7 @@ import { Key, Plus, X, Eye, EyeOff, Copy, Check, Trash2, Search, Globe, Link, Al
 import { CustomDropdown } from '../components/CustomDropdown';
 import { Client, ServiceCredential, CredentialCategory, TeamMember } from '../types';
 import { useAppData } from '../hooks/useAppData'; // MIGRATED
+import { useFilteredData } from '../hooks/useFilteredData';
 import { usePermissions } from '../hooks/usePermissions';
 import { useConfirm } from '../components/ConfirmModal';
 import { usePasswordConfirm } from '../components/PasswordConfirmModal';
@@ -30,7 +31,8 @@ const CATEGORIES: { value: CredentialCategory; label: string; icon: string }[] =
 
 export const Credenciais: React.FC<CredenciaisProps> = ({ clients: propClients, currentUser, isDarkMode }) => {
     // Use useAppData
-    const { credentials, clients: appClients, permissions: contextPermissions, setCredentials, refresh, loading } = useAppData();
+    const { credentials, permissions: contextPermissions, setCredentials, refresh, loading } = useAppData();
+    const { filteredClients: appClients } = useFilteredData();
     const { canCreate, canEdit, canDelete, isAdminOrManager } = usePermissions(currentUser, contextPermissions);
 
     // Permissions

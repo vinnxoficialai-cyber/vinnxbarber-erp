@@ -92,7 +92,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { icon: BarChart3, label: 'Relatórios', path: '/relatorios' },
       { icon: Building2, label: 'Unidades', path: '/unidades' },
-      { icon: Globe, label: 'Editor do Site', path: '/editor-site' },
+      { icon: Globe, label: 'Personalizar', path: '/personalizar' },
       { icon: Key, label: 'Credenciais', path: '/credenciais' },
       { icon: Settings, label: 'Configurações', path: '/settings' },
     ],

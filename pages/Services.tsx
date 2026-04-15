@@ -13,6 +13,7 @@ import { saveService, deleteService } from '../lib/dataService';
 import { uploadBase64Image, isBase64 } from '../lib/storage';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 
 interface ServicesProps {
   services: Service[];
@@ -57,6 +58,7 @@ export const Services: React.FC<ServicesProps> = ({ services, setServices, isDar
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { permissions: contextPermissions } = useAppData();
+  const { selectedUnitId } = useFilteredData();
   const { canCreate, canEdit, canDelete } = usePermissions(currentUser, contextPermissions);
   const canCreateService = canCreate('/services');
   const canEditService = canEdit('/services');
@@ -147,10 +149,12 @@ export const Services: React.FC<ServicesProps> = ({ services, setServices, isDar
       }
     }
 
+    const existing = editingId ? services.find(s => s.id === editingId) : null;
     const newService: Service = {
       id: editingId || crypto.randomUUID(),
       ...formData,
       image: imageUrl,
+      unitId: existing?.unitId || (selectedUnitId !== 'all' ? selectedUnitId : undefined),
     };
 
     const result = await saveService(newService);

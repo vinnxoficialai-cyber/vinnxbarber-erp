@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, Filter, Mail, Pencil, Plus, X, User, Briefcase, Phone, MessageCircle, Calendar, DollarSign, Target, Image as ImageIcon, Upload, Trash2, Lock, Tag, Loader2, Users, TrendingUp, Gift, CreditCard, ChevronDown, ChevronUp, Crown, AlertTriangle, AlertCircle, BarChart3, Shield, HelpCircle, UserCheck, UserMinus, Clock } from 'lucide-react';
-import { Client, TeamMember, Contract, Subscription, SubscriptionPlan } from '../types';
+import { Search, Filter, Mail, Pencil, Plus, X, User, Briefcase, Phone, MessageCircle, Calendar, DollarSign, Target, Image as ImageIcon, Upload, Trash2, Lock, Tag, Loader2, Users, TrendingUp, Gift, CreditCard, ChevronDown, ChevronUp, Crown, AlertTriangle, AlertCircle, BarChart3, Shield, HelpCircle, UserCheck, UserMinus, Clock, Settings, RotateCcw, Info, ToggleRight, Play, Download, MapPin, CheckCircle2 } from 'lucide-react';
+import { Client, TeamMember, Contract, Subscription, SubscriptionPlan, ClientUnitSettings } from '../types';
+import { useClientReassignment, getClientUnitSettings, saveClientUnitSettings } from '../hooks/useClientReassignment';
 import { CustomDropdown } from '../components/CustomDropdown';
 import { useConfirm } from '../components/ConfirmModal';
 import { useToast } from '../components/Toast';
@@ -8,6 +9,7 @@ import { saveClient, deleteClient, saveSubscription } from '../lib/dataService';
 import { uploadBase64Image, isBase64 } from '../lib/storage';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 
 interface ClientsProps {
   clients: Client[];
@@ -21,7 +23,8 @@ interface ClientsProps {
 
 export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, contracts, globalSearchTerm, isDarkMode, currentUser }) => {
   // Permissions
-  const { permissions: contextPermissions, subscriptions, subscriptionPlans, comandas } = useAppData();
+  const { permissions: contextPermissions, subscriptions, subscriptionPlans } = useAppData();
+  const { selectedUnitId, filteredComandas: comandas } = useFilteredData();
   const { canViewAllData, canDelete } = usePermissions(currentUser, contextPermissions);
   const viewAll = canViewAllData('/clients');
   const canDeleteClient = canDelete('/clients');
@@ -30,11 +33,31 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'clients' | 'indicators'>('clients');
+  const [activeTab, setActiveTab] = useState<'clients' | 'indicators' | 'settings'>('clients');
+  const [unitSettings, setUnitSettings] = useState<ClientUnitSettings>(getClientUnitSettings);
   const [statusInfoOpen, setStatusInfoOpen] = useState(false);
   const [subSectionOpen, setSubSectionOpen] = useState(false);
+  const [showAddDropdown, setShowAddDropdown] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importSearch, setImportSearch] = useState('');
+  const [importSelected, setImportSelected] = useState<Set<string>>(new Set());
+  const [importLoading, setImportLoading] = useState(false);
   const confirm = useConfirm();
   const toast = useToast();
+
+  // Unit context
+  const { units } = useAppData();
+  const isFilteringUnit = selectedUnitId !== 'all';
+  const selectedUnit = units.find(u => u.id === selectedUnitId);
+
+  // Unit-filtered subscriptions
+  const unitClientIds = useMemo(() => new Set(clients.map(c => c.id)), [clients]);
+  const unitSubscriptions = useMemo(() =>
+    isFilteringUnit ? subscriptions.filter(s => unitClientIds.has(s.clientId)) : subscriptions,
+    [subscriptions, unitClientIds, isFilteringUnit]);
+
+  // ALL clients (unfiltered -- for import modal)
+  const { clients: allClients } = useAppData();
 
   // Theme Helpers
   const textMain = isDarkMode ? 'text-slate-50' : 'text-slate-900';
@@ -141,7 +164,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
       return c.status === 'Active' || c.status === 'Lead';
     }).length;
 
-    const activeSubs = subscriptions.filter(s => s.status === 'active');
+    const activeSubs = unitSubscriptions.filter(s => s.status === 'active');
     const mrr = activeSubs.reduce((acc, s) => {
       const plan = subscriptionPlans.find(p => p.id === s.planId);
       return acc + (plan?.price || 0);
@@ -154,7 +177,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
     }).length;
 
     return { total: clients.length, activeClients, activeSubs: activeSubs.length, mrr, birthdaysThisMonth };
-  }, [clients, subscriptions, subscriptionPlans]);
+  }, [clients, unitSubscriptions, subscriptionPlans]);
 
   // Helpers
   const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
@@ -239,6 +262,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
       preferredBarberId: formData.preferredBarberId || undefined,
       lastVisit: existing?.lastVisit,
       totalVisits: existing?.totalVisits || 0,
+      unitId: existing?.unitId || (selectedUnitId !== 'all' ? selectedUnitId : undefined),
     };
 
     const result = await saveClient(clientData);
@@ -644,6 +668,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
         {[
           { key: 'clients' as const, label: 'Clientes', icon: Users },
           { key: 'indicators' as const, label: 'Indicadores', icon: BarChart3 },
+          { key: 'settings' as const, label: 'Configurações', icon: Settings },
         ].map(tab => (
           <button key={tab.key} onClick={() => setActiveTab(tab.key)} className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${activeTab === tab.key ? 'border-primary text-primary' : `border-transparent ${textSub} hover:text-primary`}`}>
             <tab.icon size={16} /> {tab.label}
@@ -664,9 +689,37 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
               <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${textSub}`} size={18} />
               <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Buscar por nome, telefone, CPF..." className={`pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary w-full md:w-64 ${isDarkMode ? 'bg-dark border-dark-border text-slate-200 placeholder:text-slate-600' : 'bg-white border-slate-300 text-slate-700 placeholder:text-slate-400'}`} />
             </div>
-            <button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg text-sm transition-colors flex items-center gap-2">
-              <Plus size={18} /> Adicionar
-            </button>
+            <div className="relative">
+              <div className="flex">
+                <button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg rounded-r-none text-sm transition-colors flex items-center gap-2">
+                  <Plus size={18} /> Adicionar
+                </button>
+                <button
+                  onClick={() => setShowAddDropdown(!showAddDropdown)}
+                  className="px-2 py-2 bg-primary hover:bg-primary-600 text-white rounded-lg rounded-l-none border-l border-white/20 transition-colors"
+                >
+                  <ChevronDown size={16} />
+                </button>
+              </div>
+              {showAddDropdown && (
+                <div className={`absolute right-0 top-full mt-1 w-full min-w-max rounded-lg border shadow-xl z-50 overflow-hidden ${isDarkMode ? 'bg-dark-surface border-dark-border' : 'bg-white border-slate-200'}`}>
+                  <button
+                    onClick={() => { setShowAddDropdown(false); handleOpenModal(); }}
+                    className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2.5 transition-colors whitespace-nowrap ${isDarkMode ? 'hover:bg-dark text-slate-200' : 'hover:bg-slate-50 text-slate-700'}`}
+                  >
+                    <Plus size={14} className="text-primary" /> Adicionar Cliente
+                  </button>
+                  {isFilteringUnit && (
+                    <button
+                      onClick={() => { setShowAddDropdown(false); setIsImportModalOpen(true); setImportSearch(''); setImportSelected(new Set()); }}
+                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2.5 transition-colors border-t whitespace-nowrap ${isDarkMode ? 'hover:bg-dark text-slate-200 border-dark-border' : 'hover:bg-slate-50 text-slate-700 border-slate-100'}`}
+                    >
+                      <Download size={14} className="text-blue-500" /> Importar Cliente
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -720,6 +773,14 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${client.status === 'Active' ? 'bg-primary/10 text-primary' : client.status === 'Lead' ? 'bg-blue-500/10 text-blue-500' : client.status === 'Churned' ? 'bg-red-500/10 text-red-500' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-600')}`}>
                     {client.status === 'Active' ? 'Ativo' : client.status === 'Lead' ? 'Lead' : client.status === 'Churned' ? 'Churned' : 'Inativo'}
                   </span>
+                  {(() => {
+                    const unit = client.unitId ? units.find(u => u.id === client.unitId) : null;
+                    return unit ? (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${isDarkMode ? 'bg-primary/10 text-primary' : 'bg-emerald-50 text-emerald-600'}`}>
+                        <MapPin size={8} /> {unit.tradeName || unit.name}
+                      </span>
+                    ) : null;
+                  })()}
                   {clientPlan ? (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500/10 text-amber-600 flex items-center gap-1"><Crown size={9} /> {clientPlan.name}</span>
                   ) : (
@@ -764,24 +825,194 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
           })}
 
           {filteredClients.length === 0 && (
-            <div className={`col-span-full py-12 text-center ${textSub}`}>
-              <div className="flex justify-center mb-3"><Search size={48} className="opacity-20" /></div>
-              <p>Nenhum cliente encontrado para "{searchQuery}"</p>
+            <div className={`col-span-full py-16 text-center ${textSub}`}>
+              <Users size={48} className="mx-auto mb-4 opacity-30" />
+              <p className="text-lg font-semibold mb-1">Nenhum cliente nesta unidade</p>
+              <p className="text-sm mb-4">Adicione um novo cliente ou importe de outra unidade.</p>
+              {isFilteringUnit && (
+                <button
+                  onClick={() => { setIsImportModalOpen(true); setImportSearch(''); setImportSelected(new Set()); }}
+                  className="px-4 py-2 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg text-sm transition-colors inline-flex items-center gap-2"
+                >
+                  <Download size={16} /> Importar Clientes
+                </button>
+              )}
             </div>
           )}
         </div>
+
+        {/* Import Client Modal */}
+        {isImportModalOpen && (() => {
+          // Clients NOT in this unit
+          const importableClients = allClients.filter(c => c.unitId !== selectedUnitId);
+          const filtered = importableClients.filter(c =>
+            c.name.toLowerCase().includes(importSearch.toLowerCase()) ||
+            (c.phone && c.phone.includes(importSearch)) ||
+            (c.email && c.email.toLowerCase().includes(importSearch.toLowerCase()))
+          );
+
+          const handleImport = async () => {
+            if (importSelected.size === 0) return;
+            setImportLoading(true);
+            try {
+              const clientsToUpdate = allClients.filter(c => importSelected.has(c.id));
+              let successCount = 0;
+              for (const c of clientsToUpdate) {
+                const result = await saveClient({ ...c, unitId: selectedUnitId });
+                if (result.success) successCount++;
+              }
+              if (successCount > 0) {
+                // Update local state
+                setClients(allClients.map(c => importSelected.has(c.id) ? { ...c, unitId: selectedUnitId } : c));
+                toast.success('Clientes importados', `${successCount} cliente(s) movido(s) para ${selectedUnit?.name || 'esta unidade'}.`);
+                setIsImportModalOpen(false);
+              }
+            } catch {
+              toast.error('Erro', 'Falha ao importar clientes.');
+            } finally {
+              setImportLoading(false);
+            }
+          };
+
+          const toggleSelect = (id: string) => {
+            const next = new Set(importSelected);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            setImportSelected(next);
+          };
+
+          const toggleAll = () => {
+            if (importSelected.size === filtered.length) {
+              setImportSelected(new Set());
+            } else {
+              setImportSelected(new Set(filtered.map(c => c.id)));
+            }
+          };
+
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+              <div className={`${bgCard} border ${borderCol} rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[80vh]`}>
+                {/* Header */}
+                <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                  <div>
+                    <h3 className={`font-semibold text-lg ${textMain}`}>Importar Clientes</h3>
+                    <p className={`text-xs ${textSub} mt-0.5`}>Mover clientes de outras unidades para <strong>{selectedUnit?.name}</strong></p>
+                  </div>
+                  <button onClick={() => setIsImportModalOpen(false)} className={`${textSub} hover:${textMain}`}>
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Search */}
+                <div className="p-3 border-b" style={{ borderColor: isDarkMode ? 'rgb(55,65,81)' : 'rgb(226,232,240)' }}>
+                  <div className="relative">
+                    <Search size={16} className={`absolute left-3 top-1/2 -translate-y-1/2 ${textSub}`} />
+                    <input
+                      type="text"
+                      value={importSearch}
+                      onChange={e => setImportSearch(e.target.value)}
+                      placeholder="Buscar por nome, telefone ou email..."
+                      className={`w-full pl-9 pr-4 py-2 rounded-lg border text-sm focus:outline-none focus:ring-1 focus:ring-primary ${isDarkMode ? 'bg-dark border-dark-border text-slate-200' : 'bg-white border-slate-300 text-slate-700'}`}
+                    />
+                  </div>
+                </div>
+
+                {/* Select all */}
+                {filtered.length > 0 && (
+                  <div className={`px-4 py-2 flex items-center justify-between border-b text-xs ${isDarkMode ? 'border-dark-border' : 'border-slate-100'}`}>
+                    <button onClick={toggleAll} className={`font-medium ${textSub} hover:text-primary transition-colors`}>
+                      {importSelected.size === filtered.length ? 'Desmarcar todos' : `Selecionar todos (${filtered.length})`}
+                    </button>
+                    {importSelected.size > 0 && (
+                      <span className="text-primary font-semibold">{importSelected.size} selecionado(s)</span>
+                    )}
+                  </div>
+                )}
+
+                {/* List */}
+                <div className="flex-1 overflow-y-auto p-2">
+                  {filtered.length === 0 ? (
+                    <div className={`text-center py-10 ${textSub}`}>
+                      <Users size={36} className="mx-auto mb-3 opacity-30" />
+                      <p className="text-sm">Nenhum cliente disponivel para importar.</p>
+                    </div>
+                  ) : filtered.map(c => {
+                    const isSelected = importSelected.has(c.id);
+                    const fromUnit = c.unitId ? units.find(u => u.id === c.unitId) : null;
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => toggleSelect(c.id)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg mb-1 text-left transition-colors ${isSelected
+                          ? isDarkMode ? 'bg-primary/10 border border-primary/30' : 'bg-primary/5 border border-primary/20'
+                          : isDarkMode ? 'hover:bg-dark border border-transparent' : 'hover:bg-slate-50 border border-transparent'
+                          }`}
+                      >
+                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isSelected ? 'bg-primary border-primary' : isDarkMode ? 'border-slate-600' : 'border-slate-300'
+                          }`}>
+                          {isSelected && <CheckCircle2 size={14} className="text-white" />}
+                        </div>
+                        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${isDarkMode ? 'bg-dark border border-dark-border' : 'bg-slate-100 border border-slate-200'}`}>
+                          {c.image ? (
+                            <img src={c.image} alt={c.name} className="w-full h-full rounded-full object-cover" />
+                          ) : (
+                            <span className={`text-sm font-bold ${textSub}`}>{c.name.charAt(0)}</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-semibold ${textMain} truncate`}>{c.name}</p>
+                          <div className="flex items-center gap-2">
+                            {c.phone && <span className={`text-[10px] ${textSub}`}>{c.phone}</span>}
+                            {fromUnit && (
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded ${isDarkMode ? 'bg-dark text-slate-500' : 'bg-slate-100 text-slate-400'}`}>
+                                {fromUnit.name}
+                              </span>
+                            )}
+                            {!fromUnit && !c.unitId && (
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded ${isDarkMode ? 'bg-dark text-slate-500' : 'bg-slate-100 text-slate-400'}`}>
+                                Sem unidade
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Footer */}
+                <div className={`p-4 border-t ${borderCol} flex justify-end gap-3 ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                  <button
+                    onClick={() => setIsImportModalOpen(false)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${isDarkMode ? 'border-dark-border text-slate-400 hover:text-white' : 'border-slate-300 text-slate-600 hover:text-slate-800'}`}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleImport}
+                    disabled={importSelected.size === 0 || importLoading}
+                    className={`px-5 py-2 rounded-lg text-sm font-semibold text-white transition-colors flex items-center gap-2 ${importSelected.size === 0 ? 'bg-slate-400 cursor-not-allowed' : 'bg-primary hover:bg-primary-600'
+                      }`}
+                  >
+                    {importLoading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    Importar {importSelected.size > 0 ? `(${importSelected.size})` : ''}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </>)}
 
       {/* TAB: Indicadores */}
       {activeTab === 'indicators' && (() => {
-        const activeSubs = subscriptions.filter(s => s.status === 'active');
-        const pausedSubs = subscriptions.filter(s => s.status === 'paused');
-        const cancelledSubs = subscriptions.filter(s => s.status === 'cancelled');
-        const overdueSubs = subscriptions.filter(s => s.status === 'overdue');
+        const activeSubs = unitSubscriptions.filter(s => s.status === 'active');
+        const pausedSubs = unitSubscriptions.filter(s => s.status === 'paused');
+        const cancelledSubs = unitSubscriptions.filter(s => s.status === 'cancelled');
+        const overdueSubs = unitSubscriptions.filter(s => s.status === 'overdue');
         const subscriberIds = new Set(activeSubs.map(s => s.clientId));
         const subscriberClients = clients.filter(c => subscriberIds.has(c.id));
         const nonSubscriberClients = clients.filter(c => !subscriberIds.has(c.id));
-        const totalSubs = subscriptions.length;
+        const totalSubs = unitSubscriptions.length;
         const churnRate = totalSubs > 0 ? ((cancelledSubs.length / totalSubs) * 100).toFixed(1) : '0';
         const returnRate = clients.length > 0 ? ((clients.filter(c => (c.totalVisits || 0) > 1).length / clients.length) * 100).toFixed(1) : '0';
         const genderM = clients.filter(c => c.gender === 'M').length;
@@ -1195,6 +1426,174 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* TAB: Configuracoes */}
+      {activeTab === 'settings' && (() => {
+        const handleSettingChange = <K extends keyof ClientUnitSettings>(key: K, value: ClientUnitSettings[K]) => {
+          const updated = { ...unitSettings, [key]: value };
+          setUnitSettings(updated);
+          saveClientUnitSettings(updated);
+        };
+
+        const SettingToggle = ({ label, description, value, onChange }: { label: string; description: string; value: boolean; onChange: (v: boolean) => void }) => (
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex-1">
+              <p className={`text-sm font-medium ${textMain}`}>{label}</p>
+              <p className={`text-xs ${textSub} mt-0.5`}>{description}</p>
+            </div>
+            <button type="button" onClick={() => onChange(!value)} className={`relative w-11 h-6 rounded-full transition-colors ${value ? 'bg-primary' : isDarkMode ? 'bg-slate-700' : 'bg-slate-300'}`}>
+              <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${value ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+        );
+
+        const SettingNumber = ({ label, description, value, onChange, min, max, suffix }: { label: string; description: string; value: number; onChange: (v: number) => void; min: number; max: number; suffix: string }) => (
+          <div className="py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex-1">
+                <p className={`text-sm font-medium ${textMain}`}>{label}</p>
+                <p className={`text-xs ${textSub} mt-0.5`}>{description}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={value}
+                  onChange={e => onChange(Math.max(min, Math.min(max, parseInt(e.target.value) || min)))}
+                  min={min}
+                  max={max}
+                  className={`w-20 ${bgInput} border ${borderCol} rounded-lg px-3 py-1.5 text-sm ${textMain} text-center focus:ring-1 focus:ring-primary outline-none`}
+                />
+                <span className={`text-xs ${textSub} min-w-[30px]`}>{suffix}</span>
+              </div>
+            </div>
+          </div>
+        );
+
+        return (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Info Banner */}
+            <div className={`flex gap-3 p-4 rounded-xl border ${isDarkMode ? 'bg-blue-500/5 border-blue-500/20' : 'bg-blue-50 border-blue-200'}`}>
+              <Info size={20} className="text-blue-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className={`text-sm font-semibold ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>Reatribuição Inteligente de Clientes</p>
+                <p className={`text-xs ${isDarkMode ? 'text-blue-500/80' : 'text-blue-600'} mt-1 leading-relaxed`}>
+                  Cada cliente pertence a uma unidade principal. Se ele frequentar mais outra unidade dentro da janela configurada,
+                  o sistema automaticamente transfere o cliente para essa unidade. Isso permite um controle preciso de qual
+                  unidade cada cliente pertence, baseado em comportamento real.
+                </p>
+              </div>
+            </div>
+
+            {/* Settings Card */}
+            <div className={`${bgCard} border ${borderCol} rounded-xl overflow-hidden ${shadowClass}`}>
+              <div className={`px-5 py-4 border-b ${borderCol} flex items-center gap-3 ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                <RotateCcw size={18} className="text-primary" />
+                <div>
+                  <h3 className={`font-semibold ${textMain}`}>Regras de Reatribuição</h3>
+                  <p className={`text-xs ${textSub}`}>Configure quando e como clientes devem ser reatribuídos entre unidades</p>
+                </div>
+              </div>
+
+              <div className={`px-5 divide-y ${isDarkMode ? 'divide-dark-border' : 'divide-slate-100'}`}>
+                <SettingToggle
+                  label="Auto-reatribuição ativa"
+                  description="Quando ativado, o sistema analisa periodicamente os agendamentos e reatribui clientes automaticamente"
+                  value={unitSettings.autoReassignEnabled}
+                  onChange={v => handleSettingChange('autoReassignEnabled', v)}
+                />
+
+                {unitSettings.autoReassignEnabled && (
+                  <>
+                    <SettingNumber
+                      label="Janela de avaliação"
+                      description="Período em dias para analisar os agendamentos do cliente"
+                      value={unitSettings.reassignWindowDays}
+                      onChange={v => handleSettingChange('reassignWindowDays', v)}
+                      min={7}
+                      max={365}
+                      suffix="dias"
+                    />
+
+                    <SettingNumber
+                      label="Mínimo de agendamentos"
+                      description="Quantidade mínima de agendamentos na outra unidade para considerar a troca"
+                      value={unitSettings.reassignMinAppointments}
+                      onChange={v => handleSettingChange('reassignMinAppointments', v)}
+                      min={1}
+                      max={50}
+                      suffix="agend."
+                    />
+
+                    <SettingNumber
+                      label="Percentual mínimo"
+                      description="Percentual de agendamentos na outra unidade em relação ao total para disparar a troca"
+                      value={unitSettings.reassignThresholdPercent}
+                      onChange={v => handleSettingChange('reassignThresholdPercent', v)}
+                      min={10}
+                      max={100}
+                      suffix="%"
+                    />
+
+                    <SettingToggle
+                      label="Notificar ao reatribuir"
+                      description="Exibe uma notificação cada vez que um cliente for automaticamente transferido de unidade"
+                      value={unitSettings.notifyOnReassign}
+                      onChange={v => handleSettingChange('notifyOnReassign', v)}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* How it works Card */}
+            <div className={`${bgCard} border ${borderCol} rounded-xl overflow-hidden ${shadowClass}`}>
+              <div className={`px-5 py-4 border-b ${borderCol} flex items-center gap-3 ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                <HelpCircle size={18} className="text-primary" />
+                <h3 className={`font-semibold ${textMain}`}>Como funciona</h3>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                {[
+                  { step: '1', title: 'Análise periódica', desc: 'A cada 5 minutos, o sistema analisa os agendamentos dos clientes dentro da janela configurada.' },
+                  { step: '2', title: 'Contagem por unidade', desc: 'Para cada cliente, conta quantos agendamentos ele tem em cada unidade.' },
+                  { step: '3', title: 'Verificação de thresholds', desc: 'Se outra unidade tem mais agendamentos que a atual, e atinge os limites configurados, o cliente é reatribuído.' },
+                  { step: '4', title: 'Atualização automática', desc: 'O campo unitId do cliente é atualizado no banco de dados e a mudança reflete imediatamente no sistema.' },
+                ].map(item => (
+                  <div key={item.step} className="flex gap-3">
+                    <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold flex-shrink-0">
+                      {item.step}
+                    </div>
+                    <div>
+                      <p className={`text-sm font-medium ${textMain}`}>{item.title}</p>
+                      <p className={`text-xs ${textSub} mt-0.5`}>{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Reset to defaults */}
+            <div className="flex justify-end">
+              <button
+                onClick={() => {
+                  const defaults: ClientUnitSettings = {
+                    autoReassignEnabled: true,
+                    reassignWindowDays: 60,
+                    reassignMinAppointments: 3,
+                    reassignThresholdPercent: 60,
+                    notifyOnReassign: true,
+                  };
+                  setUnitSettings(defaults);
+                  saveClientUnitSettings(defaults);
+                  toast.success('Configurações restauradas', 'Valores padrão aplicados.');
+                }}
+                className={`px-4 py-2 text-xs font-medium rounded-lg border transition-colors ${isDarkMode ? 'border-dark-border text-slate-400 hover:text-white hover:bg-dark-surface' : 'border-slate-300 text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+              >
+                Restaurar Padrões
+              </button>
             </div>
           </div>
         );

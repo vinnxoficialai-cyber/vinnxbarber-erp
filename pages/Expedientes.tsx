@@ -8,6 +8,7 @@ import { useToast } from '../components/Toast';
 import { getWorkSchedules, saveWorkSchedule, saveWorkSchedulesBulk } from '../lib/dataService';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
+import { useFilteredData } from '../hooks/useFilteredData';
 
 interface ExpedientesProps {
     isDarkMode: boolean;
@@ -31,7 +32,8 @@ const TEMPLATES = [
 ];
 
 export const Expedientes: React.FC<ExpedientesProps> = ({ isDarkMode, currentUser }) => {
-    const { permissions: contextPermissions, members } = useAppData();
+    const { permissions: contextPermissions } = useAppData();
+    const { filteredMembers: members } = useFilteredData();
     const { canCreate } = usePermissions(currentUser, contextPermissions);
     const toast = useToast();
 
