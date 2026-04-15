@@ -2540,9 +2540,29 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess }: any) {
 
   async function handleLogin() {
     setLoading(true); setError("");
-    const { error: err } = await supabase.auth.signInWithPassword({ email, password });
-    if (err) { setError("Email ou senha inválidos."); setLoading(false); return; }
-    onClose(() => { if (onSuccess) onSuccess(); });
+    try {
+      const { data, error: err } = await supabase.auth.signInWithPassword({ email, password });
+      if (err) {
+        const msg = err.message === "Invalid login credentials" ? "Email ou senha inválidos."
+          : err.message === "Email not confirmed" ? "Email não confirmado. Verifique sua caixa de entrada."
+          : err.message;
+        setError(msg);
+        setLoading(false);
+        return;
+      }
+      // Verify session was actually established
+      if (!data.session) {
+        setError("Não foi possível estabelecer a sessão. Tente novamente.");
+        setLoading(false);
+        return;
+      }
+      // Wait briefly for onAuthStateChange to fire
+      await new Promise(r => setTimeout(r, 300));
+      onClose(() => { if (onSuccess) onSuccess(); });
+    } catch (e: any) {
+      setError(e.message || "Erro inesperado ao fazer login.");
+      setLoading(false);
+    }
   }
 
   return (
