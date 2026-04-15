@@ -18,13 +18,6 @@ const publicQueryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 1000 * 60 * 5 } },
 });
 
-// DEBUG: Intercept signOut to find what triggers it
-const _origSignOut = supabase.auth.signOut.bind(supabase.auth);
-supabase.auth.signOut = async (...args: any[]) => {
-  console.trace("[DEBUG] supabase.auth.signOut() called from:");
-  return _origSignOut(...args);
-};
-
 // ============================================================
 // WRAPPER — provides its own QueryClient
 // ============================================================
@@ -241,27 +234,29 @@ function PublicSiteApp() {
   // ============================================================
   // AUTH LISTENER (Supabase direct — NOT authService)
   // ============================================================
+  const lastSignInRef = useRef<number>(0);
+
+  // Direct setter for LoginForm/SignupForm — bypasses onAuthStateChange race condition
+  const setAuthDirect = useCallback((user: { id: string; email: string }) => {
+    console.log("[AUTH] setAuthDirect:", user.email);
+    lastSignInRef.current = Date.now();
+    setAuthUser(user);
+    loadClientProfile(user.id);
+  }, []);
+
   useEffect(() => {
     if (isPreview) return; // No auth in preview iframe
-
-    let profileLoaded = false;
 
     supabase.auth.getSession().then(({ data }) => {
       console.log("[AUTH] getSession:", data.session?.user?.email || "no session");
       if (data.session?.user) {
         setAuthUser({ id: data.session.user.id, email: data.session.user.email || "" });
-        if (!profileLoaded) {
-          profileLoaded = true;
-          loadClientProfile(data.session.user.id);
-        }
+        loadClientProfile(data.session.user.id);
       }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log("[AUTH] onAuthStateChange:", event, session?.user?.email || "no user");
-      if (event === "SIGNED_OUT") {
-        console.trace("[AUTH] SIGNED_OUT triggered — stack trace:");
-      }
       if (event === "PASSWORD_RECOVERY") {
         if (session?.user) {
           setAuthUser({ id: session.user.id, email: session.user.email || "" });
@@ -271,17 +266,27 @@ function PublicSiteApp() {
         }
         return;
       }
-      if (session?.user) {
+      if (event === "SIGNED_IN" && session?.user) {
+        lastSignInRef.current = Date.now();
         setAuthUser({ id: session.user.id, email: session.user.email || "" });
-        if (!profileLoaded) {
-          profileLoaded = true;
-          loadClientProfile(session.user.id);
+        loadClientProfile(session.user.id);
+        return;
+      }
+      if (event === "SIGNED_OUT") {
+        // Ignore spurious SIGNED_OUT that arrives right after SIGNED_IN
+        // (Supabase SDK session invalidation race condition)
+        const elapsed = Date.now() - lastSignInRef.current;
+        if (elapsed < 5000) {
+          console.log("[AUTH] Ignoring spurious SIGNED_OUT (only", elapsed, "ms after SIGNED_IN)");
+          return;
         }
-      } else {
         setAuthUser(null);
         setClientProfile(null);
         setClientSubscription(null);
-        profileLoaded = false;
+        return;
+      }
+      if (session?.user) {
+        setAuthUser({ id: session.user.id, email: session.user.email || "" });
       }
     });
     return () => subscription.unsubscribe();
@@ -471,11 +476,11 @@ function PublicSiteApp() {
   // AUTH MODALS
   // ============================================================
   function showLoginModal(onSuccess?: () => void) {
-    openModal(<LoginForm g={g} primary={primary} onClose={closeModal} onSwitch={(v: string) => { closeModal(() => { if (v === "signup") showSignupModal(onSuccess); else showForgotModal(); }); }} onSuccess={onSuccess} showToast={showToast} />, "center", true);
+    openModal(<LoginForm g={g} primary={primary} onClose={closeModal} onSwitch={(v: string) => { closeModal(() => { if (v === "signup") showSignupModal(onSuccess); else showForgotModal(); }); }} onSuccess={onSuccess} showToast={showToast} setAuthDirect={setAuthDirect} />, "center", true);
   }
 
   function showSignupModal(onSuccess?: () => void) {
-    openModal(<SignupForm g={g} primary={primary} onClose={closeModal} onSwitch={() => { closeModal(() => showLoginModal(onSuccess)); }} onSuccess={onSuccess} showToast={showToast} />, "center", true);
+    openModal(<SignupForm g={g} primary={primary} onClose={closeModal} onSwitch={() => { closeModal(() => showLoginModal(onSuccess)); }} onSuccess={onSuccess} showToast={showToast} setAuthDirect={setAuthDirect} />, "center", true);
   }
 
   function showForgotModal() {
@@ -2617,7 +2622,7 @@ function translateSupabaseError(msg: string): string {
   return msg;
 }
 
-function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any) {
+function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAuthDirect }: any) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -2630,9 +2635,7 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any)
     if (!valid || loading) return;
     setLoading(true); setError("");
     try {
-      console.log("[LOGIN] Starting signInWithPassword...");
       const { data, error: err } = await supabase.auth.signInWithPassword({ email, password });
-      console.log("[LOGIN] Result:", err ? `ERROR: ${err.message}` : `OK, session: ${!!data.session}, user: ${data.session?.user?.email}`);
       if (err) {
         setError(translateSupabaseError(err.message));
         setLoading(false);
@@ -2643,22 +2646,13 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any)
         setLoading(false);
         return;
       }
-      // Wait for onAuthStateChange
-      console.log("[LOGIN] Waiting 400ms for auth state change...");
-      await new Promise(r => setTimeout(r, 400));
-      // Verify session still exists
-      const { data: { session: checkSession } } = await supabase.auth.getSession();
-      console.log("[LOGIN] Post-wait session check:", checkSession ? `ACTIVE (${checkSession.user.email})` : "NULL — session was revoked!");
-      if (!checkSession) {
-        setError("Sessão foi encerrada inesperadamente. Tente novamente.");
-        setLoading(false);
-        return;
-      }
-      const userName = data.session.user.user_metadata?.name || email.split("@")[0];
+      // Directly set auth state — don't rely on onAuthStateChange (it fires SIGNED_OUT spuriously)
+      const user = data.session.user;
+      setAuthDirect({ id: user.id, email: user.email || email });
+      const userName = user.user_metadata?.name || email.split("@")[0];
       if (showToast) showToast(`Bem-vindo, ${userName}!`);
       onClose(() => { if (onSuccess) onSuccess(); });
     } catch (e: any) {
-      console.error("[LOGIN] Exception:", e);
       setError(translateSupabaseError(e.message || "Erro inesperado."));
       setLoading(false);
     }
@@ -2692,7 +2686,7 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any)
   );
 }
 
-function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any) {
+function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAuthDirect }: any) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -2744,8 +2738,8 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any
         }).then(({ error: insertErr }) => {
           if (insertErr) console.log("Client insert fallback (trigger may have handled):", insertErr.message);
         });
-        // Wait for session
-        await new Promise(r => setTimeout(r, 500));
+        // Directly set auth state — don't rely on onAuthStateChange
+        setAuthDirect({ id: data.user.id, email: data.user.email || email });
         if (showToast) showToast("Conta criada com sucesso!");
       }
       onClose(() => { if (onSuccess) onSuccess(); });
