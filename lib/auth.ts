@@ -244,15 +244,10 @@ export const authService = {
                             .single();
 
                         if (error && error.code !== 'PGRST116') {
-                            // Real DB error — fall back to basic auth data
-                            console.warn('[Auth] DB error fetching profile:', error.message);
-                            callback({
-                                id: session.user.id,
-                                email: session.user.email || '',
-                                name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
-                                role: this._roleFromMeta(session.user.user_metadata),
-                                avatar: session.user.user_metadata?.avatar_url,
-                            });
+                            // Real DB error — DENY access (never fall back to guessed role)
+                            console.warn('[Auth] DB error fetching profile — denying access:', error.message);
+                            await supabase.auth.signOut();
+                            callback(null);
                             return;
                         }
 
@@ -272,21 +267,16 @@ export const authService = {
                                 avatar: profile.avatar || session.user.user_metadata?.avatar_url,
                             });
                         } else {
-                            // Profile confirmed missing (PGRST116) — user was deleted
-                            console.warn('[Auth] User not found in users table — logging out deleted user');
+                            // Profile missing (PGRST116) — user is a client or was deleted
+                            console.warn('[Auth] User not found in users table — denying ERP access');
                             await supabase.auth.signOut();
                             callback(null);
                         }
                     } catch (err) {
-                        console.warn('[Auth] Could not fetch profile:', err);
-                        // Fall back to basic auth data so UI is not blocked
-                        callback({
-                            id: session.user.id,
-                            email: session.user.email || '',
-                            name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
-                            role: this._roleFromMeta(session.user.user_metadata),
-                            avatar: session.user.user_metadata?.avatar_url,
-                        });
+                        // Network error / unexpected failure — DENY access (never fall back)
+                        console.warn('[Auth] Could not verify user — denying access:', err);
+                        await supabase.auth.signOut();
+                        callback(null);
                     }
                 })();
             } else {

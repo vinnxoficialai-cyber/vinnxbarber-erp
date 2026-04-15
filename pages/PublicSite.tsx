@@ -57,6 +57,7 @@ const supabase = createClient(
       autoRefreshToken: false,
       persistSession: false,
       detectSessionInUrl: true,
+      storageKey: "vinnx-ps-auth", // Isolate from ERP's GoTrueClient BroadcastChannel
     },
     global: {
       fetch: (input: RequestInfo | URL, init?: RequestInit) => {
