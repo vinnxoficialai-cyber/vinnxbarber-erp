@@ -1,10 +1,5 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-// Static imports for the ERP path — included in bundle but NOT executed for PublicSite
-import App from './App';
-import { AppDataProvider } from './context/AppDataContext';
-import { UnitProvider } from './context/UnitContext';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -18,8 +13,7 @@ const isPublicSite = hash === '#/site' || hash.startsWith('#/site/') || hash.sta
 
 if (isPublicSite) {
   // ============================================================
-  // PUBLIC SITE PATH (iframe do StoreCustomizer ou acesso direto)
-  // NÃO monta AppDataProvider — evita 35 queries + Realtime
+  // PUBLIC SITE PATH — 100% isolated, ZERO ERP code loaded
   // ============================================================
   import('./pages/PublicSite').then(({ default: PublicSite }) => {
     root.render(
@@ -30,18 +24,30 @@ if (isPublicSite) {
   });
 } else {
   // ============================================================
-  // ERP PATH — imports estáticos, ZERO waterfall, ZERO flash
+  // ERP PATH — dynamic import to keep PublicSite bundle clean
   // ============================================================
-  const queryClient = new QueryClient();
-  root.render(
-    <React.StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <AppDataProvider>
-          <UnitProvider>
-            <App />
-          </UnitProvider>
-        </AppDataProvider>
-      </QueryClientProvider>
-    </React.StrictMode>
-  );
+  Promise.all([
+    import('./App'),
+    import('./context/AppDataContext'),
+    import('./context/UnitContext'),
+    import('@tanstack/react-query'),
+  ]).then(([
+    { default: App },
+    { AppDataProvider },
+    { UnitProvider },
+    { QueryClient, QueryClientProvider },
+  ]) => {
+    const queryClient = new QueryClient();
+    root.render(
+      <React.StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <AppDataProvider>
+            <UnitProvider>
+              <App />
+            </UnitProvider>
+          </AppDataProvider>
+        </QueryClientProvider>
+      </React.StrictMode>
+    );
+  });
 }
