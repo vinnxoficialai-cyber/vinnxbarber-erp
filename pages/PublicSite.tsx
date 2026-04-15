@@ -199,6 +199,9 @@ function PublicSiteApp() {
   const [modalVisible, setModalVisible] = useState(false);
   const [modalIsAuth, setModalIsAuth] = useState(false);
 
+  // Pending booking (auto-resume after login)
+  const [pendingBooking, setPendingBooking] = useState(false);
+
   // Navbar
   const navRef = useRef<HTMLDivElement>(null);
   const indicatorRef = useRef<HTMLDivElement>(null);
@@ -599,12 +602,29 @@ function PublicSiteApp() {
     />, "fullscreen");
   }
 
+  // Auto-resume booking after login (avoids stale closure bug)
+  useEffect(() => {
+    if (pendingBooking && authUser && clientProfile) {
+      setPendingBooking(false);
+      // Small delay to ensure modal is closed and UI is stable
+      setTimeout(() => showResumoModal(), 400);
+    }
+  }, [pendingBooking, authUser, clientProfile]);
+
+  // Reset pendingBooking if user closes auth modal without logging in
+  useEffect(() => {
+    if (pendingBooking && !modalContent && !authUser) {
+      setPendingBooking(false);
+    }
+  }, [modalContent]);
+
   // === Confirm booking ===
   async function handleAgendarClick() {
     if (!selection.unit || !selection.barber || !selection.service || !selection.date || !selection.time) return;
 
     if (!authUser) {
-      showLoginModal(() => handleAgendarClick());
+      setPendingBooking(true);
+      showLoginModal();
       return;
     }
 
