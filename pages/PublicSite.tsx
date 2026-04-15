@@ -13,9 +13,12 @@ import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscripti
 
 // ============================================================
 // DEDICATED Supabase client for PublicSite
-// autoRefreshToken: false prevents the SDK from calling /auth/v1/user
-// which triggers spurious SIGNED_OUT events on this project
+// - autoRefreshToken: false → prevents SDK from calling /auth/v1/user
+//   which triggers spurious SIGNED_OUT on this project
+// - unique storageKey → isolates from ERP's session storage
 // ============================================================
+const PS_AUTH_KEY = "vinnx_ps_session";
+
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
@@ -23,6 +26,7 @@ const supabase = createClient(
     auth: {
       autoRefreshToken: false,
       persistSession: true,
+      storageKey: PS_AUTH_KEY,
       detectSessionInUrl: true,
     }
   }
@@ -249,24 +253,52 @@ function PublicSiteApp() {
   }, [g]);
 
   // ============================================================
-  // AUTH LISTENER (dedicated Supabase client — autoRefreshToken: false)
+  // AUTH LISTENER + SESSION PERSISTENCE
+  // The SDK may clear its internal session (spurious SIGNED_OUT),
+  // so we maintain a backup in localStorage for page-refresh recovery.
   // ============================================================
   const lastSignInRef = useRef<number>(0);
+  const PS_BACKUP_KEY = "vinnx_ps_user";
+
+  // Save auth state to backup
+  const saveAuthBackup = useCallback((user: { id: string; email: string } | null) => {
+    if (user) {
+      localStorage.setItem(PS_BACKUP_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(PS_BACKUP_KEY);
+    }
+  }, []);
 
   // Direct setter for LoginForm/SignupForm
   const setAuthDirect = useCallback((user: { id: string; email: string }) => {
     lastSignInRef.current = Date.now();
     setAuthUser(user);
+    saveAuthBackup(user);
     loadClientProfile(user.id);
   }, []);
 
   useEffect(() => {
     if (isPreview) return;
 
+    // Try SDK session first, then fallback to our backup
     supabase.auth.getSession().then(({ data }) => {
       if (data.session?.user) {
-        setAuthUser({ id: data.session.user.id, email: data.session.user.email || "" });
-        loadClientProfile(data.session.user.id);
+        const u = { id: data.session.user.id, email: data.session.user.email || "" };
+        setAuthUser(u);
+        saveAuthBackup(u);
+        loadClientProfile(u.id);
+      } else {
+        // SDK session lost (cleared by spurious SIGNED_OUT) — restore from backup
+        try {
+          const backup = localStorage.getItem(PS_BACKUP_KEY);
+          if (backup) {
+            const u = JSON.parse(backup);
+            if (u?.id && u?.email) {
+              setAuthUser(u);
+              loadClientProfile(u.id);
+            }
+          }
+        } catch {}
       }
     });
 
@@ -282,8 +314,10 @@ function PublicSiteApp() {
       }
       if (event === "SIGNED_IN" && session?.user) {
         lastSignInRef.current = Date.now();
-        setAuthUser({ id: session.user.id, email: session.user.email || "" });
-        loadClientProfile(session.user.id);
+        const u = { id: session.user.id, email: session.user.email || "" };
+        setAuthUser(u);
+        saveAuthBackup(u);
+        loadClientProfile(u.id);
         return;
       }
       if (event === "SIGNED_OUT") {
@@ -292,9 +326,11 @@ function PublicSiteApp() {
         if (elapsed < 10000) {
           return; // Suppress — session is managed by setAuthDirect
         }
+        // Real logout — clear everything
         setAuthUser(null);
         setClientProfile(null);
         setClientSubscription(null);
+        saveAuthBackup(null);
         return;
       }
       if (session?.user) {
@@ -305,9 +341,7 @@ function PublicSiteApp() {
   }, [isPreview]);
 
   async function loadClientProfile(authId: string) {
-    console.log("[PROFILE] Loading client profile for authId:", authId);
     const { data, error: profileErr } = await supabase.from("clients").select("*").eq("authUserId", authId).single();
-    console.log("[PROFILE] Query result:", data ? `Found: ${data.name} (${data.email})` : `Not found. Error: ${profileErr?.message}`);
     if (data) {
       setClientProfile(data);
       // Load subscription
@@ -848,7 +882,7 @@ function PublicSiteApp() {
             authUser={authUser} clientProfile={clientProfile}
             goals={goals} services={services}
             onLogin={() => showLoginModal()} openModal={openModal} closeModal={closeModal}
-            onLogout={async () => { await supabase.auth.signOut(); setAuthUser(null); setClientProfile(null); }}
+            onLogout={async () => { lastSignInRef.current = 0; localStorage.removeItem("vinnx_ps_user"); await supabase.auth.signOut(); setAuthUser(null); setClientProfile(null); setClientSubscription(null); }}
             onProfileUpdate={(p: any) => setClientProfile(p)}
             setActiveView={setActiveView} updateSelection={updateSelection}
             resetSelection={resetSelection}
