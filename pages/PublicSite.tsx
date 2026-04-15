@@ -240,6 +240,7 @@ function PublicSiteApp() {
     let profileLoaded = false;
 
     supabase.auth.getSession().then(({ data }) => {
+      console.log("[AUTH] getSession:", data.session?.user?.email || "no session");
       if (data.session?.user) {
         setAuthUser({ id: data.session.user.id, email: data.session.user.email || "" });
         if (!profileLoaded) {
@@ -250,8 +251,8 @@ function PublicSiteApp() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("[AUTH] onAuthStateChange:", event, session?.user?.email || "no user");
       if (event === "PASSWORD_RECOVERY") {
-        // User clicked reset password link — show change password modal
         if (session?.user) {
           setAuthUser({ id: session.user.id, email: session.user.email || "" });
           setTimeout(() => {
@@ -277,7 +278,9 @@ function PublicSiteApp() {
   }, [isPreview]);
 
   async function loadClientProfile(authId: string) {
-    const { data } = await supabase.from("clients").select("*").eq("authUserId", authId).single();
+    console.log("[PROFILE] Loading client profile for authId:", authId);
+    const { data, error: profileErr } = await supabase.from("clients").select("*").eq("authUserId", authId).single();
+    console.log("[PROFILE] Query result:", data ? `Found: ${data.name} (${data.email})` : `Not found. Error: ${profileErr?.message}`);
     if (data) {
       setClientProfile(data);
       // Load subscription
@@ -2617,7 +2620,9 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any)
     if (!valid || loading) return;
     setLoading(true); setError("");
     try {
+      console.log("[LOGIN] Starting signInWithPassword...");
       const { data, error: err } = await supabase.auth.signInWithPassword({ email, password });
+      console.log("[LOGIN] Result:", err ? `ERROR: ${err.message}` : `OK, session: ${!!data.session}, user: ${data.session?.user?.email}`);
       if (err) {
         setError(translateSupabaseError(err.message));
         setLoading(false);
@@ -2629,11 +2634,21 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any)
         return;
       }
       // Wait for onAuthStateChange
+      console.log("[LOGIN] Waiting 400ms for auth state change...");
       await new Promise(r => setTimeout(r, 400));
+      // Verify session still exists
+      const { data: { session: checkSession } } = await supabase.auth.getSession();
+      console.log("[LOGIN] Post-wait session check:", checkSession ? `ACTIVE (${checkSession.user.email})` : "NULL — session was revoked!");
+      if (!checkSession) {
+        setError("Sessão foi encerrada inesperadamente. Tente novamente.");
+        setLoading(false);
+        return;
+      }
       const userName = data.session.user.user_metadata?.name || email.split("@")[0];
       if (showToast) showToast(`Bem-vindo, ${userName}!`);
       onClose(() => { if (onSuccess) onSuccess(); });
     } catch (e: any) {
+      console.error("[LOGIN] Exception:", e);
       setError(translateSupabaseError(e.message || "Erro inesperado."));
       setLoading(false);
     }
