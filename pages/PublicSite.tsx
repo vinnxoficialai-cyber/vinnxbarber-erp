@@ -169,6 +169,13 @@ function PublicSiteApp() {
   const [authUser, setAuthUser] = useState<{ id: string; email: string } | null>(null);
   const [clientProfile, setClientProfile] = useState<any>(null);
 
+  // Toast
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  }, []);
+
   // Data
   const [units, setUnits] = useState<any[]>([]);
   const [barbers, setBarbers] = useState<any[]>([]);
@@ -227,21 +234,40 @@ function PublicSiteApp() {
   useEffect(() => {
     if (isPreview) return; // No auth in preview iframe
 
+    let profileLoaded = false;
+
     supabase.auth.getSession().then(({ data }) => {
       if (data.session?.user) {
         setAuthUser({ id: data.session.user.id, email: data.session.user.email || "" });
-        loadClientProfile(data.session.user.id);
+        if (!profileLoaded) {
+          profileLoaded = true;
+          loadClientProfile(data.session.user.id);
+        }
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        // User clicked reset password link — show change password modal
+        if (session?.user) {
+          setAuthUser({ id: session.user.id, email: session.user.email || "" });
+          setTimeout(() => {
+            openModal(<AlterarSenhaModal primary={primary} bgColor={bgColor} onClose={() => closeModal()} />, "center");
+          }, 500);
+        }
+        return;
+      }
       if (session?.user) {
         setAuthUser({ id: session.user.id, email: session.user.email || "" });
-        loadClientProfile(session.user.id);
+        if (!profileLoaded) {
+          profileLoaded = true;
+          loadClientProfile(session.user.id);
+        }
       } else {
         setAuthUser(null);
         setClientProfile(null);
         setClientSubscription(null);
+        profileLoaded = false;
       }
     });
     return () => subscription.unsubscribe();
@@ -429,11 +455,11 @@ function PublicSiteApp() {
   // AUTH MODALS
   // ============================================================
   function showLoginModal(onSuccess?: () => void) {
-    openModal(<LoginForm g={g} primary={primary} onClose={closeModal} onSwitch={(v: string) => { closeModal(() => { if (v === "signup") showSignupModal(onSuccess); else showForgotModal(); }); }} onSuccess={onSuccess} />, "center", true);
+    openModal(<LoginForm g={g} primary={primary} onClose={closeModal} onSwitch={(v: string) => { closeModal(() => { if (v === "signup") showSignupModal(onSuccess); else showForgotModal(); }); }} onSuccess={onSuccess} showToast={showToast} />, "center", true);
   }
 
   function showSignupModal(onSuccess?: () => void) {
-    openModal(<SignupForm g={g} primary={primary} onClose={closeModal} onSwitch={() => { closeModal(() => showLoginModal(onSuccess)); }} onSuccess={onSuccess} />, "center", true);
+    openModal(<SignupForm g={g} primary={primary} onClose={closeModal} onSwitch={() => { closeModal(() => showLoginModal(onSuccess)); }} onSuccess={onSuccess} showToast={showToast} />, "center", true);
   }
 
   function showForgotModal() {
@@ -578,7 +604,7 @@ function PublicSiteApp() {
     if (!selection.unit || !selection.barber || !selection.service || !selection.date || !selection.time) return;
 
     if (!authUser) {
-      showLoginModal();
+      showLoginModal(() => handleAgendarClick());
       return;
     }
 
@@ -863,6 +889,21 @@ function PublicSiteApp() {
             }}>
             {modalContent}
           </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div style={{
+          position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)",
+          zIndex: 100, padding: "12px 24px", borderRadius: 12,
+          backgroundColor: toast.type === "success" ? "#16a34a" : "#dc2626",
+          color: "#fff", fontWeight: 600, fontSize: 14,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+          animation: "toastIn 0.3s ease-out",
+          maxWidth: 360, textAlign: "center",
+        }}>
+          {toast.message}
         </div>
       )}
     </div>
@@ -2530,7 +2571,20 @@ function AlterarSenhaModal({ primary, bgColor, onClose }: any) {
 // ============================================================
 // AUTH FORMS
 // ============================================================
-function LoginForm({ g, primary, onClose, onSwitch, onSuccess }: any) {
+
+function translateSupabaseError(msg: string): string {
+  if (msg.includes("Invalid login credentials")) return "Email ou senha inválidos.";
+  if (msg.includes("Email not confirmed")) return "Email não confirmado. Verifique sua caixa de entrada.";
+  if (msg.includes("already registered") || msg.includes("User already registered")) return "Este email já está cadastrado. Faça login.";
+  if (msg.includes("rate limit") || msg.includes("too many requests")) return "Muitas tentativas. Aguarde alguns minutos.";
+  if (msg.includes("email rate limit exceeded")) return "Muitas tentativas de cadastro. Aguarde 10 minutos.";
+  if (msg.includes("Password should be")) return "A senha deve ter pelo menos 6 caracteres.";
+  if (msg.includes("Unable to validate email")) return "Email inválido.";
+  if (msg.includes("Signup is disabled")) return "Cadastro temporariamente desabilitado.";
+  return msg;
+}
+
+function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -2538,29 +2592,29 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess }: any) {
   const [error, setError] = useState("");
   const valid = email.includes("@") && password.length >= 6;
 
-  async function handleLogin() {
+  async function handleLogin(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!valid || loading) return;
     setLoading(true); setError("");
     try {
       const { data, error: err } = await supabase.auth.signInWithPassword({ email, password });
       if (err) {
-        const msg = err.message === "Invalid login credentials" ? "Email ou senha inválidos."
-          : err.message === "Email not confirmed" ? "Email não confirmado. Verifique sua caixa de entrada."
-          : err.message;
-        setError(msg);
+        setError(translateSupabaseError(err.message));
         setLoading(false);
         return;
       }
-      // Verify session was actually established
       if (!data.session) {
-        setError("Não foi possível estabelecer a sessão. Tente novamente.");
+        setError("Não foi possível iniciar a sessão. Verifique se seu email está confirmado.");
         setLoading(false);
         return;
       }
-      // Wait briefly for onAuthStateChange to fire
-      await new Promise(r => setTimeout(r, 300));
+      // Wait for onAuthStateChange
+      await new Promise(r => setTimeout(r, 400));
+      const userName = data.session.user.user_metadata?.name || email.split("@")[0];
+      if (showToast) showToast(`Bem-vindo, ${userName}!`);
       onClose(() => { if (onSuccess) onSuccess(); });
     } catch (e: any) {
-      setError(e.message || "Erro inesperado ao fazer login.");
+      setError(translateSupabaseError(e.message || "Erro inesperado."));
       setLoading(false);
     }
   }
@@ -2570,18 +2624,22 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess }: any) {
       {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-16 h-16 mb-4 mx-auto object-contain" />}
       <h2 className="text-2xl font-bold text-white mb-2">Acesse sua conta</h2>
       <div className="w-24 h-0.5 mx-auto mb-8" style={{ backgroundColor: primary }} />
-      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full p-3 rounded-lg mb-4" />
-      <div className="relative mb-4">
-        <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Senha" className="w-full p-3 rounded-lg pr-10" />
-        <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
-          {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+      <form onSubmit={handleLogin}>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail"
+          className="w-full p-3 rounded-lg mb-4" autoComplete="email" autoFocus />
+        <div className="relative mb-4">
+          <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
+            placeholder="Senha" className="w-full p-3 rounded-lg pr-10" autoComplete="current-password" />
+          <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
+            {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+          </button>
+        </div>
+        {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+        <button type="submit" disabled={!valid || loading} className={`w-full py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
+          style={{ backgroundColor: primary, color: "#111" }}>
+          {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Login"}
         </button>
-      </div>
-      {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-      <button onClick={handleLogin} disabled={!valid || loading} className={`w-full py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
-        style={{ backgroundColor: primary, color: "#111" }}>
-        {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Login"}
-      </button>
+      </form>
       <button onClick={() => onSwitch("forgot")} className="text-sm text-gray-400 mt-4 block mx-auto hover:underline">Esqueceu a senha?</button>
       <p className="text-sm text-gray-400 mt-2">Não possui conta? <button onClick={() => onSwitch("signup")} className="font-bold hover:underline" style={{ color: primary }}>Faça seu cadastro</button></p>
       <button onClick={() => onClose()} className="mt-8 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar</button>
@@ -2589,7 +2647,7 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess }: any) {
   );
 }
 
-function SignupForm({ g, primary, onClose, onSwitch, onSuccess }: any) {
+function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast }: any) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -2599,65 +2657,95 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess }: any) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const valid = name.trim().split(" ").length >= 2 && phone.replace(/\D/g, "").length === 11 && email.includes("@") && password.length >= 6 && password === confirmPw;
+  const hasLetter = /[a-zA-Z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
+  const pwStrong = password.length >= 6 && hasLetter && hasNumber;
+  const valid = name.trim().split(" ").length >= 2 && phone.replace(/\D/g, "").length === 11 && email.includes("@") && pwStrong && password === confirmPw;
 
-  async function handleSignup() {
+  async function handleSignup(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!valid || loading) return;
     setLoading(true); setError("");
-    const { data, error: err } = await supabase.auth.signUp({ email, password, options: { data: { name, phone: phone.replace(/\D/g, "") } } });
-    if (err) {
-      const msg = err.message.includes("already registered") ? "Este email já está cadastrado. Faça login." : err.message;
-      setError(msg); setLoading(false); return;
-    }
-    if (data.user) {
-      // Check if email confirmation is required
-      if (data.user.identities && data.user.identities.length === 0) {
-        setError("Este email já está cadastrado. Tente fazer login.");
+    try {
+      const { data, error: err } = await supabase.auth.signUp({
+        email, password,
+        options: { data: { name, phone: phone.replace(/\D/g, "") } }
+      });
+      if (err) {
+        setError(translateSupabaseError(err.message));
         setLoading(false);
         return;
       }
-      const referralCode = name.split(" ")[0].toUpperCase().substring(0, 4) + Math.floor(1000 + Math.random() * 9000);
-      const { error: insertErr } = await supabase.from("clients").insert({
-        id: crypto.randomUUID(),
-        name, email, phone: phone.replace(/\D/g, ""),
-        company: "",
-        status: "ACTIVE",
-        monthlyValue: 0, setupValue: 0, totalValue: 0, monthsActive: 0,
-        authUserId: data.user.id,
-        referralCode,
-        referralCredits: 0,
-        referralsMade: 0,
-        updatedAt: new Date().toISOString(),
-      });
-      if (insertErr) {
-        console.error("Error creating client profile:", insertErr);
-        // Don't block the user — the auto-create in loadClientProfile will handle it
+      if (data.user) {
+        // Check if email already exists (Supabase returns empty identities)
+        if (data.user.identities && data.user.identities.length === 0) {
+          setError("Este email já está cadastrado. Tente fazer login.");
+          setLoading(false);
+          return;
+        }
+        // DB trigger auto-creates client record — but try frontend insert as fallback
+        const referralCode = name.split(" ")[0].toUpperCase().substring(0, 4) + Math.floor(1000 + Math.random() * 9000);
+        await supabase.from("clients").insert({
+          id: crypto.randomUUID(),
+          name, email, phone: phone.replace(/\D/g, ""),
+          company: "",
+          status: "ACTIVE",
+          monthlyValue: 0, setupValue: 0, totalValue: 0, monthsActive: 0,
+          authUserId: data.user.id,
+          referralCode,
+          referralCredits: 0,
+          referralsMade: 0,
+          updatedAt: new Date().toISOString(),
+        }).then(({ error: insertErr }) => {
+          if (insertErr) console.log("Client insert fallback (trigger may have handled):", insertErr.message);
+        });
+        // Wait for session
+        await new Promise(r => setTimeout(r, 500));
+        if (showToast) showToast("Conta criada com sucesso!");
       }
-      // Small delay to let onAuthStateChange pick up the session
-      await new Promise(r => setTimeout(r, 500));
+      onClose(() => { if (onSuccess) onSuccess(); });
+    } catch (e: any) {
+      setError(translateSupabaseError(e.message || "Erro inesperado."));
+      setLoading(false);
     }
-    onClose(() => { if (onSuccess) onSuccess(); });
   }
+
+  // Password strength indicator
+  const pwIndicator = password.length === 0 ? null
+    : !pwStrong ? { color: "#ef4444", text: "Fraca — use letras e números" }
+    : password.length >= 8 ? { color: "#16a34a", text: "Forte ✓" }
+    : { color: "#eab308", text: "Razoável" };
 
   return (
     <div className="p-6 text-center booking-auth">
       <h2 className="text-2xl font-bold text-white mb-2">Criar conta</h2>
       <p className="text-gray-400 text-sm mb-6">Preencha o formulário com seus dados</p>
-      <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome e Sobrenome" className="w-full p-3 rounded-lg mb-4" />
-      <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))} placeholder="Telefone (celular)" className="w-full p-3 rounded-lg mb-4" inputMode="numeric" />
-      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full p-3 rounded-lg mb-4" />
-      <div className="relative mb-4">
-        <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Senha (mín. 6 caracteres)" className="w-full p-3 rounded-lg pr-10" />
-        <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
-          {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+      <form onSubmit={handleSignup}>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome e Sobrenome"
+          className="w-full p-3 rounded-lg mb-4" autoComplete="name" autoFocus />
+        <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))} placeholder="Telefone (celular)"
+          className="w-full p-3 rounded-lg mb-4" inputMode="numeric" autoComplete="tel" />
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail"
+          className="w-full p-3 rounded-lg mb-4" autoComplete="email" />
+        <div className="relative mb-1">
+          <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
+            placeholder="Senha (mín. 6, com letras e números)" className="w-full p-3 rounded-lg pr-10" autoComplete="new-password" />
+          <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
+            {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+          </button>
+        </div>
+        {pwIndicator && (
+          <p className="text-xs mb-3 text-left" style={{ color: pwIndicator.color }}>{pwIndicator.text}</p>
+        )}
+        <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Confirme a senha"
+          className="w-full p-3 rounded-lg mb-4" autoComplete="new-password" />
+        {password && confirmPw && password !== confirmPw && <p className="text-red-400 text-sm mb-2">As senhas não conferem.</p>}
+        {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+        <button type="submit" disabled={!valid || loading} className={`w-full py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
+          style={{ backgroundColor: primary, color: "#111" }}>
+          {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Criar conta"}
         </button>
-      </div>
-      <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Confirme a senha" className="w-full p-3 rounded-lg mb-4" />
-      {password && confirmPw && password !== confirmPw && <p className="text-red-400 text-sm mb-2">As senhas não conferem.</p>}
-      {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-      <button onClick={handleSignup} disabled={!valid || loading} className={`w-full py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
-        style={{ backgroundColor: primary, color: "#111" }}>
-        {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Criar conta"}
-      </button>
+      </form>
       <p className="text-xs text-gray-400 mt-4">Ao se cadastrar, você aceita os Termos de Uso e Política de Privacidade.</p>
       <button onClick={() => onSwitch()} className="mt-6 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar</button>
     </div>
@@ -2668,10 +2756,19 @@ function ForgotForm({ g, primary, onClose, onSwitch }: any) {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  async function handleReset() {
-    setLoading(true);
-    await supabase.auth.resetPasswordForEmail(email);
+  async function handleReset(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    setLoading(true); setError("");
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/#/site`,
+    });
+    if (err) {
+      setError(translateSupabaseError(err.message));
+      setLoading(false);
+      return;
+    }
     setSent(true); setLoading(false);
   }
 
@@ -2680,19 +2777,21 @@ function ForgotForm({ g, primary, onClose, onSwitch }: any) {
       <h2 className="text-2xl font-bold text-white mb-2">Redefinir senha</h2>
       {sent ? (
         <>
-          <p className="text-gray-400 text-sm mb-6">Enviamos um link de redefinição para <strong className="text-white">{email}</strong>. Verifique sua caixa de entrada.</p>
+          <p className="text-gray-400 text-sm mb-6">Enviamos um link de redefinição para <strong className="text-white">{email}</strong>. Verifique sua caixa de entrada e spam.</p>
           <button onClick={() => onSwitch()} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: "#111" }}>Ir para Login</button>
         </>
       ) : (
-        <>
+        <form onSubmit={handleReset}>
           <p className="text-gray-400 text-sm mb-6">Informe seu e-mail para receber um link de redefinição de senha.</p>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Seu e-mail" className="w-full p-3 rounded-lg mb-4" />
-          <button onClick={handleReset} disabled={!email.includes("@") || loading} className={`w-full py-3 font-bold rounded-lg ${email.includes("@") ? "" : "opacity-50"}`}
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Seu e-mail"
+            className="w-full p-3 rounded-lg mb-4" autoComplete="email" autoFocus />
+          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+          <button type="submit" disabled={!email.includes("@") || loading} className={`w-full py-3 font-bold rounded-lg ${email.includes("@") ? "" : "opacity-50"}`}
             style={{ backgroundColor: primary, color: "#111" }}>
             {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Enviar"}
           </button>
-          <button onClick={() => onSwitch()} className="mt-6 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar para Login</button>
-        </>
+          <button type="button" onClick={() => onSwitch()} className="mt-6 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar para Login</button>
+        </form>
       )}
     </div>
   );
