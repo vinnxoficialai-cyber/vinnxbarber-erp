@@ -18,6 +18,13 @@ const publicQueryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 1000 * 60 * 5 } },
 });
 
+// DEBUG: Intercept signOut to find what triggers it
+const _origSignOut = supabase.auth.signOut.bind(supabase.auth);
+supabase.auth.signOut = async (...args: any[]) => {
+  console.trace("[DEBUG] supabase.auth.signOut() called from:");
+  return _origSignOut(...args);
+};
+
 // ============================================================
 // WRAPPER — provides its own QueryClient
 // ============================================================
@@ -252,6 +259,9 @@ function PublicSiteApp() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log("[AUTH] onAuthStateChange:", event, session?.user?.email || "no user");
+      if (event === "SIGNED_OUT") {
+        console.trace("[AUTH] SIGNED_OUT triggered — stack trace:");
+      }
       if (event === "PASSWORD_RECOVERY") {
         if (session?.user) {
           setAuthUser({ id: session.user.id, email: session.user.email || "" });
