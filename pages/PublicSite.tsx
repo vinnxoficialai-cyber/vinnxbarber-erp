@@ -13,11 +13,14 @@ import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscripti
 
 // ============================================================
 // DEDICATED Supabase client for PublicSite
-// - autoRefreshToken: false → prevents SDK from calling /auth/v1/user
-//   which triggers spurious SIGNED_OUT on this project
-// - unique storageKey → isolates from ERP's session storage
+// - Custom fetch injects saved access_token for REST calls,
+//   ensuring auth survives SDK's internal SIGNED_OUT wipes
+// - autoRefreshToken: false → no token validation pings
 // ============================================================
 const PS_AUTH_KEY = "vinnx_ps_session";
+
+// Module-level token storage — outside SDK's control
+let _psAccessToken: string | null = null;
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -25,9 +28,19 @@ const supabase = createClient(
   {
     auth: {
       autoRefreshToken: false,
-      persistSession: true,
-      storageKey: PS_AUTH_KEY,
+      persistSession: false,
       detectSessionInUrl: true,
+    },
+    global: {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+        // Inject access token for REST API calls (RLS-protected)
+        if (_psAccessToken && typeof input === "string" && input.includes("/rest/v1/")) {
+          const headers = new Headers(init?.headers);
+          headers.set("Authorization", `Bearer ${_psAccessToken}`);
+          return fetch(input, { ...init, headers });
+        }
+        return fetch(input, init);
+      }
     }
   }
 );
@@ -254,53 +267,53 @@ function PublicSiteApp() {
 
   // ============================================================
   // AUTH LISTENER + SESSION PERSISTENCE
-  // The SDK may clear its internal session (spurious SIGNED_OUT),
-  // so we maintain a backup in localStorage for page-refresh recovery.
+  // We manage auth completely outside the SDK:
+  // - _psAccessToken (module-level) → injected in REST calls via custom fetch
+  // - localStorage backup → survives page refresh
   // ============================================================
   const lastSignInRef = useRef<number>(0);
   const PS_BACKUP_KEY = "vinnx_ps_user";
 
-  // Save auth state to backup
-  const saveAuthBackup = useCallback((user: { id: string; email: string } | null) => {
-    if (user) {
-      localStorage.setItem(PS_BACKUP_KEY, JSON.stringify(user));
+  // Save auth + token to localStorage
+  const saveAuthBackup = useCallback((user: { id: string; email: string } | null, token?: string | null) => {
+    if (user && token) {
+      localStorage.setItem(PS_BACKUP_KEY, JSON.stringify({ ...user, token }));
+      _psAccessToken = token;
+    } else if (user) {
+      // Keep existing token if only updating user
+      const existing = localStorage.getItem(PS_BACKUP_KEY);
+      const parsed = existing ? JSON.parse(existing) : {};
+      localStorage.setItem(PS_BACKUP_KEY, JSON.stringify({ ...user, token: parsed.token }));
     } else {
       localStorage.removeItem(PS_BACKUP_KEY);
+      _psAccessToken = null;
     }
   }, []);
 
-  // Direct setter for LoginForm/SignupForm
-  const setAuthDirect = useCallback((user: { id: string; email: string }) => {
+  // Direct setter for LoginForm/SignupForm — receives session with tokens
+  const setAuthDirect = useCallback((user: { id: string; email: string }, accessToken: string) => {
     lastSignInRef.current = Date.now();
+    _psAccessToken = accessToken;
     setAuthUser(user);
-    saveAuthBackup(user);
+    saveAuthBackup(user, accessToken);
     loadClientProfile(user.id);
   }, []);
 
   useEffect(() => {
     if (isPreview) return;
 
-    // Try SDK session first, then fallback to our backup
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session?.user) {
-        const u = { id: data.session.user.id, email: data.session.user.email || "" };
-        setAuthUser(u);
-        saveAuthBackup(u);
-        loadClientProfile(u.id);
-      } else {
-        // SDK session lost (cleared by spurious SIGNED_OUT) — restore from backup
-        try {
-          const backup = localStorage.getItem(PS_BACKUP_KEY);
-          if (backup) {
-            const u = JSON.parse(backup);
-            if (u?.id && u?.email) {
-              setAuthUser(u);
-              loadClientProfile(u.id);
-            }
-          }
-        } catch {}
+    // Restore from localStorage backup (SDK's session is unreliable)
+    try {
+      const backup = localStorage.getItem(PS_BACKUP_KEY);
+      if (backup) {
+        const parsed = JSON.parse(backup);
+        if (parsed?.id && parsed?.email) {
+          setAuthUser({ id: parsed.id, email: parsed.email });
+          if (parsed.token) _psAccessToken = parsed.token;
+          loadClientProfile(parsed.id);
+        }
       }
-    });
+    } catch {}
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY") {
@@ -315,8 +328,9 @@ function PublicSiteApp() {
       if (event === "SIGNED_IN" && session?.user) {
         lastSignInRef.current = Date.now();
         const u = { id: session.user.id, email: session.user.email || "" };
+        _psAccessToken = session.access_token;
         setAuthUser(u);
-        saveAuthBackup(u);
+        saveAuthBackup(u, session.access_token);
         loadClientProfile(u.id);
         return;
       }
@@ -324,17 +338,15 @@ function PublicSiteApp() {
         // Ignore spurious SIGNED_OUT that arrives right after SIGNED_IN
         const elapsed = Date.now() - lastSignInRef.current;
         if (elapsed < 10000) {
-          return; // Suppress — session is managed by setAuthDirect
+          return; // Suppress — token preserved in _psAccessToken
         }
-        // Real logout — clear everything
+        // Real logout
+        _psAccessToken = null;
         setAuthUser(null);
         setClientProfile(null);
         setClientSubscription(null);
         saveAuthBackup(null);
         return;
-      }
-      if (session?.user) {
-        setAuthUser({ id: session.user.id, email: session.user.email || "" });
       }
     });
     return () => subscription.unsubscribe();
@@ -882,7 +894,7 @@ function PublicSiteApp() {
             authUser={authUser} clientProfile={clientProfile}
             goals={goals} services={services}
             onLogin={() => showLoginModal()} openModal={openModal} closeModal={closeModal}
-            onLogout={async () => { lastSignInRef.current = 0; localStorage.removeItem("vinnx_ps_user"); await supabase.auth.signOut(); setAuthUser(null); setClientProfile(null); setClientSubscription(null); }}
+            onLogout={async () => { lastSignInRef.current = 0; _psAccessToken = null; localStorage.removeItem("vinnx_ps_user"); await supabase.auth.signOut(); setAuthUser(null); setClientProfile(null); setClientSubscription(null); }}
             onProfileUpdate={(p: any) => setClientProfile(p)}
             setActiveView={setActiveView} updateSelection={updateSelection}
             resetSelection={resetSelection}
@@ -2692,9 +2704,9 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAut
         setLoading(false);
         return;
       }
-      // Directly set auth state
+      // Directly set auth state + token for API calls
       const user = data.session.user;
-      setAuthDirect({ id: user.id, email: user.email || email });
+      setAuthDirect({ id: user.id, email: user.email || email }, data.session.access_token);
       const userName = user.user_metadata?.name || email.split("@")[0];
       if (showToast) showToast(`Bem-vindo, ${userName}!`);
       onClose(() => { if (onSuccess) onSuccess(); });
@@ -2784,8 +2796,8 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
         }).then(({ error: insertErr }) => {
           if (insertErr) console.log("Client insert fallback (trigger may have handled):", insertErr.message);
         });
-        // Directly set auth state
-        setAuthDirect({ id: data.user.id, email: data.user.email || email });
+        // Directly set auth state + token for API calls
+        setAuthDirect({ id: data.user.id, email: data.user.email || email }, data.session?.access_token || "");
         if (showToast) showToast("Conta criada com sucesso!");
       }
       onClose(() => { if (onSuccess) onSuccess(); });
