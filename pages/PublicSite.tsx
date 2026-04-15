@@ -235,11 +235,12 @@ function PublicSiteApp() {
   // AUTH LISTENER (Supabase direct — NOT authService)
   // ============================================================
   const lastSignInRef = useRef<number>(0);
+  const savedSessionRef = useRef<any>(null);
 
   // Direct setter for LoginForm/SignupForm — bypasses onAuthStateChange race condition
-  const setAuthDirect = useCallback((user: { id: string; email: string }) => {
-    console.log("[AUTH] setAuthDirect:", user.email);
+  const setAuthDirect = useCallback((user: { id: string; email: string }, session?: any) => {
     lastSignInRef.current = Date.now();
+    if (session) savedSessionRef.current = session;
     setAuthUser(user);
     loadClientProfile(user.id);
   }, []);
@@ -248,15 +249,14 @@ function PublicSiteApp() {
     if (isPreview) return; // No auth in preview iframe
 
     supabase.auth.getSession().then(({ data }) => {
-      console.log("[AUTH] getSession:", data.session?.user?.email || "no session");
       if (data.session?.user) {
+        savedSessionRef.current = data.session;
         setAuthUser({ id: data.session.user.id, email: data.session.user.email || "" });
         loadClientProfile(data.session.user.id);
       }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("[AUTH] onAuthStateChange:", event, session?.user?.email || "no user");
       if (event === "PASSWORD_RECOVERY") {
         if (session?.user) {
           setAuthUser({ id: session.user.id, email: session.user.email || "" });
@@ -268,22 +268,33 @@ function PublicSiteApp() {
       }
       if (event === "SIGNED_IN" && session?.user) {
         lastSignInRef.current = Date.now();
+        savedSessionRef.current = session;
         setAuthUser({ id: session.user.id, email: session.user.email || "" });
         loadClientProfile(session.user.id);
         return;
       }
       if (event === "SIGNED_OUT") {
         // Ignore spurious SIGNED_OUT that arrives right after SIGNED_IN
-        // (Supabase SDK session invalidation race condition)
+        // (Supabase SDK internally invalidates session — race condition)
         const elapsed = Date.now() - lastSignInRef.current;
-        if (elapsed < 5000) {
-          console.log("[AUTH] Ignoring spurious SIGNED_OUT (only", elapsed, "ms after SIGNED_IN)");
+        if (elapsed < 10000 && savedSessionRef.current) {
+          console.log("[AUTH] Restoring session after spurious SIGNED_OUT (" + elapsed + "ms)");
+          // Restore the session in the SDK so API calls keep working
+          const s = savedSessionRef.current;
+          supabase.auth.setSession({
+            access_token: s.access_token,
+            refresh_token: s.refresh_token,
+          }).catch(() => {});
           return;
         }
+        savedSessionRef.current = null;
         setAuthUser(null);
         setClientProfile(null);
         setClientSubscription(null);
         return;
+      }
+      if (event === "TOKEN_REFRESHED" && session) {
+        savedSessionRef.current = session;
       }
       if (session?.user) {
         setAuthUser({ id: session.user.id, email: session.user.email || "" });
@@ -2648,7 +2659,7 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAut
       }
       // Directly set auth state — don't rely on onAuthStateChange (it fires SIGNED_OUT spuriously)
       const user = data.session.user;
-      setAuthDirect({ id: user.id, email: user.email || email });
+      setAuthDirect({ id: user.id, email: user.email || email }, data.session);
       const userName = user.user_metadata?.name || email.split("@")[0];
       if (showToast) showToast(`Bem-vindo, ${userName}!`);
       onClose(() => { if (onSuccess) onSuccess(); });
@@ -2739,7 +2750,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
           if (insertErr) console.log("Client insert fallback (trigger may have handled):", insertErr.message);
         });
         // Directly set auth state — don't rely on onAuthStateChange
-        setAuthDirect({ id: data.user.id, email: data.user.email || email });
+        setAuthDirect({ id: data.user.id, email: data.user.email || email }, data.session);
         if (showToast) showToast("Conta criada com sucesso!");
       }
       onClose(() => { if (onSuccess) onSuccess(); });
