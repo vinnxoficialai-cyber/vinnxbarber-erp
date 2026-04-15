@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useStoreSettings } from "../hooks/useStoreCustomization";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import {
   Calendar, Clock, History, Star, User, ChevronRight, ChevronLeft,
   MapPin, Scissors, Store, Loader2, LogOut, Check, X, AlertTriangle,
@@ -17,10 +16,38 @@ import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscripti
 //   ensuring auth survives SDK's internal SIGNED_OUT wipes
 // - autoRefreshToken: false → no token validation pings
 // ============================================================
-const PS_AUTH_KEY = "vinnx_ps_session";
 
 // Module-level token storage — outside SDK's control
 let _psAccessToken: string | null = null;
+
+// Check JWT expiration without external deps
+function isTokenExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.exp * 1000 < Date.now();
+  } catch { return true; }
+}
+
+// Silent refresh — direct HTTP to GoTrue (bypasses SDK event system)
+async function silentRefresh(refreshToken: string): Promise<{ access_token: string; refresh_token: string } | null> {
+  try {
+    const res = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.access_token && data.refresh_token) return data;
+    return null;
+  } catch { return null; }
+}
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -51,6 +78,53 @@ const supabase = createClient(
 const publicQueryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 1000 * 60 * 5 } },
 });
+
+// ============================================================
+// INLINE useStoreSettings — uses our dedicated client
+// (avoids importing useStoreCustomization which imports lib/supabase
+//  and creates a second GoTrueClient that interferes via BroadcastChannel)
+// ============================================================
+function useStoreSettings(): (key: string, fallback?: string) => string {
+  const { data } = useQuery({
+    queryKey: ["store-customization"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("store_settings")
+        .select("*")
+        .order("key");
+      if (error) throw error;
+      return (data ?? []) as { key: string; value: string | null }[];
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const [preview, setPreview] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.data?.type === "store-customizer-preview" && typeof event.data.draft === "object") {
+        setPreview(event.data.draft);
+      }
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
+  const map = useMemo(() => {
+    const m: Record<string, string> = {};
+    if (data) for (const s of data) if (s.value !== null) m[s.key] = s.value;
+    return m;
+  }, [data]);
+
+  const merged = useMemo(() => {
+    return Object.keys(preview).length > 0 ? { ...map, ...preview } : map;
+  }, [map, preview]);
+
+  return useCallback(
+    (key: string, fallback: string = ""): string => merged[key] ?? fallback,
+    [merged]
+  );
+}
 
 // ============================================================
 // WRAPPER — provides its own QueryClient
@@ -269,51 +343,87 @@ function PublicSiteApp() {
   // AUTH LISTENER + SESSION PERSISTENCE
   // We manage auth completely outside the SDK:
   // - _psAccessToken (module-level) → injected in REST calls via custom fetch
-  // - localStorage backup → survives page refresh
+  // - localStorage backup with refresh_token → survives page refresh + token expiry
   // ============================================================
   const lastSignInRef = useRef<number>(0);
   const PS_BACKUP_KEY = "vinnx_ps_user";
 
-  // Save auth + token to localStorage
-  const saveAuthBackup = useCallback((user: { id: string; email: string } | null, token?: string | null) => {
-    if (user && token) {
-      localStorage.setItem(PS_BACKUP_KEY, JSON.stringify({ ...user, token }));
-      _psAccessToken = token;
-    } else if (user) {
-      // Keep existing token if only updating user
-      const existing = localStorage.getItem(PS_BACKUP_KEY);
-      const parsed = existing ? JSON.parse(existing) : {};
-      localStorage.setItem(PS_BACKUP_KEY, JSON.stringify({ ...user, token: parsed.token }));
-    } else {
+  // Save auth + tokens to localStorage
+  const saveAuthBackup = useCallback((
+    user: { id: string; email: string } | null,
+    accessToken?: string | null,
+    refreshToken?: string | null
+  ) => {
+    if (user && accessToken) {
+      const backup: any = { ...user, token: accessToken };
+      if (refreshToken) backup.refreshToken = refreshToken;
+      else {
+        // Preserve existing refreshToken
+        try {
+          const existing = localStorage.getItem(PS_BACKUP_KEY);
+          if (existing) {
+            const prev = JSON.parse(existing);
+            if (prev.refreshToken) backup.refreshToken = prev.refreshToken;
+          }
+        } catch {}
+      }
+      localStorage.setItem(PS_BACKUP_KEY, JSON.stringify(backup));
+      _psAccessToken = accessToken;
+    } else if (!user) {
       localStorage.removeItem(PS_BACKUP_KEY);
       _psAccessToken = null;
     }
   }, []);
 
-  // Direct setter for LoginForm/SignupForm — receives session with tokens
-  const setAuthDirect = useCallback((user: { id: string; email: string }, accessToken: string) => {
+  // Direct setter for LoginForm/SignupForm — receives both tokens
+  const setAuthDirect = useCallback((
+    user: { id: string; email: string },
+    accessToken: string,
+    refreshToken?: string
+  ) => {
     lastSignInRef.current = Date.now();
     _psAccessToken = accessToken;
     setAuthUser(user);
-    saveAuthBackup(user, accessToken);
+    saveAuthBackup(user, accessToken, refreshToken);
     loadClientProfile(user.id);
   }, []);
 
   useEffect(() => {
     if (isPreview) return;
 
-    // Restore from localStorage backup (SDK's session is unreliable)
-    try {
-      const backup = localStorage.getItem(PS_BACKUP_KEY);
-      if (backup) {
+    // Restore from localStorage backup with token refresh if needed
+    (async () => {
+      try {
+        const backup = localStorage.getItem(PS_BACKUP_KEY);
+        if (!backup) return;
         const parsed = JSON.parse(backup);
-        if (parsed?.id && parsed?.email) {
-          setAuthUser({ id: parsed.id, email: parsed.email });
-          if (parsed.token) _psAccessToken = parsed.token;
-          loadClientProfile(parsed.id);
+        if (!parsed?.id || !parsed?.email) return;
+
+        const user = { id: parsed.id, email: parsed.email };
+
+        if (parsed.token && !isTokenExpired(parsed.token)) {
+          // Token still valid — use directly
+          _psAccessToken = parsed.token;
+          setAuthUser(user);
+          loadClientProfile(user.id);
+        } else if (parsed.refreshToken) {
+          // Token expired — try silent refresh
+          const newTokens = await silentRefresh(parsed.refreshToken);
+          if (newTokens) {
+            _psAccessToken = newTokens.access_token;
+            saveAuthBackup(user, newTokens.access_token, newTokens.refresh_token);
+            setAuthUser(user);
+            loadClientProfile(user.id);
+          } else {
+            // Refresh failed — session is dead
+            localStorage.removeItem(PS_BACKUP_KEY);
+          }
+        } else {
+          // No refresh token and access expired — clear
+          localStorage.removeItem(PS_BACKUP_KEY);
         }
-      }
-    } catch {}
+      } catch {}
+    })();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY") {
@@ -330,7 +440,7 @@ function PublicSiteApp() {
         const u = { id: session.user.id, email: session.user.email || "" };
         _psAccessToken = session.access_token;
         setAuthUser(u);
-        saveAuthBackup(u, session.access_token);
+        saveAuthBackup(u, session.access_token, session.refresh_token);
         loadClientProfile(u.id);
         return;
       }
@@ -443,7 +553,7 @@ function PublicSiteApp() {
     (async () => {
       const [unitsRes, barbersRes, servicesRes, plansRes, schedulesRes, goalsRes] = await Promise.all([
         supabase.from("units").select("*"),
-        supabase.from("users").select("id, name, email, avatar, role, specialties, station").eq("role", "Barber"),
+        supabase.from("users").select("id, name, email, avatar, role, specialties, station").eq("role", "BARBER"),
         supabase.from("services").select("*").eq("active", true),
         supabase.from("subscription_plans").select("*").eq("active", true),
         supabase.from("work_schedules").select("*"),
@@ -2706,7 +2816,7 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAut
       }
       // Directly set auth state + token for API calls
       const user = data.session.user;
-      setAuthDirect({ id: user.id, email: user.email || email }, data.session.access_token);
+      setAuthDirect({ id: user.id, email: user.email || email }, data.session.access_token, data.session.refresh_token);
       const userName = user.user_metadata?.name || email.split("@")[0];
       if (showToast) showToast(`Bem-vindo, ${userName}!`);
       onClose(() => { if (onSuccess) onSuccess(); });
@@ -2797,7 +2907,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
           if (insertErr) console.log("Client insert fallback (trigger may have handled):", insertErr.message);
         });
         // Directly set auth state + token for API calls
-        setAuthDirect({ id: data.user.id, email: data.user.email || email }, data.session?.access_token || "");
+        setAuthDirect({ id: data.user.id, email: data.user.email || email }, data.session?.access_token || "", data.session?.refresh_token);
         if (showToast) showToast("Conta criada com sucesso!");
       }
       onClose(() => { if (onSuccess) onSuccess(); });
