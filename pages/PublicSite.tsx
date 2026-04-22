@@ -2073,46 +2073,67 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
   // Show appointment details
   function showDetalhes(ev: CalendarEvent) {
     const eventDate = new Date(ev.year, ev.month, ev.date);
-    const dateStr = eventDate.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" });
+    const dateStr = eventDate.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
     const isOpen = eventDate >= todayStart && ev.status !== "completed";
     const unit = units.find((u: any) => u.id === ev.unitId);
 
+    // Resolve barber name — fallback to barbers array if barberName looks like a UUID
+    const isUUID = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s || "");
+    const resolvedBarber = ev.barberName && !isUUID(ev.barberName)
+      ? ev.barberName
+      : barbers.find((b: any) => b.id === ev.barberId)?.name || ev.barberName || "A definir";
+
+    const svc = services.find((s: any) => s.id === ev.serviceId);
+    const price = ev.finalPrice != null ? Number(ev.finalPrice) : (svc?.price ?? null);
+
     openModal(
       <div className="p-6" style={{ borderRadius: "1rem" }}>
-        <h3 className="text-xl font-bold mb-6 text-center" style={{ color: primary }}>Detalhes do Agendamento</h3>
-        <div className="space-y-4 text-sm mb-6">
+        <h3 className="text-xl font-bold mb-6 text-center italic" style={{ color: primary }}>Detalhes do Agendamento</h3>
+
+        <div className="space-y-5 text-sm mb-6">
           {unit && (
             <div>
-              <p className="text-gray-400 font-semibold">Unidade</p>
-              <p className="text-white font-bold">{unit.tradeName || unit.name}</p>
-              {unit.mapsUrl && <a href={unit.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs flex items-center gap-1 mt-1" style={{ color: primary }}><MapPin className="w-3 h-3" />Ver no mapa <ExternalLink className="w-3 h-3" /></a>}
+              <p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Unidade:</p>
+              <p className="text-white font-medium">{unit.tradeName || unit.name}</p>
+              {unit.mapsUrl && (
+                <a href={unit.mapsUrl} target="_blank" rel="noopener noreferrer"
+                  className="mt-2 block w-full text-center py-2 rounded-lg text-sm font-semibold"
+                  style={{ backgroundColor: "#1a1a1a", color: "#fff", border: "1px solid rgba(255,255,255,0.15)" }}>
+                  Ver localização
+                </a>
+              )}
             </div>
           )}
           <div>
-            <p className="text-gray-400 font-semibold">Data e Hora</p>
-            <p className="text-white capitalize">{dateStr} às {ev.startTime}</p>
+            <p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Data:</p>
+            <p className="text-white capitalize">{dateStr}</p>
           </div>
           <div>
-            <p className="text-gray-400 font-semibold">Profissional</p>
-            <p className="text-white">{ev.barberName || "A definir"}</p>
+            <p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Horário:</p>
+            <p className="text-white">{ev.startTime}</p>
           </div>
           <div>
-            <p className="text-gray-400 font-semibold">Serviço</p>
-            <p className="text-white">{ev.serviceName || ev.title}</p>
+            <p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Barbeiro:</p>
+            <p className="text-white">{resolvedBarber}</p>
           </div>
-          {ev.finalPrice != null && (
-            <div>
-              <p className="text-gray-400 font-semibold">Valor</p>
-              <p className="text-white font-bold" style={{ color: primary }}>R$ {Number(ev.finalPrice).toFixed(2)}</p>
+          <div className="border-t border-gray-700 pt-4">
+            <div className="flex items-center justify-between">
+              <p className="text-white">{ev.serviceName || ev.title}</p>
+              {price != null && <p className="text-white font-bold">R$ {price.toFixed(2)}</p>}
+            </div>
+          </div>
+          {price != null && (
+            <div className="flex items-center justify-between border-t border-gray-700 pt-3">
+              <p className="text-white font-bold text-base">Total</p>
+              <p className="font-bold text-base" style={{ color: primary }}>R$ {price.toFixed(2)}</p>
             </div>
           )}
           {ev.usedReferralCredit && (
-            <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${primary}20`, color: primary }}>Crédito</span>
+            <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${primary}20`, color: primary }}>Crédito de indicação</span>
           )}
         </div>
 
         {(() => {
-          // Calculate hours until event for cancel/reschedule restrictions
           const evDate = new Date(ev.year, ev.month, ev.date);
           const [evH, evM] = (ev.startTime || "00:00").split(":").map(Number);
           evDate.setHours(evH, evM, 0, 0);
@@ -2124,16 +2145,18 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
 
           if (isOpen) {
             return (
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-4">
-                  <button onClick={() => { if (canCancel) closeModal(() => showCancelConfirm(ev)); }}
-                    className="py-3 font-semibold rounded-lg border border-red-800 text-red-400"
-                    style={{ opacity: canCancel ? 1 : 0.4 }} disabled={!canCancel}>Cancelar</button>
-                  <button onClick={() => { if (canReschedule) closeModal(() => showRemarcarModal(ev)); }}
-                    className="py-3 font-bold rounded-lg"
-                    style={{ backgroundColor: primary, color: bgColor, opacity: canReschedule ? 1 : 0.4 }}
-                    disabled={!canReschedule}>Remarcar</button>
-                </div>
+              <div className="space-y-3">
+                <button onClick={() => { if (canReschedule) closeModal(() => showRemarcarModal(ev)); }}
+                  className="w-full py-3 font-bold rounded-lg"
+                  style={{ backgroundColor: primary, color: bgColor, opacity: canReschedule ? 1 : 0.4 }}
+                  disabled={!canReschedule}>Remarcar</button>
+                <button onClick={() => { if (canCancel) closeModal(() => showCancelConfirm(ev)); }}
+                  className="w-full py-3 font-bold rounded-lg"
+                  style={{ backgroundColor: "transparent", color: primary, border: `2px solid ${primary}`, opacity: canCancel ? 1 : 0.4 }}
+                  disabled={!canCancel}>Cancelar agendamento</button>
+                <button onClick={closeModal}
+                  className="w-full py-3 font-semibold rounded-lg"
+                  style={{ backgroundColor: "#1a1a1a", color: "#fff", border: "1px solid rgba(255,255,255,0.15)" }}>Voltar</button>
                 {(!canCancel || !canReschedule) && (
                   <p className="text-xs text-gray-500 text-center">
                     {!canCancel && `Cancelamento requer ${cancelMin}h de antecedência. `}
@@ -2144,21 +2167,22 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
             );
           }
           return (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-3">
               <button onClick={() => {
                 closeModal(() => {
                   resetSelection();
-                  const unit = units.find((u: any) => u.id === ev.unitId);
-                  const barber = barbers.find((b: any) => b.id === ev.barberId);
-                  const service = services.find((s: any) => s.id === ev.serviceId);
-                  updateSelection({ unit, barber, service });
+                  const u2 = units.find((u: any) => u.id === ev.unitId);
+                  const b2 = barbers.find((b: any) => b.id === ev.barberId);
+                  const s2 = services.find((s: any) => s.id === ev.serviceId);
+                  updateSelection({ unit: u2, barber: b2, service: s2 });
                   setActiveView("agendar");
                 });
-              }} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>
-                <RefreshCw className="w-4 h-4 inline mr-1" />Agendar Novamente
+              }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
+                Agendar Novamente
               </button>
               {!ev.rating && g("review.enabled", "true") !== "false" && (
-                <button onClick={() => closeModal(() => showAvaliacaoModal(ev))} className="py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
+                <button onClick={() => closeModal(() => showAvaliacaoModal(ev))} className="w-full py-3 font-bold rounded-lg"
+                  style={{ backgroundColor: "transparent", color: primary, border: `2px solid ${primary}` }}>
                   <Star className="w-4 h-4 inline mr-1" />Avaliar
                 </button>
               )}
@@ -2170,6 +2194,9 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
                   <p className="text-xs text-gray-400 mt-1">Sua avaliação</p>
                 </div>
               )}
+              <button onClick={closeModal}
+                className="w-full py-3 font-semibold rounded-lg"
+                style={{ backgroundColor: "#1a1a1a", color: "#fff", border: "1px solid rgba(255,255,255,0.15)" }}>Voltar</button>
             </div>
           );
         })()}
@@ -2259,6 +2286,13 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
     );
   }
 
+  // Resolve barber name — fallback to barbers array if barberName looks like a UUID
+  const isUUID = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s || "");
+  const resolveBarberName = (e: CalendarEvent) =>
+    e.barberName && !isUUID(e.barberName)
+      ? e.barberName
+      : barbers.find((b: any) => b.id === e.barberId)?.name || e.barberName || "A definir";
+
   return (
     <div className="p-6" style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
       <div className="text-center mb-8 pt-4">
@@ -2293,11 +2327,11 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
                     </div>
                     <div className="flex items-center">
                       <div className="w-10 h-10 rounded-full mr-4 flex items-center justify-center text-sm font-bold" style={{ backgroundColor: "#374151", color: primary }}>
-                        {(e.barberName || "?").charAt(0).toUpperCase()}
+                        {resolveBarberName(e).charAt(0).toUpperCase()}
                       </div>
                       <div>
                         <p className="text-sm text-gray-400">Barbeiro</p>
-                        <p className="font-semibold text-white">{e.barberName || "A definir"}</p>
+                        <p className="font-semibold text-white">{resolveBarberName(e)}</p>
                       </div>
                       <div className="ml-auto text-right">
                         <p className="text-sm text-gray-400">Serviço</p>
@@ -2340,7 +2374,7 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
                     <div className="flex justify-between text-sm">
                       <div>
                         <p className="text-gray-400">Barbeiro</p>
-                        <p className="text-white">{e.barberName || "Barbeiro"}</p>
+                        <p className="text-white">{resolveBarberName(e)}</p>
                       </div>
                       <div>
                         <p className="text-gray-400">Serviço</p>
