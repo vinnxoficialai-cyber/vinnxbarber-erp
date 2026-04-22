@@ -439,12 +439,13 @@ function PublicSiteApp() {
   useEffect(() => {
     const pwaName = g("pwa_store_name", "");
     const pwaShortName = g("pwa_store_short_name", "");
+    const storeName = g("store_name", "");  // Fallback from StoreCustomizer general name
     const pwaThemeColor = g("pwa_store_theme_color", "");
     const pwaBgColor = g("pwa_store_bg_color", "");
     const pwaIcon = g("pwa_store_icon", "");
 
-    // Only inject if at least one PWA setting exists
-    if (!pwaName && !pwaShortName && !pwaThemeColor && !pwaBgColor && !pwaIcon) return;
+    // Always inject dynamic manifest so it overrides the static Vite manifest.
+    // This ensures custom names from StoreCustomizer are used when adding to home screen.
 
     const supabaseIconBase = "https://enjyflztvyomrlzddavk.supabase.co/storage/v1/object/public/avatars/public";
     const defaultIcons = [
@@ -456,8 +457,8 @@ function PublicSiteApp() {
 
     const origin = window.location.origin;
     const manifest = {
-      name: pwaName || "VINNX BARBER",
-      short_name: pwaShortName || "VINNX",
+      name: pwaName || storeName || "VINNX BARBER",
+      short_name: pwaShortName || storeName || "VINNX",
       description: "Agende seu horário na melhor barbearia",
       start_url: `${origin}/#/site`,
       scope: `${origin}/`,
@@ -496,6 +497,16 @@ function PublicSiteApp() {
     let appTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]') as HTMLMetaElement | null;
     if (!appTitle) { appTitle = document.createElement("meta"); appTitle.name = "apple-mobile-web-app-title"; document.head.appendChild(appTitle); }
     appTitle.content = manifest.short_name;
+
+    // Also update <title> for iOS fallback
+    document.title = manifest.short_name;
+
+    // Persist to localStorage so index.html can read synchronously on next load
+    // (iOS Safari reads meta tags before JS modules execute)
+    try {
+      localStorage.setItem("vinnx_pwa_name", manifest.name);
+      localStorage.setItem("vinnx_pwa_short_name", manifest.short_name);
+    } catch {}
 
     // Revoke previous blob URL
     if (pwaManifestUrlRef.current) URL.revokeObjectURL(pwaManifestUrlRef.current);

@@ -12,6 +12,20 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="VINNX" />
+  <script>
+    // Sync PWA name from localStorage BEFORE iOS reads meta tags
+    // React will persist the correct name after first load from Supabase
+    (function() {
+      try {
+        var n = localStorage.getItem('vinnx_pwa_short_name');
+        if (n) {
+          var m = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+          if (m) m.setAttribute('content', n);
+          document.title = n;
+        }
+      } catch(e) {}
+    })();
+  </script>
   <link rel="apple-touch-icon"
     href="https://enjyflztvyomrlzddavk.supabase.co/storage/v1/object/public/avatars/public/company_logo_1770648773851" />
   <link rel="icon"
