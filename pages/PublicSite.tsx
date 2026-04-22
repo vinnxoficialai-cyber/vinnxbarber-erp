@@ -3450,7 +3450,7 @@ function MigrationForm({ g, primary, onClose, onSwitch, onSuccess, showToast, se
       </button>
 
       {/* Header */}
-      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-20 h-20 mb-4 mx-auto object-contain" />}
+      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-28 h-28 mb-4 mx-auto object-contain" />}
       <h2 style={{ fontSize: "1.5rem", fontWeight: 800, letterSpacing: "-0.02em", color: "#fff", marginBottom: "0.25rem" }}>Ative sua conta</h2>
       <p style={{ fontSize: "0.85rem", color: "rgba(255,255,255,0.4)", marginBottom: "1.5rem" }}>Para clientes que já frequentam a barbearia</p>
 
@@ -3600,7 +3600,7 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAut
       </button>
 
       {/* Header */}
-      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-20 h-20 mb-4 mx-auto object-contain" />}
+      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-28 h-28 mb-4 mx-auto object-contain" />}
       <h2 style={{ fontSize: "1.6rem", fontWeight: 800, letterSpacing: "-0.02em", color: "#fff", marginBottom: "0.25rem" }}>Bem-vindo de volta</h2>
       <p style={{ fontSize: "0.85rem", color: "rgba(255,255,255,0.4)", marginBottom: "1.75rem" }}>Faça login para continuar</p>
 
