@@ -13,15 +13,40 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="VINNX" />
   <script>
-    // Sync PWA name from localStorage BEFORE iOS reads meta tags
-    // React will persist the correct name after first load from Supabase
+    // Sync PWA name BEFORE iOS captures meta tags for "Add to Home Screen"
     (function() {
       try {
-        var n = localStorage.getItem('vinnx_pwa_short_name');
-        if (n) {
+        var cached = localStorage.getItem('vinnx_pwa_short_name');
+        if (cached) {
           var m = document.querySelector('meta[name="apple-mobile-web-app-title"]');
-          if (m) m.setAttribute('content', n);
-          document.title = n;
+          if (m) m.setAttribute('content', cached);
+          document.title = cached;
+          return;
+        }
+        // First visit: fetch from Supabase synchronously (one-time ~50ms cost)
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET',
+          'https://enjyflztvyomrlzddavk.supabase.co/rest/v1/store_settings?key=in.(pwa_store_short_name,pwa_store_name,store_name)&select=key,value',
+          false // synchronous
+        );
+        xhr.setRequestHeader('apikey', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVuanlmbHp0dnlvbXJsemRkYXZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4OTE2MDksImV4cCI6MjA4NzQ2NzYwOX0.Md-ad9U6vK-OtNg3iUBX-SKCSNdOCppBasgC4ys-STc');
+        xhr.send();
+        if (xhr.status === 200) {
+          var data = JSON.parse(xhr.responseText);
+          var shortName = '', fullName = '', storeName = '';
+          for (var i = 0; i < data.length; i++) {
+            if (data[i].key === 'pwa_store_short_name' && data[i].value) shortName = data[i].value;
+            if (data[i].key === 'pwa_store_name' && data[i].value) fullName = data[i].value;
+            if (data[i].key === 'store_name' && data[i].value) storeName = data[i].value;
+          }
+          var name = shortName || storeName || fullName;
+          if (name) {
+            var m = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+            if (m) m.setAttribute('content', name);
+            document.title = name;
+            localStorage.setItem('vinnx_pwa_short_name', name);
+            if (fullName) localStorage.setItem('vinnx_pwa_name', fullName);
+          }
         }
       } catch(e) {}
     })();
