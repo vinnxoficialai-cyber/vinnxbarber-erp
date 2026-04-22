@@ -802,7 +802,7 @@ function PublicSiteApp() {
       setModalContent(null);
       setModalIsAuth(false);
       if (callback) callback();
-    }, 400);
+    }, 280);
   }, []);
 
   // ============================================================
