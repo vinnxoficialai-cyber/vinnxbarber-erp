@@ -647,14 +647,14 @@
 /* Floating pill navbar — iOS Liquid Glass proportions */
 .booking-navbar {
   position: fixed;
-  bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  bottom: calc(0.25rem + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   width: 92%;
   max-width: 420px;
-  height: 72px;
-  padding: 8px;
-  border-radius: 36px;
+  height: 66px;
+  padding: 7px;
+  border-radius: 33px;
   background: var(--booking-navbar-bg, rgba(20, 20, 20, 0.75));
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
@@ -693,9 +693,9 @@
 /* Navbar sliding indicator */
 .booking-nav-indicator {
   position: absolute;
-  top: 8px;
-  bottom: 8px;
-  border-radius: 28px;
+  top: 7px;
+  bottom: 7px;
+  border-radius: 26px;
   transition: left 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
               width 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
   pointer-events: none;
