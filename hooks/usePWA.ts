@@ -31,7 +31,7 @@ const DEFAULT_MANIFEST: PWAManifest = {
   name: "VINNX BARBER",
   short_name: "VINNX",
   description: "Agende seu horário na melhor barbearia",
-  start_url: "/",
+  start_url: "/#/site",
   scope: "/",
   display: "standalone",
   background_color: "#0f172a",

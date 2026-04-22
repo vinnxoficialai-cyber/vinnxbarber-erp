@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => {
           display: 'standalone',
           orientation: 'portrait',
           scope: '/',
-          start_url: '/',
+          start_url: '/#/site',
           icons: [
             {
               src: 'https://enjyflztvyomrlzddavk.supabase.co/storage/v1/object/public/avatars/public/pwa_icon_192.png',
