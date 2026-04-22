@@ -802,7 +802,7 @@ function PublicSiteApp() {
       setModalContent(null);
       setModalIsAuth(false);
       if (callback) callback();
-    }, 420); // matches longest CSS transition (backdrop 400ms) + buffer
+    }, 320);
   }, []);
 
   // ============================================================
@@ -988,7 +988,7 @@ function PublicSiteApp() {
     if (pendingBooking && authUser && clientProfile) {
       setPendingBooking(false);
       // Small delay to ensure modal is closed and UI is stable
-      setTimeout(() => showResumoModal(), 500);
+      setTimeout(() => showResumoModal(), 400);
     }
   }, [pendingBooking, authUser, clientProfile]);
 
