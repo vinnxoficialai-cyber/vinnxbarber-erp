@@ -666,33 +666,6 @@
   justify-content: space-around;
 }
 
-/* In standalone PWA mode, reduce bottom spacing — the OS already
-   handles the home indicator area, so only a small margin is needed */
-@media (display-mode: standalone) {
-  .booking-navbar {
-    bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
-  }
-}
-/* iOS standalone detection (navigator.standalone) */
-@supports (-webkit-touch-callout: none) {
-  @media (display-mode: standalone) {
-    .booking-navbar {
-      bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
-    }
-  }
-}
-
-/* Solid fill behind navbar in standalone to prevent gap below navbar */
-.booking-navbar-bg-fill {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: calc(4.5rem + env(safe-area-inset-bottom, 0px));
-  z-index: 39;
-  pointer-events: none;
-}
-
 /* Fix mobile viewport: 100vh includes browser chrome (address bar),
    100dvh adjusts to the actual visible viewport dynamically */
 .booking-app-container {
@@ -712,7 +685,7 @@
   bottom: 0;
   left: 0;
   right: 0;
-  height: calc(7rem + env(safe-area-inset-bottom, 0px));
+  height: 7rem;
   pointer-events: none;
   z-index: 40;
 }
