@@ -644,7 +644,7 @@
   pointer-events: none;
 }
 
-/* Floating pill navbar — iOS Liquid Glass proportions */
+/* Floating pill navbar — iOS Liquid Glass */
 .booking-navbar {
   position: fixed;
   bottom: calc(0.25rem + env(safe-area-inset-bottom));
@@ -655,15 +655,39 @@
   height: 66px;
   padding: 7px;
   border-radius: 33px;
-  background: var(--booking-navbar-bg, rgba(20, 20, 20, 0.75));
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: var(--booking-navbar-bg, rgba(30, 30, 30, 0.65));
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.15),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.05),
+    0 8px 32px rgba(0, 0, 0, 0.4);
   z-index: 50;
   display: flex;
   align-items: center;
   justify-content: space-around;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Liquid Glass — diagonal light reflection */
+.booking-navbar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.04) 40%,
+    rgba(255, 255, 255, 0) 60%
+  );
+  pointer-events: none;
+  border-radius: 33px;
+  z-index: 0;
 }
 
 /* Fix mobile viewport: 100vh includes browser chrome (address bar),
