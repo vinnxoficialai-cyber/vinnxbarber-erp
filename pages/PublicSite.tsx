@@ -1535,30 +1535,33 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
                 ))}
               </div>
             ) : (
-              /* Chrome/Firefox on iOS — need Safari to install */
-              <div className="space-y-2"
+              /* Chrome/Firefox on iOS — share button is in the address bar */
+              <div className="space-y-1.5"
                 style={{
                   opacity: installStepsExpanded ? 1 : 0,
                   transform: installStepsExpanded ? "translateY(0)" : "translateY(10px)",
                   transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.3s, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.3s",
                 }}>
-                <div className="flex items-center gap-2.5 py-2.5 px-3 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
-                    <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
-                  </svg>
-                  <span className="text-[11px] text-gray-300">
-                    Para instalar, abra este link no <strong className="text-white">Safari</strong>
-                  </span>
-                </div>
-                <button
-                  onClick={() => { navigator.clipboard?.writeText(window.location.href); onInstallDismiss(); }}
-                  className="w-full py-2 rounded-lg text-[12px] font-bold transition-colors flex items-center justify-center gap-1.5"
-                  style={{ backgroundColor: primary, color: bgColor }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                  </svg>
-                  Copiar link
-                </button>
+                {[
+                  { step: 1, verb: "Toque em", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>, label: "Compartilhar (na barra de endereço)" },
+                  { step: 2, verb: "Escolha", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: "Adicionar à Tela de Início" },
+                ].map(({ step, verb, icon, label }) => (
+                  <div key={step}
+                    className="flex items-center gap-2.5 py-2 px-3 rounded-lg"
+                    style={{
+                      background: "rgba(255,255,255,0.05)",
+                      opacity: installStepsExpanded ? 1 : 0,
+                      transform: installStepsExpanded ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
+                      transition: `opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s`,
+                    }}>
+                    <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: `${primary}25`, color: primary }}>{step}</span>
+                    <span className="text-[12px] text-gray-300">{verb}</span>
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
+                      {icon}
+                      {label}
+                    </span>
+                  </div>
+                ))}
               </div>
             )
           ) : (
