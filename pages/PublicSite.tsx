@@ -3124,7 +3124,7 @@ function EditarPerfilModal({ primary, bgColor, clientProfile, onClose, onSave }:
         <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))} placeholder="Telefone (celular)" className="w-full p-3 rounded-lg" inputMode="numeric" />
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full p-3 rounded-lg" />
         <div>
-          <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))} placeholder="Data de aniversário (DD/MM/AAAA)" className="w-full p-3 rounded-lg" maxLength={10} inputMode="numeric" />
+          <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))} placeholder="Data de aniversário (DD/MM/AAAA)" className="w-full p-3 rounded-lg" maxLength={10} autoComplete="one-time-code" />
           <p className="text-xs text-gray-400 mt-2 text-center"><Gift className="w-3 h-3 inline mr-1" style={{ color: primary }} />Informe seu aniversário para mimos e descontos especiais!</p>
         </div>
       </div>
@@ -3485,7 +3485,7 @@ function MigrationForm({ g, primary, onClose, onSwitch, onSuccess, showToast, se
           <div className="booking-auth-input-wrap">
             <Calendar className="auth-icon" />
             <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))}
-              placeholder="Aniversário (DD/MM/AAAA)" className="w-full p-3.5" inputMode="numeric" maxLength={10} />
+              placeholder="Aniversário (DD/MM/AAAA)" className="w-full p-3.5" maxLength={10} autoComplete="one-time-code" />
           </div>
           <div className="relative mb-4">
             <button ref={genderTriggerRef} type="button" onClick={() => setGenderOpen(p => !p)}
@@ -3794,7 +3794,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
         <div className="booking-auth-input-wrap">
           <Calendar className="auth-icon" />
           <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))}
-            placeholder="Aniversário (DD/MM/AAAA) — opcional" className="w-full p-3.5" inputMode="numeric" maxLength={10} autoComplete="bday" />
+            placeholder="Aniversário (DD/MM/AAAA) — opcional" className="w-full p-3.5" maxLength={10} autoComplete="one-time-code" />
         </div>
 
         {/* Gender dropdown */}
