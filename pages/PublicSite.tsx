@@ -9,6 +9,7 @@ import {
   MessageCircle, Copy, ExternalLink, Pause, XCircle, RefreshCw,
 } from "lucide-react";
 import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscription } from "../types";
+import { usePlatform } from "../hooks/usePlatform";
 
 // ============================================================
 // DEDICATED Supabase client for PublicSite
@@ -359,18 +360,8 @@ function PublicSiteApp() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [installBannerExiting, setInstallBannerExiting] = useState(false);
-  const isStandalone = typeof window !== "undefined" && (
-    window.matchMedia("(display-mode: standalone)").matches ||
-    (window.navigator as any).standalone === true
-  );
-  const isIOS = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const { isStandalone, isIOS, isAndroid, navbarPlatformClass } = usePlatform();
   const isIOSSafari = isIOS && /safari/i.test(navigator.userAgent) && !/crios|fxios|opios|edgios/i.test(navigator.userAgent);
-  const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
-
-  // Platform-specific navbar positioning class
-  const navbarPlatformClass = isStandalone
-    ? (isIOS ? "navbar-ios-standalone" : isAndroid ? "navbar-android-standalone" : "navbar-desktop-standalone")
-    : (isIOS ? "navbar-ios-browser" : isAndroid ? "navbar-android-browser" : "navbar-desktop");
 
   useEffect(() => {
     if (isStandalone) return;
@@ -1091,7 +1082,8 @@ function PublicSiteApp() {
               <div className="text-left space-y-4 text-sm mb-8">
                 <div>
                   <p><strong className="text-gray-400">Unidade:</strong> <span className="text-white">{unitObj.name}</span></p>
-                  {unitObj.mapsUrl && <a href={unitObj.mapsUrl} target="_blank" rel="noopener noreferrer" className="block w-full text-center mt-2 py-2 px-4 rounded-xl text-white font-semibold text-sm" style={{ backgroundColor: "#0b0b0a" }}>Ver localização</a>}
+                  {unitObj.address && <p className="text-gray-500 text-xs mt-0.5">{unitObj.address}{unitObj.city ? `, ${unitObj.city}` : ""}{unitObj.state ? ` - ${unitObj.state}` : ""}</p>}
+                  {unitObj.address && <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${unitObj.address}, ${unitObj.city || ""} - ${unitObj.state || ""}`)}`} target="_blank" rel="noopener noreferrer" className="block w-full text-center mt-2 py-2 px-4 rounded-xl text-white font-semibold text-sm" style={{ backgroundColor: "#0b0b0a" }}>Ver localização</a>}
                 </div>
                 <p><strong className="text-gray-400">Barbeiro:</strong> <span className="text-white">{selection.barber.name}</span></p>
                 <p><strong className="text-gray-400">Serviço:</strong> <span className="text-white">{selection.service!.name}</span></p>
@@ -1323,7 +1315,7 @@ function PublicSiteApp() {
       </div>
 
       {/* Gradient Fade — pointer-events:none ensures Agendar button is clickable */}
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, height: "5rem", pointerEvents: "none", zIndex: 40, background: `linear-gradient(to top, ${bgColor} 0%, ${bgColor}99 60%, transparent 100%)` }} />
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, height: "7rem", pointerEvents: "none", zIndex: 40, background: `linear-gradient(to top, ${bgColor} 0%, ${bgColor}99 60%, transparent 100%)` }} />
 
       {/* WhatsApp Floating Button */}
       {g("extras.whatsapp_float", "false") === "true" && g("extras.whatsapp_number", "") && (
@@ -2099,8 +2091,9 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
             <div>
               <p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Unidade:</p>
               <p className="text-white font-medium">{unit.tradeName || unit.name}</p>
-              {unit.mapsUrl && (
-                <a href={unit.mapsUrl} target="_blank" rel="noopener noreferrer"
+              {unit.address && <p className="text-gray-500 text-xs mt-0.5">{unit.address}{unit.city ? `, ${unit.city}` : ""}{unit.state ? ` - ${unit.state}` : ""}</p>}
+              {unit.address && (
+                <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${unit.address}, ${unit.city || ""} - ${unit.state || ""}`)}`} target="_blank" rel="noopener noreferrer"
                   className="mt-2 block w-full text-center py-2 rounded-lg text-sm font-semibold"
                   style={{ backgroundColor: "#1a1a1a", color: "#fff", border: "1px solid rgba(255,255,255,0.15)" }}>
                   Ver localização

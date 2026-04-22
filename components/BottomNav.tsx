@@ -10,6 +10,7 @@ import { SectionModal } from './SectionModal';
 import { useMenuBadges } from '../hooks/useMenuBadges';
 import { useAppData } from '../context/AppDataContext';
 import { usePermissions } from '../hooks/usePermissions';
+import { usePlatform } from '../hooks/usePlatform';
 import { TeamMember } from '../types';
 
 interface BottomNavProps {
@@ -105,16 +106,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({ onOpenMenu, currentUser })
   // Sliding indicator state
   const [indicatorStyle, setIndicatorStyle] = useState<{ left: number; width: number } | null>(null);
 
-  // ── Platform detection (same as PublicSite) ──
-  const isStandalone = typeof window !== "undefined" && (
-    window.matchMedia("(display-mode: standalone)").matches ||
-    (window.navigator as any).standalone === true
-  );
-  const isIOS = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
-  const navbarPlatformClass = isStandalone
-    ? (isIOS ? "navbar-ios-standalone" : isAndroid ? "navbar-android-standalone" : "navbar-desktop-standalone")
-    : (isIOS ? "navbar-ios-browser" : isAndroid ? "navbar-android-browser" : "navbar-desktop");
+  // ── Platform detection (shared hook) ──
+  const { navbarPlatformClass } = usePlatform();
 
   // Check if user has access to a page (centralized)
   const hasAccess = (path: string): boolean => canAccess(path);
