@@ -12,6 +12,7 @@ import { Button } from "../components/ui/Button";
 import { Switch } from "../components/ui/Switch";
 import { Separator } from "../components/ui/Separator";
 import { Select } from "../components/ui/Select";
+import { CustomDropdown } from "../components/CustomDropdown";
 import { useToast } from "../components/Toast";
 import {
   ArrowLeft,
@@ -45,19 +46,22 @@ import {
   Package,
   ShoppingBag,
   Calendar,
+  Gift,
+  Download,
 } from "lucide-react";
 
 // ============================================================
 // TYPES
 // ============================================================
 
-type SidebarView =
-  | { level: "sections" }
-  | { level: "edit"; sectionKey: string }
-  | { level: "theme-menu" }
-  | { level: "theme-edit"; themeKey: string };
-
 type PreviewMode = "desktop" | "mobile";
+
+interface CategoryDef {
+  key: string;
+  label: string;
+  icon: React.ElementType;
+  items: { key: string; label: string; icon: React.ElementType; panelType: "section" | "theme" }[];
+}
 
 interface SectionDef {
   key: string;
@@ -78,6 +82,9 @@ const SECTIONS: SectionDef[] = [
   { key: "navbar", label: "Barra de Navegação", icon: Navigation, fixed: "bottom" },
   { key: "footer", label: "Rodapé", icon: Type, fixed: "bottom" },
   { key: "extras", label: "Funcionalidades Extras", icon: ToggleRight, fixed: "bottom" },
+  { key: "review", label: "Avaliações", icon: Star, fixed: "bottom" },
+  { key: "referral", label: "Indicação e Cashback", icon: Gift, fixed: "bottom" },
+  { key: "announcement", label: "Banner de Anúncios", icon: Bell, fixed: "bottom" },
 ];
 
 const FIXED_TOP = SECTIONS.filter((s) => s.fixed === "top");
@@ -111,6 +118,57 @@ const THEME_ITEMS = [
   { key: "colors", label: "Cores", icon: Palette },
   { key: "typography", label: "Tipografia", icon: Type },
   { key: "buttons", label: "Visual e Botões", icon: ShoppingBag },
+];
+
+const CATEGORIES: CategoryDef[] = [
+  {
+    key: "appearance", label: "Aparência", icon: Palette,
+    items: [
+      { key: "colors", label: "Cores", icon: Palette, panelType: "theme" },
+      { key: "typography", label: "Tipografia", icon: Type, panelType: "theme" },
+      { key: "buttons", label: "Visual e Botões", icon: ShoppingBag, panelType: "theme" },
+    ],
+  },
+  {
+    key: "content", label: "Conteúdo", icon: ImageIcon,
+    items: [
+      { key: "hero", label: "Banner Principal", icon: ImageIcon, panelType: "section" },
+      { key: "loading", label: "Tela de Loading", icon: Loader2, panelType: "section" },
+    ],
+  },
+  {
+    key: "scheduling", label: "Agendamento", icon: Calendar,
+    items: [
+      { key: "booking", label: "Fluxo e Mensagens", icon: Calendar, panelType: "section" },
+    ],
+  },
+  {
+    key: "navigation", label: "Navegação", icon: Navigation,
+    items: [
+      { key: "navbar", label: "Barra de Navegação", icon: Navigation, panelType: "section" },
+      { key: "footer", label: "Rodapé", icon: MapPin, panelType: "section" },
+    ],
+  },
+  {
+    key: "engagement", label: "Engajamento", icon: Star,
+    items: [
+      { key: "review", label: "Avaliações", icon: Star, panelType: "section" },
+      { key: "referral", label: "Indicação e Cashback", icon: Gift, panelType: "section" },
+    ],
+  },
+  {
+    key: "marketing", label: "Marketing", icon: Megaphone,
+    items: [
+      { key: "announcement", label: "Banner de Anúncios", icon: Bell, panelType: "section" },
+    ],
+  },
+  {
+    key: "advanced", label: "Avançado", icon: Settings,
+    items: [
+      { key: "extras", label: "SEO e Configurações", icon: Settings, panelType: "section" },
+      { key: "pwa", label: "PWA / App da Loja", icon: Download, panelType: "section" },
+    ],
+  },
 ];
 
 // ============================================================
@@ -189,11 +247,13 @@ function ColorField({
   const [nameSearch, setNameSearch] = useState("");
   const [paletteTab, setPaletteTab] = useState(0);
   const popRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [popPos, setPopPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
   useEffect(() => {
     if (!open) return;
     function handleClick(e: MouseEvent) {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) setOpen(false);
+      if (popRef.current && !popRef.current.contains(e.target as Node) && triggerRef.current && !triggerRef.current.contains(e.target as Node)) setOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -217,17 +277,29 @@ function ColorField({
   };
 
   return (
-    <div className="relative py-2" ref={popRef}>
+    <div className="relative py-2.5" ref={popRef}>
       <div className="flex items-center justify-between">
-        <span className="text-sm text-foreground">{label}</span>
+        <span className="text-[13px] text-gray-400 font-medium">{label}</span>
         <div className="flex items-center gap-2">
           <Input
             value={value || ""} onChange={(e) => onChange(e.target.value)}
-            placeholder="#000000" className="w-28 h-8 font-mono text-[11px] text-right"
+            placeholder="#000000" className="w-28 h-9 font-mono text-[11px] text-right bg-white/[0.03] border-white/[0.08] rounded-lg"
           />
           <button
-            onClick={() => setOpen(!open)}
-            className="w-8 h-8 rounded-lg border border-border cursor-pointer flex items-center justify-center shrink-0 transition-all hover:ring-2 hover:ring-orange-400/50"
+            ref={triggerRef}
+            onClick={() => {
+              if (!open && triggerRef.current) {
+                const rect = triggerRef.current.getBoundingClientRect();
+                const popW = 300;
+                let left = rect.right - popW;
+                if (left < 8) left = 8;
+                let top = rect.bottom + 8;
+                if (top + 420 > window.innerHeight) top = rect.top - 420 - 8;
+                setPopPos({ top, left });
+              }
+              setOpen(!open);
+            }}
+            className="w-9 h-9 rounded-lg border border-white/[0.08] cursor-pointer flex items-center justify-center shrink-0 transition-all hover:ring-2 hover:ring-orange-400/50"
             style={{ backgroundColor: value || "#000000" }}
             title="Abrir seletor de cores"
           />
@@ -240,7 +312,7 @@ function ColorField({
       </div>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-[280px] bg-card border border-border rounded-xl shadow-2xl p-3 space-y-3" style={{ animation: 'fadeZoomIn 150ms ease-out' }}>
+        <div ref={popRef} className="fixed z-[9999] w-[300px] bg-[#1a1a1a] border border-white/[0.08] rounded-xl shadow-2xl p-4 space-y-3" style={{ top: popPos.top, left: popPos.left, animation: 'fadeZoomIn 150ms ease-out' }}>
           <input
             type="color" value={value || "#000000"} onChange={(e) => onChange(e.target.value)}
             className="w-full h-[140px] rounded-lg border border-border cursor-pointer bg-transparent p-0 block"
@@ -329,8 +401,8 @@ function ImageUploadField({
   };
 
   return (
-    <div className="py-2">
-      <Label className="text-sm text-foreground mb-2 block">{label}</Label>
+    <div className="py-2.5">
+      <Label className="text-[13px] text-gray-400 mb-2 block font-medium">{label}</Label>
       <div className="flex items-start gap-3">
         {value ? (
           <div className="relative w-16 h-16 rounded-lg border border-border overflow-hidden bg-muted flex-shrink-0">
@@ -346,7 +418,7 @@ function ImageUploadField({
             {uploading ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <Upload className="w-4 h-4 text-muted-foreground" />}
           </div>
         )}
-        <Input value={value || ""} onChange={(e) => onChange(e.target.value)} placeholder="URL ou clique para upload" className="h-9 text-sm flex-1" />
+        <Input value={value || ""} onChange={(e) => onChange(e.target.value)} placeholder="URL ou clique para upload" className="h-10 text-sm flex-1 bg-white/[0.03] border-white/[0.08] rounded-lg" />
         <input ref={inputRef} type="file" accept="image/*" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); }}
         />
@@ -378,8 +450,8 @@ function VideoUploadField({
   };
 
   return (
-    <div className="py-2">
-      <Label className="text-sm text-foreground mb-2 block">{label}</Label>
+    <div className="py-2.5">
+      <Label className="text-[13px] text-gray-400 mb-2 block font-medium">{label}</Label>
       <div className="flex items-start gap-3">
         {value ? (
           <div className="relative w-24 h-16 rounded-lg border border-border overflow-hidden bg-black flex-shrink-0">
@@ -395,7 +467,7 @@ function VideoUploadField({
             {uploading ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <Upload className="w-4 h-4 text-muted-foreground" />}
           </div>
         )}
-        <Input value={value || ""} onChange={(e) => onChange(e.target.value)} placeholder="URL do vídeo ou clique para upload" className="h-9 text-sm flex-1" />
+        <Input value={value || ""} onChange={(e) => onChange(e.target.value)} placeholder="URL do vídeo ou clique para upload" className="h-10 text-sm flex-1 bg-white/[0.03] border-white/[0.08] rounded-lg" />
         <input ref={inputRef} type="file" accept="video/mp4,video/webm" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); }}
         />
@@ -411,12 +483,12 @@ function TextField({
   placeholder?: string; multiline?: boolean; type?: string;
 }) {
   return (
-    <div className="py-2">
-      <Label className="text-sm text-foreground mb-1.5 block">{label}</Label>
+    <div className="py-2.5">
+      <Label className="text-[13px] text-gray-400 mb-2 block font-medium">{label}</Label>
       {multiline ? (
-        <Textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={3} className="text-sm" />
+        <Textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={3} className="text-sm bg-white/[0.03] border-white/[0.08] focus:border-orange-500/40 rounded-lg" />
       ) : (
-        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="h-9 text-sm" type={type} />
+        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="h-10 text-sm bg-white/[0.03] border-white/[0.08] focus:border-orange-500/40 rounded-lg" type={type} />
       )}
     </div>
   );
@@ -436,12 +508,12 @@ function SectionHeader({ title, onBack }: { title: string; onBack: () => void })
 function CollapsibleGroup({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="border border-border/60 rounded-lg overflow-hidden">
-      <button type="button" onClick={() => setOpen(!open)} className="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-muted/40 transition-colors">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</span>
-        <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
+    <div className="border border-white/[0.06] rounded-xl bg-white/[0.01]">
+      <button type="button" onClick={() => setOpen(!open)} className="flex items-center justify-between w-full px-5 py-3.5 text-left hover:bg-white/[0.03] transition-colors">
+        <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-widest">{title}</span>
+        <ChevronDown className={`w-4 h-4 text-gray-600 transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
       </button>
-      {open && <div className="px-4 pb-4 space-y-2">{children}</div>}
+      {open && <div className="px-5 pb-5 pt-1 space-y-1">{children}</div>}
     </div>
   );
 }
@@ -454,7 +526,7 @@ type PanelProps = { get: (k: string, f?: string) => string; set: (k: string, v: 
 
 function LoadingPanel({ get, set, allSettings }: PanelProps) {
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-5 py-5 space-y-4">
       <CollapsibleGroup title="Identidade" defaultOpen={true}>
         <ImageUploadField label="Logo" value={get("loading.logo")} onChange={(v) => set("loading.logo", v)} path="logos" />
         <TextField label="Nome da Barbearia" value={get("store_name", "VINNX BARBER")} onChange={(v) => set("store_name", v)} />
@@ -473,7 +545,7 @@ function LoadingPanel({ get, set, allSettings }: PanelProps) {
 
 function HeroPanel({ get, set, allSettings }: PanelProps) {
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-5 py-5 space-y-4">
       <CollapsibleGroup title="Conteúdo" defaultOpen={true}>
         <TextField label="Título" value={get("hero.title", "Agende seu horário")} onChange={(v) => set("hero.title", v)} />
         <TextField label="Subtítulo" value={get("hero.subtitle", "Escolha os serviços e agende com facilidade.")} onChange={(v) => set("hero.subtitle", v)} multiline />
@@ -496,35 +568,35 @@ function HeroPanel({ get, set, allSettings }: PanelProps) {
 
 function BookingPanel({ get, set }: PanelProps) {
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-5 py-5 space-y-4">
       <CollapsibleGroup title="Regras de Agendamento" defaultOpen={true}>
         <div className="py-2">
-          <Label className="text-xs mb-1 block">Dias máx. para agendar</Label>
-          <Select value={get("booking.max_advance_days", "30")} onChange={(e) => set("booking.max_advance_days", e.target.value)}>
-            <option value="7">7 dias</option>
-            <option value="14">14 dias</option>
-            <option value="30">30 dias</option>
-            <option value="60">60 dias</option>
-          </Select>
+          <Label className="text-[13px] text-gray-400 mb-2 block font-medium">Dias máx. para agendar</Label>
+          <CustomDropdown value={get("booking.max_advance_days", "30")} onChange={(v) => set("booking.max_advance_days", v)} isDarkMode options={[
+            { value: "7", label: "7 dias" },
+            { value: "14", label: "14 dias" },
+            { value: "30", label: "30 dias" },
+            { value: "60", label: "60 dias" },
+          ]} />
         </div>
         <div className="py-2">
-          <Label className="text-xs mb-1 block">Máx. agendamentos abertos</Label>
-          <Select value={get("booking.max_open_appointments", "2")} onChange={(e) => set("booking.max_open_appointments", e.target.value)}>
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="5">5</option>
-          </Select>
+          <Label className="text-[13px] text-gray-400 mb-2 block font-medium">Máx. agendamentos abertos</Label>
+          <CustomDropdown value={get("booking.max_open_appointments", "2")} onChange={(v) => set("booking.max_open_appointments", v)} isDarkMode options={[
+            { value: "1", label: "1" },
+            { value: "2", label: "2" },
+            { value: "3", label: "3" },
+            { value: "5", label: "5" },
+          ]} />
         </div>
         <div className="py-2">
-          <Label className="text-xs mb-1 block">Intervalo entre slots (min)</Label>
-          <Select value={get("booking.slot_interval", "30")} onChange={(e) => set("booking.slot_interval", e.target.value)}>
-            <option value="15">15 min</option>
-            <option value="20">20 min</option>
-            <option value="30">30 min</option>
-            <option value="40">40 min</option>
-            <option value="60">60 min</option>
-          </Select>
+          <Label className="text-[13px] text-gray-400 mb-2 block font-medium">Intervalo entre slots (min)</Label>
+          <CustomDropdown value={get("booking.slot_interval", "30")} onChange={(v) => set("booking.slot_interval", v)} isDarkMode options={[
+            { value: "15", label: "15 min" },
+            { value: "20", label: "20 min" },
+            { value: "30", label: "30 min" },
+            { value: "40", label: "40 min" },
+            { value: "60", label: "60 min" },
+          ]} />
         </div>
       </CollapsibleGroup>
       <CollapsibleGroup title="Opções">
@@ -563,21 +635,21 @@ function BookingPanel({ get, set }: PanelProps) {
       <CollapsibleGroup title="Horário de Funcionamento Padrão">
         <div className="flex items-center gap-2 py-1">
           <div className="flex-1">
-            <Label className="text-xs mb-0.5 block">Abertura</Label>
+            <Label className="text-[12px] text-gray-400 mb-1.5 block font-medium">Abertura</Label>
             <Input type="time" value={get("booking.default_start_time", "08:00")} onChange={(e) => set("booking.default_start_time", e.target.value)} className="h-8 text-sm" />
           </div>
           <div className="flex-1">
-            <Label className="text-xs mb-0.5 block">Fechamento</Label>
+            <Label className="text-[12px] text-gray-400 mb-1.5 block font-medium">Fechamento</Label>
             <Input type="time" value={get("booking.default_end_time", "19:00")} onChange={(e) => set("booking.default_end_time", e.target.value)} className="h-8 text-sm" />
           </div>
         </div>
         <div className="flex items-center gap-2 py-1">
           <div className="flex-1">
-            <Label className="text-xs mb-0.5 block">Início Intervalo</Label>
+            <Label className="text-[12px] text-gray-400 mb-1.5 block font-medium">Início Intervalo</Label>
             <Input type="time" value={get("booking.default_break_start", "12:00")} onChange={(e) => set("booking.default_break_start", e.target.value)} className="h-8 text-sm" />
           </div>
           <div className="flex-1">
-            <Label className="text-xs mb-0.5 block">Fim Intervalo</Label>
+            <Label className="text-[12px] text-gray-400 mb-1.5 block font-medium">Fim Intervalo</Label>
             <Input type="time" value={get("booking.default_break_end", "13:00")} onChange={(e) => set("booking.default_break_end", e.target.value)} className="h-8 text-sm" />
           </div>
         </div>
@@ -614,6 +686,23 @@ function BookingPanel({ get, set }: PanelProps) {
         <TextField label="Telefone" value={get("contact.phone", "")} onChange={(v) => set("contact.phone", v)} placeholder="(11) 3456-7890" />
         <TextField label="Instagram" value={get("contact.instagram", "")} onChange={(v) => set("contact.instagram", v)} placeholder="https://instagram.com/..." />
       </CollapsibleGroup>
+      <CollapsibleGroup title="Confirmação e Sucesso">
+        <TextField label="Título de sucesso" value={get("booking.success_title", "")} onChange={(v) => set("booking.success_title", v)} placeholder="Agendamento Confirmado!" />
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <span className="text-sm">Lembrete de horário</span>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Aviso visual na tela de agendamento.</p>
+          </div>
+          <Switch checked={get("reminder.enabled", "true") !== "false"} onCheckedChange={(v) => set("reminder.enabled", v ? "true" : "false")} />
+        </div>
+        <TextField label="Texto do lembrete" value={get("reminder.title", "")} onChange={(v) => set("reminder.title", v)} placeholder="Lembrete: Você tem horário hoje!" />
+        <ColorField label="Cor de fundo dos cards" value={get("theme.card_bg_color", "")} onChange={(v) => set("theme.card_bg_color", v)} />
+      </CollapsibleGroup>
+      <CollapsibleGroup title="Textos de Login">
+        <TextField label="Prompt do Histórico" value={get("auth.historico_prompt", "")} onChange={(v) => set("auth.historico_prompt", v)} placeholder="Faça login para ver seu histórico" />
+        <TextField label="Prompt do Perfil" value={get("auth.perfil_prompt", "")} onChange={(v) => set("auth.perfil_prompt", v)} placeholder="Faça login para acessar seu perfil" />
+        <TextField label="Botão de login" value={get("auth.login_button", "")} onChange={(v) => set("auth.login_button", v)} placeholder="Entrar com Google" />
+      </CollapsibleGroup>
     </div>
   );
 }
@@ -627,7 +716,7 @@ function NavbarPanel({ get, set, allSettings }: PanelProps) {
   ];
 
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-5 py-5 space-y-4">
       <CollapsibleGroup title="Aparência" defaultOpen={true}>
         <ColorField label="Cor de fundo" value={get("navbar.bg_color", "")} onChange={(v) => set("navbar.bg_color", v)} allSettings={allSettings} />
         <ColorField label="Cor do item ativo" value={get("navbar.active_color", "")} onChange={(v) => set("navbar.active_color", v)} allSettings={allSettings} />
@@ -664,12 +753,12 @@ function NavbarPanel({ get, set, allSettings }: PanelProps) {
           );
         })}
         <div className="py-2">
-          <Label className="text-xs mb-1 block">Aba padrão (abrir primeiro)</Label>
-          <Select value={get("navbar.default_tab", "agendar")} onChange={(e) => set("navbar.default_tab", e.target.value)}>
-            {TABS.filter(t => get(`navbar.tab_${t.key}_visible`, "true") !== "false").map((t) => (
-              <option key={t.key} value={t.key}>{get(`navbar.tab_${t.key}_label`, "") || t.defaultLabel}</option>
-            ))}
-          </Select>
+          <Label className="text-[13px] text-gray-400 mb-2 block font-medium">Aba padrão (abrir primeiro)</Label>
+          <CustomDropdown value={get("navbar.default_tab", "agendar")} onChange={(v) => set("navbar.default_tab", v)} isDarkMode options={
+            TABS.filter(t => get(`navbar.tab_${t.key}_visible`, "true") !== "false").map((t) => ({
+              value: t.key, label: get(`navbar.tab_${t.key}_label`, "") || t.defaultLabel
+            }))
+          } />
         </div>
       </CollapsibleGroup>
     </div>
@@ -678,7 +767,7 @@ function NavbarPanel({ get, set, allSettings }: PanelProps) {
 
 function FooterPanel({ get, set, allSettings }: PanelProps) {
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-5 py-5 space-y-4">
       <CollapsibleGroup title="Conteúdo" defaultOpen={true}>
         <TextField label="Texto do rodapé" value={get("footer.text", "© 2024 VINNX BARBER. Todos os direitos reservados.")} onChange={(v) => set("footer.text", v)} />
         <ImageUploadField label="Logo do rodapé" value={get("footer.logo")} onChange={(v) => set("footer.logo", v)} path="logos" />
@@ -699,7 +788,7 @@ function FooterPanel({ get, set, allSettings }: PanelProps) {
 
 function ExtrasPanel({ get, set }: PanelProps) {
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-5 py-5 space-y-4">
       <CollapsibleGroup title="WhatsApp Flutuante" defaultOpen={true}>
         <div className="flex items-center justify-between py-2">
           <span className="text-sm">Mostrar botão flutuante</span>
@@ -712,6 +801,148 @@ function ExtrasPanel({ get, set }: PanelProps) {
         <TextField label="Título da página" value={get("seo.title", "")} onChange={(v) => set("seo.title", v)} placeholder="VINNX BARBER — Barbearia Premium" />
         <TextField label="Meta description" value={get("seo.description", "")} onChange={(v) => set("seo.description", v)} multiline placeholder="A melhor barbearia da região..." />
       </CollapsibleGroup>
+      <CollapsibleGroup title="Migração de Clientes">
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <span className="text-sm">Migração de clientes legados</span>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Exibe "Já é cliente?" no login do site público.<br/>
+              Desative quando a migração estiver concluída.
+            </p>
+          </div>
+          <Switch checked={get("auth.legacy_migration_enabled", "true") !== "false"} onCheckedChange={(v) => set("auth.legacy_migration_enabled", v ? "true" : "false")} />
+        </div>
+      </CollapsibleGroup>
+      <CollapsibleGroup title="Marca d'água">
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <span className="text-sm">Powered by VINNX</span>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Exibe a marca VINNX no rodapé do perfil do cliente.
+            </p>
+          </div>
+          <Switch checked={get("branding.show_powered_by", "true") !== "false"} onCheckedChange={(v) => set("branding.show_powered_by", v ? "true" : "false")} />
+        </div>
+      </CollapsibleGroup>
+    </div>
+  );
+}
+
+// ============================================================
+// ENGAGEMENT & MARKETING PANELS
+// ============================================================
+
+function AnnouncementPanel({ get, set }: PanelProps) {
+  return (
+    <div className="px-5 py-5 space-y-4">
+      <CollapsibleGroup title="Geral" defaultOpen={true}>
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <span className="text-sm">Ativar banner</span>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Exibe uma faixa de anúncio no topo do site.
+            </p>
+          </div>
+          <Switch checked={get("announcement.enabled", "false") === "true"} onCheckedChange={(v) => set("announcement.enabled", v ? "true" : "false")} />
+        </div>
+        <div className="flex items-center justify-between py-2">
+          <span className="text-sm">Permitir fechar</span>
+          <Switch checked={get("announcement.dismissible", "true") !== "false"} onCheckedChange={(v) => set("announcement.dismissible", v ? "true" : "false")} />
+        </div>
+      </CollapsibleGroup>
+      <CollapsibleGroup title="Conteúdo">
+        <TextField label="Texto do anúncio" value={get("announcement.text", "")} onChange={(v) => set("announcement.text", v)} multiline placeholder="🔥 Promoção especial esta semana!" />
+        <TextField label="Texto do botão (opcional)" value={get("announcement.link_label", "")} onChange={(v) => set("announcement.link_label", v)} placeholder="Saiba mais" />
+        <TextField label="URL do botão (opcional)" value={get("announcement.link_url", "")} onChange={(v) => set("announcement.link_url", v)} placeholder="https://..." />
+      </CollapsibleGroup>
+      <CollapsibleGroup title="Aparência">
+        <div className="py-2">
+          <Label className="text-[13px] text-gray-400 mb-2 block font-medium">Tipo</Label>
+          <CustomDropdown value={get("announcement.type", "info")} onChange={(v) => set("announcement.type", v)} isDarkMode options={[
+            { value: "info", label: "Informação" },
+            { value: "promo", label: "Promoção" },
+            { value: "alert", label: "Alerta" },
+          ]} />
+        </div>
+        <ColorField label="Cor de fundo" value={get("announcement.bg_color", "")} onChange={(v) => set("announcement.bg_color", v)} />
+        <ColorField label="Cor do texto" value={get("announcement.text_color", "")} onChange={(v) => set("announcement.text_color", v)} />
+      </CollapsibleGroup>
+    </div>
+  );
+}
+
+function ReviewPanel({ get, set }: PanelProps) {
+  return (
+    <div className="px-5 py-5 space-y-4">
+      <CollapsibleGroup title="Geral" defaultOpen={true}>
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <span className="text-sm">Ativar avaliações</span>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Permite que clientes avaliem após o serviço.
+            </p>
+          </div>
+          <Switch checked={get("review.enabled", "true") !== "false"} onCheckedChange={(v) => set("review.enabled", v ? "true" : "false")} />
+        </div>
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <span className="text-sm">Indicador no menu</span>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Bolinha vermelha no ícone Histórico quando há avaliação pendente.
+            </p>
+          </div>
+          <Switch checked={get("review.show_badge", "true") !== "false"} onCheckedChange={(v) => set("review.show_badge", v ? "true" : "false")} />
+        </div>
+      </CollapsibleGroup>
+      <CollapsibleGroup title="Textos do Modal">
+        <TextField label="Título" value={get("review.modal_title", "")} onChange={(v) => set("review.modal_title", v)} placeholder="Avaliar atendimento" />
+        <TextField label="Pergunta de avaliação" value={get("review.question_text", "")} onChange={(v) => set("review.question_text", v)} placeholder="Como foi sua experiência?" />
+        <TextField label="Label comentário (positivo)" value={get("review.comment_label", "")} onChange={(v) => set("review.comment_label", v)} placeholder="O que você mais gostou?" />
+        <TextField label="Label comentário (negativo)" value={get("review.comment_label_negative", "")} onChange={(v) => set("review.comment_label_negative", v)} placeholder="O que podemos melhorar?" />
+        <TextField label="Botão de envio" value={get("review.submit_label", "")} onChange={(v) => set("review.submit_label", v)} placeholder="Enviar Avaliação" />
+      </CollapsibleGroup>
+      <CollapsibleGroup title="Mensagem de Sucesso">
+        <TextField label="Título" value={get("review.success_title", "")} onChange={(v) => set("review.success_title", v)} placeholder="Obrigado!" />
+        <TextField label="Mensagem" value={get("review.success_message", "")} onChange={(v) => set("review.success_message", v)} multiline placeholder="Sua avaliação foi enviada com sucesso." />
+      </CollapsibleGroup>
+    </div>
+  );
+}
+
+function ReferralPanel({ get, set }: PanelProps) {
+  return (
+    <div className="px-5 py-5 space-y-4">
+      <CollapsibleGroup title="Geral" defaultOpen={true}>
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <span className="text-sm">Ativar programa de indicação</span>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Mostra seção de indicação e cashback no perfil do cliente.
+            </p>
+          </div>
+          <Switch checked={get("referral.enabled", "true") !== "false"} onCheckedChange={(v) => set("referral.enabled", v ? "true" : "false")} />
+        </div>
+        <TextField label="Valor mínimo para resgate (R$)" value={get("referral.min_redemption", "50")} onChange={(v) => set("referral.min_redemption", v)} type="number" />
+      </CollapsibleGroup>
+      <CollapsibleGroup title="Textos do Cashback">
+        <TextField label="Título do programa" value={get("referral.cashback_title", "")} onChange={(v) => set("referral.cashback_title", v)} placeholder="Programa de Cashback" />
+        <TextField label="Crédito por serviço (título)" value={get("referral.credit_per_service_label", "")} onChange={(v) => set("referral.credit_per_service_label", v)} placeholder="R$ 2 por Serviço" />
+        <TextField label="Crédito por serviço (descrição)" value={get("referral.credit_per_service_desc", "")} onChange={(v) => set("referral.credit_per_service_desc", v)} placeholder="A cada serviço concluído, você ganha R$ 2,00 de cashback." />
+        <TextField label="Crédito por indicação (título)" value={get("referral.credit_per_referral_label", "")} onChange={(v) => set("referral.credit_per_referral_label", v)} placeholder="R$ 10 por Indicação" />
+        <TextField label="Crédito por indicação (descrição)" value={get("referral.credit_per_referral_desc", "")} onChange={(v) => set("referral.credit_per_referral_desc", v)} placeholder="Quando um amigo usa seu código, você ganha R$ 10,00." />
+      </CollapsibleGroup>
+      <CollapsibleGroup title="Convite por WhatsApp">
+        <TextField label="Título do modal" value={get("referral.invite_title", "")} onChange={(v) => set("referral.invite_title", v)} placeholder="Indique e Ganhe!" />
+        <TextField label="Desconto para o amigo" value={get("referral.friend_discount_text", "")} onChange={(v) => set("referral.friend_discount_text", v)} placeholder="20% OFF" />
+        <TextField label="Crédito para quem indica" value={get("referral.referrer_credit_text", "")} onChange={(v) => set("referral.referrer_credit_text", v)} placeholder="R$10 de crédito" />
+        <TextField label="Mensagem do WhatsApp" value={get("referral.invite_message", "")} onChange={(v) => set("referral.invite_message", v)} multiline placeholder="Use {code} para inserir o código. Ex: Fala, mestre! Use meu código {code} e ganhe desconto!" />
+      </CollapsibleGroup>
+      <CollapsibleGroup title="Textos do Perfil">
+        <TextField label="Título do card de créditos" value={get("referral.credits_title", "")} onChange={(v) => set("referral.credits_title", v)} placeholder="Créditos de Indicação" />
+        <TextField label="Parabéns (meta atingida)" value={get("referral.congrats_title", "")} onChange={(v) => set("referral.congrats_title", v)} placeholder="Parabéns! Você conseguiu!" />
+        <TextField label="Botão de resgate" value={get("referral.redeem_button", "")} onChange={(v) => set("referral.redeem_button", v)} placeholder="Resgatar Corte Grátis" />
+        <TextField label="Título das metas" value={get("referral.goals_title", "")} onChange={(v) => set("referral.goals_title", v)} placeholder="Metas de Indicação" />
+      </CollapsibleGroup>
     </div>
   );
 }
@@ -723,7 +954,7 @@ function ExtrasPanel({ get, set }: PanelProps) {
 function ColorsPanel({ get, set, allSettings }: PanelProps) {
   const [suggestion, setSuggestion] = useState<ReturnType<typeof suggestPalette>>(null);
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-5 py-5 space-y-4">
       <CollapsibleGroup title="Cores Principais" defaultOpen={true}>
         <ColorField label="Cor primária" value={get("theme.primary_color", "#00BF62")} onChange={(v) => set("theme.primary_color", v)} allSettings={allSettings}
           onSuggest={() => setSuggestion(suggestPalette(get("theme.primary_color", "#00BF62")))}
@@ -757,30 +988,30 @@ function ColorsPanel({ get, set, allSettings }: PanelProps) {
 
 function TypographyPanel({ get, set }: PanelProps) {
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-5 py-5 space-y-4">
       <CollapsibleGroup title="Fonte" defaultOpen={true}>
         <div className="py-2">
-          <Label className="text-xs mb-1 block">Família de fonte</Label>
-          <Select value={get("theme.font_family", "Inter")} onChange={(e) => set("theme.font_family", e.target.value)}>
-            <option value="Inter">Inter</option>
-            <option value="Poppins">Poppins</option>
-            <option value="Roboto">Roboto</option>
-            <option value="Montserrat">Montserrat</option>
-            <option value="Playfair Display">Playfair Display</option>
-            <option value="Oswald">Oswald</option>
-            <option value="Bebas Neue">Bebas Neue</option>
-          </Select>
+          <Label className="text-[13px] text-gray-400 mb-2 block font-medium">Família de fonte</Label>
+          <CustomDropdown value={get("theme.font_family", "Inter")} onChange={(v) => set("theme.font_family", v)} isDarkMode options={[
+            { value: "Inter", label: "Inter" },
+            { value: "Poppins", label: "Poppins" },
+            { value: "Roboto", label: "Roboto" },
+            { value: "Montserrat", label: "Montserrat" },
+            { value: "Playfair Display", label: "Playfair Display" },
+            { value: "Oswald", label: "Oswald" },
+            { value: "Bebas Neue", label: "Bebas Neue" },
+          ]} />
         </div>
         <div className="py-2">
-          <Label className="text-xs mb-1 block">Fonte dos títulos</Label>
-          <Select value={get("theme.heading_font", "Inter")} onChange={(e) => set("theme.heading_font", e.target.value)}>
-            <option value="Inter">Inter</option>
-            <option value="Poppins">Poppins</option>
-            <option value="Montserrat">Montserrat</option>
-            <option value="Playfair Display">Playfair Display</option>
-            <option value="Oswald">Oswald</option>
-            <option value="Bebas Neue">Bebas Neue</option>
-          </Select>
+          <Label className="text-[13px] text-gray-400 mb-2 block font-medium">Fonte dos títulos</Label>
+          <CustomDropdown value={get("theme.heading_font", "Inter")} onChange={(v) => set("theme.heading_font", v)} isDarkMode options={[
+            { value: "Inter", label: "Inter" },
+            { value: "Poppins", label: "Poppins" },
+            { value: "Montserrat", label: "Montserrat" },
+            { value: "Playfair Display", label: "Playfair Display" },
+            { value: "Oswald", label: "Oswald" },
+            { value: "Bebas Neue", label: "Bebas Neue" },
+          ]} />
         </div>
       </CollapsibleGroup>
     </div>
@@ -789,30 +1020,30 @@ function TypographyPanel({ get, set }: PanelProps) {
 
 function ButtonsPanel({ get, set, allSettings }: PanelProps) {
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-5 py-5 space-y-4">
       <CollapsibleGroup title="Estilo dos Botões" defaultOpen={true}>
         <div className="py-2">
-          <Label className="text-xs mb-1 block">Formato</Label>
-          <Select value={get("theme.btn_radius", "8")} onChange={(e) => set("theme.btn_radius", e.target.value)}>
-            <option value="0">Quadrado</option>
-            <option value="4">Levemente arredondado</option>
-            <option value="8">Arredondado</option>
-            <option value="16">Muito arredondado</option>
-            <option value="9999">Pílula</option>
-          </Select>
+          <Label className="text-[13px] text-gray-400 mb-2 block font-medium">Formato</Label>
+          <CustomDropdown value={get("theme.btn_radius", "8")} onChange={(v) => set("theme.btn_radius", v)} isDarkMode options={[
+            { value: "0", label: "Quadrado" },
+            { value: "4", label: "Levemente arredondado" },
+            { value: "8", label: "Arredondado" },
+            { value: "16", label: "Muito arredondado" },
+            { value: "9999", label: "Pílula" },
+          ]} />
         </div>
         <ColorField label="Cor de fundo dos botões" value={get("theme.btn_bg_color", "")} onChange={(v) => set("theme.btn_bg_color", v)} allSettings={allSettings} />
         <ColorField label="Cor do texto dos botões" value={get("theme.btn_text_color", "#ffffff")} onChange={(v) => set("theme.btn_text_color", v)} allSettings={allSettings} />
       </CollapsibleGroup>
       <CollapsibleGroup title="Cards">
         <div className="py-2">
-          <Label className="text-xs mb-1 block">Borda dos cards</Label>
-          <Select value={get("theme.card_radius", "12")} onChange={(e) => set("theme.card_radius", e.target.value)}>
-            <option value="0">Quadrado</option>
-            <option value="8">Arredondado</option>
-            <option value="12">Mais arredondado</option>
-            <option value="16">Bem arredondado</option>
-          </Select>
+          <Label className="text-[13px] text-gray-400 mb-2 block font-medium">Borda dos cards</Label>
+          <CustomDropdown value={get("theme.card_radius", "12")} onChange={(v) => set("theme.card_radius", v)} isDarkMode options={[
+            { value: "0", label: "Quadrado" },
+            { value: "8", label: "Arredondado" },
+            { value: "12", label: "Mais arredondado" },
+            { value: "16", label: "Bem arredondado" },
+          ]} />
         </div>
         <div className="flex items-center justify-between py-2">
           <span className="text-sm">Sombra nos cards</span>
@@ -849,6 +1080,207 @@ function ButtonsPanel({ get, set, allSettings }: PanelProps) {
 }
 
 // ============================================================
+// PWA PANEL
+// ============================================================
+
+function PWAPanel({ get, set, allSettings }: PanelProps) {
+  const [generatingIcon, setGeneratingIcon] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
+
+  const currentIcon = get("pwa_store_icon", "");
+  const bgColor = get("pwa_store_icon_bg", "#10b981");
+
+  const generateIconFromLogo = async () => {
+    setGeneratingIcon(true);
+    try {
+      // Try loading logo, then hero logo, then company logo from settings
+      const logoUrl = get("loading.logo", "") || get("hero.logo", "");
+      if (!logoUrl) throw new Error("Nenhum logo encontrado. Configure um logo primeiro.");
+
+      const canvas = canvasRef.current || document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas não suportado");
+
+      // Draw background
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, 512, 512);
+
+      // Load logo
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("Erro ao carregar logo"));
+        img.src = logoUrl;
+      });
+
+      // Draw logo centered with padding
+      const pad = 64;
+      const maxW = 512 - pad * 2;
+      const maxH = 512 - pad * 2;
+      const scale = Math.min(maxW / img.width, maxH / img.height);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      ctx.drawImage(img, (512 - w) / 2, (512 - h) / 2, w, h);
+
+      // Convert to blob and upload
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Erro ao gerar imagem"))), "image/png");
+      });
+
+      const file = new File([blob], `pwa-store-icon-${Date.now()}.png`, { type: "image/png" });
+      const url = await uploadStoreAsset(file, "pwa-icons");
+      set("pwa_store_icon", url);
+      toast.success("Sucesso", "Ícone da loja gerado com sucesso");
+    } catch (err: any) {
+      toast.error("Erro", err?.message || "Erro ao gerar ícone");
+    } finally {
+      setGeneratingIcon(false);
+    }
+  };
+
+  const handleCustomUpload = async (file: File) => {
+    try {
+      const url = await uploadStoreAsset(file, "pwa-icons");
+      set("pwa_store_icon", url);
+      toast.success("Sucesso", "Ícone da loja enviado");
+    } catch (err: any) {
+      toast.error("Erro", err?.message || "Erro ao enviar");
+    }
+  };
+
+  return (
+    <div className="px-5 py-5 space-y-4">
+      <p className="text-[11px] text-gray-500 leading-relaxed">
+        Configure o app instalável da loja. Quando o cliente "instala" o site no celular,
+        essas configurações definem o ícone, nome e cor tema.
+      </p>
+
+      {/* Name */}
+      <CollapsibleGroup title="Identidade do App" defaultOpen={true}>
+        <TextField label="Nome do App" value={get("pwa_store_name", "VINNX BARBER")} onChange={(v) => set("pwa_store_name", v)} placeholder="VINNX BARBER" />
+        <TextField label="Nome curto" value={get("pwa_store_short_name", "VINNX")} onChange={(v) => set("pwa_store_short_name", v)} placeholder="VINNX" />
+      </CollapsibleGroup>
+
+      {/* Icon */}
+      <CollapsibleGroup title="Ícone do App" defaultOpen={true}>
+        {/* Current icon preview */}
+        <div className="flex items-center gap-4 py-3">
+          <div
+            className="w-16 h-16 rounded-xl border-2 border-white/10 overflow-hidden flex items-center justify-center shrink-0"
+            style={{ backgroundColor: currentIcon ? "transparent" : bgColor }}
+          >
+            {currentIcon ? (
+              <img src={currentIcon} alt="PWA Icon" className="w-full h-full object-cover" />
+            ) : (
+              <Download className="w-6 h-6 text-gray-500" />
+            )}
+          </div>
+          <div className="flex-1 space-y-1.5">
+            <p className="text-xs text-gray-400">
+              {currentIcon ? "Ícone personalizado ativo" : "Nenhum ícone definido"}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                variant="outline"
+                className="gap-1.5 h-7 text-[11px] px-2.5 border-white/10"
+              >
+                <Upload className="w-3 h-3" />
+                Enviar
+              </Button>
+              {currentIcon && (
+                <button
+                  onClick={() => set("pwa_store_icon", "")}
+                  className="h-7 px-2 text-[11px] text-red-400 hover:text-red-300 rounded-md hover:bg-red-500/10 transition-colors"
+                >
+                  Remover
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleCustomUpload(f);
+            e.target.value = "";
+          }}
+        />
+
+        <p className="text-[10px] text-gray-500 pt-1">Recomendado: 512×512px, PNG com fundo sólido.</p>
+
+        {/* Generate from logo — separated from nested card to avoid ColorField popup clipping */}
+        <div className="border-t border-white/[0.04] mt-3 pt-3 space-y-2">
+          <p className="text-xs font-medium text-gray-300">Gerar a partir do logo</p>
+          <p className="text-[10px] text-gray-500">
+            Usa o logo da tela de loading sobre a cor de fundo abaixo.
+          </p>
+          <ColorField
+            label="Cor de fundo do ícone"
+            value={bgColor}
+            onChange={(v) => set("pwa_store_icon_bg", v)}
+            allSettings={allSettings}
+          />
+          <Button
+            onClick={generateIconFromLogo}
+            disabled={generatingIcon}
+            variant="outline"
+            className="w-full gap-2 h-8 text-[11px] border-white/10 hover:border-orange-500/30"
+          >
+            {generatingIcon ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {generatingIcon ? "Gerando..." : "Gerar ícone do logo"}
+          </Button>
+        </div>
+      </CollapsibleGroup>
+
+      {/* Browser Colors */}
+      <CollapsibleGroup title="Prompt de Instalação">
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <span className="text-sm">Banner "Instalar App"</span>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Exibe um banner sugerindo a instalação do app.<br/>
+              Aparece após 10s e some por 7 dias após fechar.
+            </p>
+          </div>
+          <Switch checked={get("pwa.install_prompt_enabled", "true") !== "false"} onCheckedChange={(v) => set("pwa.install_prompt_enabled", v ? "true" : "false")} />
+        </div>
+      </CollapsibleGroup>
+
+      <CollapsibleGroup title="Cores do Navegador">
+        <p className="text-[10px] text-gray-500 mb-1">
+          A cor tema aparece na barra do navegador mobile e na splash screen ao abrir o app.
+        </p>
+        <ColorField
+          label="Cor tema (barra do navegador)"
+          value={get("pwa_store_theme_color", "#10b981")}
+          onChange={(v) => set("pwa_store_theme_color", v)}
+          allSettings={allSettings}
+        />
+        <ColorField
+          label="Cor de fundo (splash screen)"
+          value={get("pwa_store_bg_color", "#0f172a")}
+          onChange={(v) => set("pwa_store_bg_color", v)}
+          allSettings={allSettings}
+        />
+      </CollapsibleGroup>
+
+      <canvas ref={canvasRef} width={512} height={512} className="hidden" />
+    </div>
+  );
+}
+
+// ============================================================
 // MAIN COMPONENT
 // ============================================================
 
@@ -856,7 +1288,8 @@ export function StoreCustomizer({ isDarkMode, currentUser }: { isDarkMode?: bool
   const navigate = useNavigate();
   const toast = useToast();
   const { settings, getSetting, saveSettings, isLoading, isSaving } = useStoreCustomization();
-  const [sidebarView, setSidebarView] = useState<SidebarView>({ level: "sections" });
+  const [activeCategory, setActiveCategory] = useState("appearance");
+  const [activePanel, setActivePanel] = useState<{ key: string; type: "section" | "theme" } | null>(null);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("desktop");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [hasChanges, setHasChanges] = useState(false);
@@ -980,7 +1413,7 @@ export function StoreCustomizer({ isDarkMode, currentUser }: { isDarkMode?: bool
     updateSectionOrder(newOrder);
     setShowAddMenu(false);
     setHasChanges(true);
-    setSidebarView({ level: "edit", sectionKey: newKey });
+    setActivePanel({ key: newKey, type: "section" });
     toast.success("Sucesso", `Seção adicionada: ${getSectionDef(newKey)?.label || newKey}`);
   }, [sectionOrder, updateSectionOrder, toast]);
 
@@ -1035,287 +1468,163 @@ export function StoreCustomizer({ isDarkMode, currentUser }: { isDarkMode?: bool
     );
   }
 
-  // Render a single section row in the sidebar
-  const renderSectionRow = (sectionKey: string, opts: { draggable: boolean; index?: number; isDuplicate?: boolean }) => {
-    const def = getSectionDef(sectionKey);
-    if (!def) return null;
-    const isVisible = get(`sections.${sectionKey}_visible`, "true") !== "false";
-    const isDup = opts.isDuplicate || false;
-    const isDragTarget = opts.index !== undefined && dragOver === opts.index && dragFrom !== opts.index;
-    const baseDef = SECTIONS.find((s) => s.key === getBaseKey(sectionKey));
-    const canDuplicate = !!baseDef?.duplicable;
+  // ============================================================
+  // PANEL RENDERER
+  // ============================================================
+  const renderPanel = () => {
+    if (activePanel) {
+      const { key, type } = activePanel;
+      const allItems = CATEGORIES.flatMap(c => c.items);
+      const item = allItems.find(i => i.key === key);
+      const panelProps = { get, set, allSettings: draft };
+
+      return (
+        <>
+          <div className="h-14 border-b border-white/[0.06] flex items-center gap-3 px-4 flex-shrink-0">
+            <button onClick={() => setActivePanel(null)}
+              className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/[0.06] transition-colors text-gray-400 hover:text-white">
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <span className="text-[15px] font-semibold text-white">{item?.label || ""}</span>
+          </div>
+          <div className="flex-1 overflow-y-auto overflow-x-hidden" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
+            {type === "theme" && key === "colors" && <ColorsPanel {...panelProps} />}
+            {type === "theme" && key === "typography" && <TypographyPanel {...panelProps} />}
+            {type === "theme" && key === "buttons" && <ButtonsPanel {...panelProps} />}
+            {type === "section" && key === "loading" && <LoadingPanel {...panelProps} />}
+            {type === "section" && key === "hero" && <HeroPanel {...panelProps} />}
+            {type === "section" && key === "booking" && <BookingPanel {...panelProps} />}
+            {type === "section" && key === "navbar" && <NavbarPanel {...panelProps} />}
+            {type === "section" && key === "footer" && <FooterPanel {...panelProps} />}
+            {type === "section" && key === "extras" && <ExtrasPanel {...panelProps} />}
+            {type === "section" && key === "announcement" && <AnnouncementPanel {...panelProps} />}
+            {type === "section" && key === "review" && <ReviewPanel {...panelProps} />}
+            {type === "section" && key === "referral" && <ReferralPanel {...panelProps} />}
+            {type === "section" && key === "pwa" && <PWAPanel {...panelProps} />}
+          </div>
+        </>
+      );
+    }
+
+    // Category overview – show items as elegant cards
+    const cat = CATEGORIES.find(c => c.key === activeCategory);
+    if (!cat) return null;
 
     return (
-      <div
-        key={sectionKey}
-        className={`flex items-center gap-2 px-3 py-2.5 border-b border-border/50 hover:bg-muted/50 cursor-pointer transition-all group ${
-          isDragTarget ? "border-l-2 border-l-orange-500 bg-orange-500/5" : ""
-        }`}
-        onClick={() => setSidebarView({ level: "edit", sectionKey })}
-        draggable={opts.draggable}
-        onDragStart={opts.draggable && opts.index !== undefined ? (e) => {
-          setDragFrom(opts.index!);
-          e.dataTransfer.effectAllowed = "move";
-        } : undefined}
-        onDragOver={opts.draggable && opts.index !== undefined ? (e) => {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = "move";
-          setDragOver(opts.index!);
-        } : undefined}
-        onDragLeave={opts.draggable ? () => setDragOver(null) : undefined}
-        onDrop={opts.draggable && opts.index !== undefined ? (e) => {
-          e.preventDefault();
-          if (dragFrom !== null && dragFrom !== opts.index!) {
-            const newOrder = [...sectionOrder];
-            const [moved] = newOrder.splice(dragFrom, 1);
-            newOrder.splice(opts.index!, 0, moved);
-            updateSectionOrder(newOrder);
-          }
-          setDragFrom(null);
-          setDragOver(null);
-        } : undefined}
-        onDragEnd={opts.draggable ? () => { setDragFrom(null); setDragOver(null); } : undefined}
-      >
-        {opts.draggable ? (
-          <GripVertical className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0 cursor-grab" />
-        ) : (
-          <Lock className="w-3 h-3 text-muted-foreground/30 flex-shrink-0" />
-        )}
-        <def.icon className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-        <span className="flex-1 text-sm truncate">{def.label}</span>
-
-        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          {canDuplicate && (
-            <button onClick={(e) => { e.stopPropagation(); handleDuplicateSection(sectionKey); }}
-              className="p-1 rounded hover:bg-muted transition-colors" title="Duplicar seção"
-            ><Copy className="w-3 h-3 text-muted-foreground" /></button>
-          )}
-          {isDup && (
-            <button onClick={(e) => { e.stopPropagation(); handleRemoveSection(sectionKey); }}
-              className="p-1 rounded hover:bg-red-500/10 transition-colors" title="Remover seção"
-            ><Trash2 className="w-3 h-3 text-red-400" /></button>
-          )}
+      <>
+        <div className="h-14 border-b border-white/[0.06] flex items-center px-5 flex-shrink-0">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-500/20 to-amber-500/20 flex items-center justify-center mr-3">
+            <cat.icon className="w-4 h-4 text-orange-400" />
+          </div>
+          <span className="text-[15px] font-semibold text-white">{cat.label}</span>
         </div>
-
-        {getBaseKey(sectionKey) !== "extras" && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              set(`sections.${sectionKey}_visible`, isVisible ? "false" : "true");
-            }}
-            className="p-1 rounded hover:bg-muted transition-colors"
-          >
-            {isVisible ? <Eye className="w-3.5 h-3.5 text-muted-foreground" /> : <EyeOff className="w-3.5 h-3.5 text-red-400" />}
-          </button>
-        )}
-        <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-      </div>
-    );
-  };
-
-  const renderSidebar = () => {
-    if (sidebarView.level === "sections") {
-      return (
-        <>
-          <div className="px-4 py-3 border-b border-border">
-            <h3 className="font-semibold text-sm">Página Inicial</h3>
-          </div>
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
-            {FIXED_TOP.map((s) => renderSectionRow(s.key, { draggable: false }))}
-
-            {sectionOrder.map((key, idx) => {
-              const baseKey = getBaseKey(key);
-              const isDuplicate = key !== baseKey;
-              return renderSectionRow(key, { draggable: true, index: idx, isDuplicate });
-            })}
-
-            <div className="relative px-3 py-2" ref={addMenuRef}>
-              <button
-                onClick={() => setShowAddMenu(!showAddMenu)}
-                className="flex items-center gap-2 w-full py-2 px-3 rounded-lg border border-dashed border-border/80 hover:border-orange-500/50 hover:bg-muted/30 transition-colors text-sm text-muted-foreground hover:text-foreground"
-              >
-                <Plus className="w-3.5 h-3.5" /> Adicionar seção
-              </button>
-              {showAddMenu && (
-                <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-card border border-border rounded-lg shadow-xl p-1" style={{ animation: 'fadeZoomIn 150ms ease-out' }}>
-                  {DUPLICABLE_SECTIONS.map((s) => (
-                    <button key={s.key} onClick={() => handleAddSection(s.key)}
-                      className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm hover:bg-muted transition-colors text-left"
-                    >
-                      <s.icon className="w-3.5 h-3.5 text-muted-foreground" /> {s.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {FIXED_BOTTOM.map((s) => renderSectionRow(s.key, { draggable: false }))}
-
-            <div className="px-4 py-3 border-t border-border space-y-1">
-              <button
-                onClick={() => setSidebarView({ level: "theme-menu" })}
-                className="flex items-center gap-3 w-full text-left py-2 px-3 rounded-lg hover:bg-muted transition-colors"
-              >
-                <Settings className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm font-medium flex-1">Configurações do Tema</span>
-                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-              </button>
-            </div>
-          </div>
-        </>
-      );
-    }
-
-    if (sidebarView.level === "edit") {
-      const sKey = sidebarView.sectionKey;
-      const baseKey = getBaseKey(sKey);
-      const def = getSectionDef(sKey);
-      const scopedGet = sKey !== baseKey
-        ? (k: string, f: string = "") => {
-            if (k.startsWith(baseKey + ".")) return get(sKey + k.slice(baseKey.length), f);
-            return get(k, f);
-          }
-        : get;
-      const scopedSet = sKey !== baseKey
-        ? (k: string, v: string) => {
-            if (k.startsWith(baseKey + ".")) set(sKey + k.slice(baseKey.length), v);
-            else set(k, v);
-          }
-        : set;
-      const panelProps = { get: scopedGet, set: scopedSet, allSettings: draft };
-      return (
-        <>
-          <SectionHeader title={def?.label || ""} onBack={() => setSidebarView({ level: "sections" })} />
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
-            {baseKey === "loading" && <LoadingPanel {...panelProps} />}
-            {baseKey === "hero" && <HeroPanel {...panelProps} />}
-            {baseKey === "booking" && <BookingPanel {...panelProps} />}
-            {baseKey === "navbar" && <NavbarPanel {...panelProps} />}
-            {baseKey === "footer" && <FooterPanel {...panelProps} />}
-            {baseKey === "extras" && <ExtrasPanel {...panelProps} />}
-          </div>
-        </>
-      );
-    }
-
-    if (sidebarView.level === "theme-menu") {
-      return (
-        <>
-          <SectionHeader title="Configurações do Tema" onBack={() => setSidebarView({ level: "sections" })} />
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
-            {THEME_ITEMS.map((item) => (
-              <div key={item.key} onClick={() => setSidebarView({ level: "theme-edit", themeKey: item.key })}
-                className="flex items-center gap-3 px-4 py-4 border-b border-border/50 hover:bg-muted/50 cursor-pointer transition-colors group"
-              >
-                <item.icon className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm flex-1">{item.label}</span>
-                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {cat.items.map(item => (
+            <button key={item.key} onClick={() => setActivePanel({ key: item.key, type: item.panelType })}
+              className="w-full flex items-center gap-4 p-4 rounded-xl border border-white/[0.04] hover:border-orange-500/20 bg-white/[0.02] hover:bg-white/[0.04] transition-all duration-200 group cursor-pointer"
+            >
+              <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.04] flex items-center justify-center group-hover:bg-orange-500/[0.1] group-hover:border-orange-500/20 transition-all duration-200">
+                <item.icon className="w-[18px] h-[18px] text-gray-500 group-hover:text-orange-400 transition-colors duration-200" />
               </div>
-            ))}
-          </div>
-        </>
-      );
-    }
-
-    if (sidebarView.level === "theme-edit") {
-      const item = THEME_ITEMS.find((i) => i.key === sidebarView.themeKey);
-      const panelProps = { get, set, allSettings: draft };
-      return (
-        <>
-          <SectionHeader title={item?.label || ""} onBack={() => setSidebarView({ level: "theme-menu" })} />
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
-            {sidebarView.themeKey === "colors" && <ColorsPanel {...panelProps} />}
-            {sidebarView.themeKey === "typography" && <TypographyPanel {...panelProps} />}
-            {sidebarView.themeKey === "buttons" && <ButtonsPanel {...panelProps} />}
-          </div>
-        </>
-      );
-    }
-
-    return null;
+              <span className="flex-1 text-left text-sm font-medium text-gray-300 group-hover:text-white transition-colors">{item.label}</span>
+              <ChevronRight className="w-4 h-4 text-gray-700 group-hover:text-gray-400 transition-colors" />
+            </button>
+          ))}
+        </div>
+      </>
+    );
   };
 
   // iframe src: Public site route via hash
   const previewSrc = `${window.location.origin}${window.location.pathname}#/site`;
 
   return (
-    <div className="dark fixed inset-0 flex flex-col bg-background z-50">
+    <div className="dark fixed inset-0 flex flex-col z-50" style={{ background: "#080808" }}>
       {/* ===== TOOLBAR ===== */}
-      <div className="h-14 border-b border-border bg-card flex items-center justify-between px-4 flex-shrink-0">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate("/")}
-            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
+      <div className="h-[52px] border-b border-white/[0.06] flex items-center justify-between px-4 flex-shrink-0" style={{ background: "#0e0e0e" }}>
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate("/")} className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors">
+            <ArrowLeft className="w-3.5 h-3.5" />
             <span>Sair</span>
           </button>
-          <Separator orientation="vertical" className="h-6" />
-          <span className="text-sm font-semibold">{get("store_name", "VINNX BARBER")}</span>
+          <div className="h-5 w-px bg-white/[0.06]" />
+          <span className="text-sm font-semibold text-white tracking-tight">{get("store_name", "VINNX BARBER")}</span>
           <button
             onClick={() => {
               const url = `${window.location.origin}${window.location.pathname}#/site`;
-              navigator.clipboard?.writeText(url).then(() => {
-                toast.success("Link copiado", url);
-              }).catch(() => {
-                toast.info("Link", url);
-              });
+              navigator.clipboard?.writeText(url).then(() => toast.success("Link copiado", url)).catch(() => toast.info("Link", url));
             }}
-            className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            className="p-1.5 rounded-md hover:bg-white/[0.06] transition-colors text-gray-500 hover:text-white"
             title="Copiar link público"
-          ><Copy className="w-3.5 h-3.5" /></button>
+          ><Copy className="w-3 h-3" /></button>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center bg-muted rounded-lg p-0.5">
-            <button
-              onClick={() => setPreviewMode("desktop")}
-              className={`p-1.5 rounded-md transition-colors ${previewMode === "desktop" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground"}`}
-              title="Desktop"
-            ><Monitor className="w-4 h-4" /></button>
-            <button
-              onClick={() => setPreviewMode("mobile")}
-              className={`p-1.5 rounded-md transition-colors ${previewMode === "mobile" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground"}`}
-              title="Mobile"
-            ><Smartphone className="w-4 h-4" /></button>
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center bg-white/[0.04] rounded-lg p-0.5 border border-white/[0.06]">
+            <button onClick={() => setPreviewMode("desktop")}
+              className={`p-1.5 rounded-md transition-all ${previewMode === "desktop" ? "bg-white/[0.1] text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
+              title="Desktop"><Monitor className="w-4 h-4" /></button>
+            <button onClick={() => setPreviewMode("mobile")}
+              className={`p-1.5 rounded-md transition-all ${previewMode === "mobile" ? "bg-white/[0.1] text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
+              title="Mobile"><Smartphone className="w-4 h-4" /></button>
           </div>
 
-          <Separator orientation="vertical" className="h-6" />
+          <div className="h-5 w-px bg-white/[0.06]" />
 
           {hasChanges && (
-            <span className="text-xs text-orange-400 flex items-center gap-1.5 mr-1">
+            <span className="text-[11px] text-orange-400 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
               Não salvo
             </span>
           )}
-          <Button
-            onClick={handleSave}
-            disabled={isSaving || !hasChanges}
-            size="sm"
-            className="bg-orange-500 hover:bg-orange-600 text-white gap-1.5 h-8"
-          >
-            {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-            Salvar
+          {hasChanges && (
+            <Button onClick={() => { setDraft({...settings}); setHasChanges(false); toast.info("Info", "Alterações descartadas."); }}
+              size="sm" variant="outline" className="h-7 text-[11px] px-2.5 border-white/10 text-gray-400 hover:text-white">
+              Descartar
+            </Button>
+          )}
+          <Button onClick={handleSave} disabled={isSaving || !hasChanges} size="sm"
+            className="h-7 text-[11px] px-3.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white border-0 font-semibold shadow-lg shadow-orange-500/20 disabled:opacity-40 disabled:shadow-none">
+            {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+            <span className="ml-1">Salvar</span>
           </Button>
         </div>
       </div>
 
       {/* ===== BODY ===== */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
-        <div className="w-[380px] border-r border-border bg-card flex flex-col flex-shrink-0 overflow-hidden">
-          {renderSidebar()}
+        {/* Navigation Rail */}
+        <div className="w-[80px] border-r border-white/[0.04] flex flex-col pt-3 flex-shrink-0" style={{ background: "#070707" }}>
+          {CATEGORIES.map(cat => (
+            <button key={cat.key}
+              onClick={() => { setActiveCategory(cat.key); setActivePanel(null); }}
+              className={`relative flex flex-col items-center gap-1 py-3 mx-1.5 my-0.5 rounded-xl transition-all duration-200 ${
+                activeCategory === cat.key
+                  ? "text-orange-400 bg-orange-500/[0.08]"
+                  : "text-gray-600 hover:text-gray-400 hover:bg-white/[0.03]"
+              }`}
+            >
+              {activeCategory === cat.key && (
+                <div className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-r-full bg-gradient-to-b from-orange-500 to-amber-500" />
+              )}
+              <cat.icon className="w-5 h-5" />
+              <span className="text-[10px] font-medium leading-tight text-center w-full px-1">{cat.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Panel */}
+        <div className="w-[360px] border-r border-white/[0.04] flex flex-col flex-shrink-0 overflow-hidden" style={{ background: "#0e0e0e" }}>
+          {renderPanel()}
         </div>
 
         {/* Preview */}
-        <div className="flex-1 bg-muted/30 flex items-center justify-center overflow-hidden p-4">
-          <div
-            className={`overflow-hidden transition-all duration-300 ${
-              previewMode === "desktop"
-                ? "w-full h-full rounded-lg shadow-2xl"
-                : "w-[375px] h-[667px] border-[8px] border-neutral-800 rounded-[2rem] shadow-2xl"
-            }`}
-          >
+        <div className="flex-1 flex items-center justify-center overflow-hidden p-6" style={{ background: "radial-gradient(ellipse at 50% 50%, #181818 0%, #0a0a0a 70%)" }}>
+          <div className={`overflow-hidden transition-all duration-500 ease-out ${
+            previewMode === "desktop"
+              ? "w-full h-full rounded-xl shadow-2xl shadow-black/50"
+              : "w-[375px] h-[812px] rounded-[44px] border-[6px] border-neutral-800 shadow-2xl shadow-black/60"
+          }`}>
             <iframe
               ref={iframeRef}
               src={previewSrc}
@@ -1336,3 +1645,4 @@ export function StoreCustomizer({ isDarkMode, currentUser }: { isDarkMode?: bool
     </div>
   );
 }
+

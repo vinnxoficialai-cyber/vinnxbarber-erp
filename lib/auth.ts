@@ -5,7 +5,7 @@ export interface AuthUser {
     id: string;
     email: string;
     name: string;
-    role: 'Admin' | 'Manager' | 'Sales Executive' | 'Support';
+    role: 'Admin' | 'Manager' | 'Sales Executive' | 'Support' | 'Barber' | 'Attendant';
     avatar?: string;
     password?: string; // Added to enable delete confirmation
 }
@@ -36,6 +36,8 @@ export const authService = {
         if (r === 'ADMIN') return 'Admin';
         if (r === 'MANAGER') return 'Manager';
         if (r === 'SALES' || r === 'SALES EXECUTIVE') return 'Sales Executive';
+        if (r === 'BARBER') return 'Barber';
+        if (r === 'ATTENDANT') return 'Attendant';
         return 'Support';
     },
 
@@ -75,7 +77,9 @@ export const authService = {
                 name: profile?.name || data.user.user_metadata?.name || email.split('@')[0],
                 role: profile?.role === 'ADMIN' ? 'Admin' :
                     profile?.role === 'MANAGER' ? 'Manager' :
-                        profile?.role === 'SALES' ? 'Sales Executive' : 'Support',
+                        profile?.role === 'SALES' ? 'Sales Executive' :
+                            profile?.role === 'BARBER' ? 'Barber' :
+                                profile?.role === 'ATTENDANT' ? 'Attendant' : 'Support',
                 avatar: profile?.avatar,
                 password: profile?.password, // Include password for delete confirmation
             };
@@ -205,7 +209,9 @@ export const authService = {
                 name: profile.name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
                 role: profile.role === 'ADMIN' ? 'Admin' :
                     profile.role === 'MANAGER' ? 'Manager' :
-                        profile.role === 'SALES' ? 'Sales Executive' : 'Support',
+                        profile.role === 'SALES' ? 'Sales Executive' :
+                            profile.role === 'BARBER' ? 'Barber' :
+                                profile.role === 'ATTENDANT' ? 'Attendant' : 'Support',
                 avatar: profile.avatar,
             };
         } catch {
@@ -263,7 +269,9 @@ export const authService = {
                                 name: profile.name || session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
                                 role: profile.role === 'ADMIN' ? 'Admin' :
                                     profile.role === 'MANAGER' ? 'Manager' :
-                                        profile.role === 'SALES' ? 'Sales Executive' : 'Support',
+                                        profile.role === 'SALES' ? 'Sales Executive' :
+                                            profile.role === 'BARBER' ? 'Barber' :
+                                                profile.role === 'ATTENDANT' ? 'Attendant' : 'Support',
                                 avatar: profile.avatar || session.user.user_metadata?.avatar_url,
                             });
                         } else {

@@ -41,6 +41,7 @@ export const Unidades: React.FC<UnidadesProps> = ({ isDarkMode, currentUser }) =
     const [deletePassword, setDeletePassword] = useState('');
     const [showDeleteModal, setShowDeleteModal] = useState<string | null>(null);
     const [deleteLoading, setDeleteLoading] = useState(false);
+    const [deleteMode, setDeleteMode] = useState<'deactivate' | 'permanent'>('deactivate');
     const initialFormRef = useRef<string>('');
     const confirm = useConfirm();
     const toast = useToast();
@@ -524,6 +525,7 @@ export const Unidades: React.FC<UnidadesProps> = ({ isDarkMode, currentUser }) =
 
     const handleDelete = (id: string) => {
         setDeletePassword('');
+        setDeleteMode('deactivate');
         setShowDeleteModal(id);
     };
 
@@ -543,19 +545,28 @@ export const Unidades: React.FC<UnidadesProps> = ({ isDarkMode, currentUser }) =
                 setDeleteLoading(false);
                 return;
             }
-            // Soft delete — set status inactive + deletedAt
-            const now = new Date().toISOString();
-            const { error } = await supabase.from('units').update({
-                status: 'inactive',
-                deletedAt: now,
-                updatedAt: now,
-            }).eq('id', showDeleteModal);
-            if (error) throw error;
-            toast.success('Unidade desativada. Será excluída permanentemente em 7 dias.');
+
+            if (deleteMode === 'permanent') {
+                // Hard delete — remove unit_members links first, then delete the unit
+                await supabase.from('unit_members').delete().eq('unitId', showDeleteModal);
+                const result = await deleteUnit(showDeleteModal);
+                if (!result.success) throw new Error(result.error);
+                toast.success('Unidade excluída permanentemente.');
+            } else {
+                // Soft delete — set status inactive + deletedAt
+                const now = new Date().toISOString();
+                const { error } = await supabase.from('units').update({
+                    status: 'inactive',
+                    deletedAt: now,
+                    updatedAt: now,
+                }).eq('id', showDeleteModal);
+                if (error) throw error;
+                toast.success('Unidade desativada com sucesso.');
+            }
             await refresh(true);
             setShowDeleteModal(null);
         } catch (err: any) {
-            toast.error(err.message || 'Erro ao desativar unidade.');
+            toast.error(err.message || 'Erro ao processar exclusão.');
         }
         setDeleteLoading(false);
     };
@@ -948,14 +959,51 @@ export const Unidades: React.FC<UnidadesProps> = ({ isDarkMode, currentUser }) =
             {renderModal()}
 
             {/* ═══ DELETE PASSWORD MODAL ═══ */}
-            {showDeleteModal && (
+            {showDeleteModal && (() => {
+                const targetUnit = units.find(u => u.id === showDeleteModal);
+                const targetName = targetUnit?.tradeName || targetUnit?.name || 'Unidade';
+                return (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
                     <div className={`w-full max-w-md ${isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-slate-200'} border rounded-2xl shadow-2xl`}>
                         <div className={`p-6 border-b ${isDarkMode ? 'border-zinc-800' : 'border-slate-100'}`}>
-                            <h3 className={`text-lg font-bold ${textMain}`}>Confirmar Exclusão</h3>
-                            <p className={`mt-2 text-sm ${textSub}`}>
-                                A unidade será <span className="font-bold text-red-500">desativada</span> e excluída permanentemente após 7 dias.
-                            </p>
+                            <h3 className={`text-lg font-bold ${textMain}`}>Excluir "{targetName}"</h3>
+
+                            {/* Mode selector */}
+                            <div className="mt-4 space-y-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setDeleteMode('deactivate')}
+                                    className={`w-full text-left p-3 rounded-xl border-2 transition-all ${deleteMode === 'deactivate'
+                                        ? 'border-amber-500 ' + (isDarkMode ? 'bg-amber-500/5' : 'bg-amber-50')
+                                        : (isDarkMode ? 'border-zinc-700 hover:border-zinc-600' : 'border-slate-200 hover:border-slate-300')}`}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${deleteMode === 'deactivate' ? 'border-amber-500' : isDarkMode ? 'border-zinc-600' : 'border-slate-300'}`}>
+                                            {deleteMode === 'deactivate' && <div className="w-2 h-2 rounded-full bg-amber-500" />}
+                                        </div>
+                                        <span className={`text-sm font-bold ${textMain}`}>Desativar</span>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>Recomendado</span>
+                                    </div>
+                                    <p className={`text-xs ${textSub} mt-1 ml-6`}>A unidade será desativada e ficará oculta, mas os dados serão preservados.</p>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setDeleteMode('permanent')}
+                                    className={`w-full text-left p-3 rounded-xl border-2 transition-all ${deleteMode === 'permanent'
+                                        ? 'border-red-500 ' + (isDarkMode ? 'bg-red-500/5' : 'bg-red-50')
+                                        : (isDarkMode ? 'border-zinc-700 hover:border-zinc-600' : 'border-slate-200 hover:border-slate-300')}`}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${deleteMode === 'permanent' ? 'border-red-500' : isDarkMode ? 'border-zinc-600' : 'border-slate-300'}`}>
+                                            {deleteMode === 'permanent' && <div className="w-2 h-2 rounded-full bg-red-500" />}
+                                        </div>
+                                        <span className={`text-sm font-bold ${textMain}`}>Excluir permanentemente</span>
+                                    </div>
+                                    <p className={`text-xs ${textSub} mt-1 ml-6`}>A unidade e todos os vínculos serão <span className="font-bold text-red-500">removidos para sempre</span>. Esta ação não pode ser desfeita.</p>
+                                </button>
+                            </div>
+
                             <p className={`mt-4 text-xs font-medium ${textSub}`}>Digite sua senha para confirmar:</p>
                             <div className="relative mt-2">
                                 <div className="absolute left-3 top-1/2 -translate-y-1/2">
@@ -978,14 +1026,15 @@ export const Unidades: React.FC<UnidadesProps> = ({ isDarkMode, currentUser }) =
                                 Cancelar
                             </button>
                             <button onClick={confirmDelete} disabled={!deletePassword || deleteLoading}
-                                className="flex-1 py-2.5 px-4 rounded-lg font-semibold text-sm bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                                className={`flex-1 py-2.5 px-4 rounded-lg font-semibold text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${deleteMode === 'permanent' ? 'bg-red-500 hover:bg-red-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
                                 {deleteLoading ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
-                                {deleteLoading ? 'Verificando...' : 'Desativar Unidade'}
+                                {deleteLoading ? 'Verificando...' : deleteMode === 'permanent' ? 'Excluir Permanentemente' : 'Desativar Unidade'}
                             </button>
                         </div>
                     </div>
                 </div>
-            )}
+                );
+            })()}
         </div>
     );
 };

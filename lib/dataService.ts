@@ -10,7 +10,7 @@ interface SupabaseUser {
     id: string;
     name: string;
     email: string;
-    role: 'ADMIN' | 'MANAGER' | 'SALES' | 'SUPPORT';
+    role: 'ADMIN' | 'MANAGER' | 'SALES' | 'SUPPORT' | 'BARBER' | 'ATTENDANT';
     phone?: string;
     avatar?: string;
     // NOTE: birthday, cpf, salary are in team_members table, not users
@@ -23,7 +23,9 @@ function teamMemberToSupabase(member: TeamMember): Partial<SupabaseUser> {
         email: member.email,
         role: member.role === 'Admin' ? 'ADMIN' :
             member.role === 'Manager' ? 'MANAGER' :
-                member.role === 'Sales Executive' ? 'SALES' : 'SUPPORT',
+                member.role === 'Sales Executive' ? 'SALES' :
+                    member.role === 'Barber' ? 'BARBER' :
+                        member.role === 'Attendant' ? 'ATTENDANT' : 'SUPPORT',
         phone: member.phone,
         avatar: member.image,
         // birthday, cpf, salary - NOT included, these belong to team_members table
@@ -42,7 +44,8 @@ export async function saveMember(member: TeamMember): Promise<{ success: boolean
             role: member.role === 'Admin' ? 'ADMIN' :
                 member.role === 'Manager' ? 'MANAGER' :
                     member.role === 'Sales Executive' ? 'SALES' :
-                        member.role === 'Barber' ? 'BARBER' : 'SUPPORT',
+                        member.role === 'Barber' ? 'BARBER' :
+                            member.role === 'Attendant' ? 'ATTENDANT' : 'SUPPORT',
             phone: member.phone,
             avatar: member.image,
             updatedAt: now,
@@ -1401,7 +1404,9 @@ export async function saveRolePermissions(rolePermission: RolePermission): Promi
         const roleStr = rolePermission.role as string;
         const dbRole = roleStr === 'Admin' || roleStr === 'ADMIN' ? 'ADMIN' :
             roleStr === 'Manager' || roleStr === 'MANAGER' ? 'MANAGER' :
-                roleStr === 'Sales Executive' || roleStr === 'SALES' ? 'SALES' : 'SUPPORT';
+                roleStr === 'Sales Executive' || roleStr === 'SALES' ? 'SALES' :
+                    roleStr === 'Barber' || roleStr === 'BARBER' ? 'BARBER' :
+                        roleStr === 'Attendant' || roleStr === 'ATTENDANT' ? 'ATTENDANT' : 'SUPPORT';
 
         const dbData = {
             role: dbRole,

@@ -265,7 +265,8 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                     role: u.role === 'ADMIN' ? 'Admin' :
                         u.role === 'MANAGER' ? 'Manager' :
                             u.role === 'SALES' ? 'Sales Executive' :
-                                u.role === 'BARBER' ? 'Barber' : 'Support',
+                                u.role === 'BARBER' ? 'Barber' :
+                                    u.role === 'ATTENDANT' ? 'Attendant' : 'Support',
                     status: 'Active' as const,
                     phone: u.phone,
                     avatar: u.avatar,

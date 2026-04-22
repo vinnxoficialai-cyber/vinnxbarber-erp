@@ -23,7 +23,9 @@ export const teamService = {
             email: user.email,
             role: user.role === 'ADMIN' ? 'Admin' :
                 user.role === 'MANAGER' ? 'Manager' :
-                    user.role === 'SALES' ? 'Sales Executive' : 'Support',
+                    user.role === 'SALES' ? 'Sales Executive' :
+                        user.role === 'BARBER' ? 'Barber' :
+                            user.role === 'ATTENDANT' ? 'Attendant' : 'Support',
             status: 'Active' as const,
             phone: user.phone,
             avatar: user.avatar,
@@ -53,7 +55,9 @@ export const teamService = {
             email: data.email,
             role: data.role === 'ADMIN' ? 'Admin' :
                 data.role === 'MANAGER' ? 'Manager' :
-                    data.role === 'SALES' ? 'Sales Executive' : 'Support',
+                    data.role === 'SALES' ? 'Sales Executive' :
+                        data.role === 'BARBER' ? 'Barber' :
+                            data.role === 'ATTENDANT' ? 'Attendant' : 'Support',
             status: 'Active' as const,
             phone: data.phone,
             avatar: data.avatar,
@@ -70,7 +74,9 @@ export const teamService = {
             'Admin': 'ADMIN',
             'Manager': 'MANAGER',
             'Sales Executive': 'SALES',
-            'Support': 'SUPPORT'
+            'Support': 'SUPPORT',
+            'Barber': 'BARBER',
+            'Attendant': 'ATTENDANT'
         };
 
         const { data: user, error: userError } = await supabase
@@ -112,7 +118,9 @@ export const teamService = {
             'Admin': 'ADMIN',
             'Manager': 'MANAGER',
             'Sales Executive': 'SALES',
-            'Support': 'SUPPORT'
+            'Support': 'SUPPORT',
+            'Barber': 'BARBER',
+            'Attendant': 'ATTENDANT'
         };
 
         // Update user

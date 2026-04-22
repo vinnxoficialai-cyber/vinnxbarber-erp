@@ -186,7 +186,7 @@ DO $$ BEGIN
   END IF;
   -- Barbers (users table): anon can read barbers only
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'ps_anon_read_barbers') THEN
-    CREATE POLICY "ps_anon_read_barbers" ON users FOR SELECT TO anon USING (role = 'Barber');
+    CREATE POLICY "ps_anon_read_barbers" ON users FOR SELECT TO anon USING (role = 'BARBER');
   END IF;
   -- Work schedules: anon can read
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'ps_anon_read_schedules') THEN
@@ -283,7 +283,7 @@ DO $$ BEGIN
   -- Barbers: client can read barbers (for booking flow)
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'ps_client_read_barbers') THEN
     CREATE POLICY "ps_client_read_barbers" ON users FOR SELECT TO authenticated
-      USING (NOT public.is_staff() AND role = 'Barber');
+      USING (NOT public.is_staff() AND role = 'BARBER');
   END IF;
   -- Work schedules: client can read (for availability)
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'ps_client_read_schedules') THEN

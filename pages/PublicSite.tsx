@@ -19,6 +19,15 @@ import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscripti
 
 // Module-level token storage — outside SDK's control
 let _psAccessToken: string | null = null;
+// Flag to prevent loadClientProfile auto-create during migration claim
+let _migrationClaimInProgress = false;
+
+// Capture beforeinstallprompt at module level (fires before React mounts)
+let _deferredInstallPrompt: Event | null = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  _deferredInstallPrompt = e;
+});
 
 // Check JWT expiration without external deps
 function isTokenExpired(token: string): boolean {
@@ -171,6 +180,37 @@ function formatBirthdate(value: string): string {
   return v;
 }
 
+// Scroll-aware fade: only shows fade on edges with hidden content
+function ScrollFadeList({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [mask, setMask] = useState("none");
+  const [overflows, setOverflows] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const { scrollTop, scrollHeight, clientHeight } = el;
+      const canScroll = scrollHeight > clientHeight + 2;
+      setOverflows(canScroll);
+      if (!canScroll) { setMask("none"); return; }
+      const top = scrollTop > 4;
+      const bottom = scrollTop + clientHeight < scrollHeight - 4;
+      if (top && bottom) setMask("linear-gradient(to bottom, transparent, black 32px, black calc(100% - 32px), transparent)");
+      else if (top) setMask("linear-gradient(to bottom, transparent, black 32px)");
+      else if (bottom) setMask("linear-gradient(to bottom, black calc(100% - 32px), transparent)");
+      else setMask("none");
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => { el.removeEventListener("scroll", update); ro.disconnect(); };
+  }, [children]);
+
+  return <div ref={ref} className={className} style={{ WebkitMaskImage: mask, maskImage: mask, paddingRight: overflows ? "0.75rem" : undefined }}>{children}</div>;
+}
+
 function generateTimeSlots(start: string, end: string, interval: number): string[] {
   const slots: string[] = [];
   const [sh, sm] = start.split(":").map(Number);
@@ -222,6 +262,9 @@ const MONTHS_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "
 function PublicSiteApp() {
   const g = useStoreSettings();
   const isPreview = typeof window !== "undefined" && window.parent !== window;
+
+  // Reveal root (hidden via index.html to prevent admin flash)
+  useEffect(() => { document.getElementById("root")?.classList.add("app-ready"); }, []);
 
   // --- Theme from StoreCustomizer ---
   const primary = g("theme.primary_color", "#00BF62");
@@ -310,6 +353,57 @@ function PublicSiteApp() {
 
   // Pending booking (auto-resume after login)
   const [pendingBooking, setPendingBooking] = useState(false);
+  const [announcementDismissed, setAnnouncementDismissed] = useState(false);
+
+  // ═══ PWA INSTALL PROMPT ═══
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [installBannerExiting, setInstallBannerExiting] = useState(false);
+  const isStandalone = typeof window !== "undefined" && (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    (window.navigator as any).standalone === true
+  );
+  const isIOS = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isIOSSafari = isIOS && /safari/i.test(navigator.userAgent) && !/crios|fxios|opios|edgios/i.test(navigator.userAgent);
+
+  useEffect(() => {
+    if (isStandalone) return;
+    if (g("pwa.install_prompt_enabled", "true") === "false") return;
+    const dismissed = localStorage.getItem("vinnx_install_dismissed");
+    if (dismissed && Date.now() - parseInt(dismissed) < 7 * 24 * 60 * 60 * 1000) return;
+
+    // Pick up prompt captured at module level (before React mounted)
+    if (_deferredInstallPrompt) {
+      setDeferredPrompt(_deferredInstallPrompt);
+      _deferredInstallPrompt = null;
+    }
+
+    // Also listen for future events (e.g. after SW registers)
+    const handler = (e: Event) => { e.preventDefault(); setDeferredPrompt(e); };
+    window.addEventListener("beforeinstallprompt", handler);
+
+    // Show after 10s (non-intrusive)
+    const timer = setTimeout(() => setShowInstallBanner(true), 10000);
+    return () => { window.removeEventListener("beforeinstallprompt", handler); clearTimeout(timer); };
+  }, [isStandalone]);
+
+  const dismissInstallBanner = useCallback(() => {
+    setInstallBannerExiting(true);
+    setTimeout(() => { setShowInstallBanner(false); localStorage.setItem("vinnx_install_dismissed", String(Date.now())); }, 350);
+  }, []);
+
+  const handleInstallClick = useCallback(async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === "accepted") dismissInstallBanner();
+      setDeferredPrompt(null);
+    } else {
+      // Fallback: browser doesn't support beforeinstallprompt or PWA criteria not met
+      showToast("Use o menu do navegador (⋮) > \"Instalar app\" para adicionar à tela inicial");
+      dismissInstallBanner();
+    }
+  }, [deferredPrompt, dismissInstallBanner, showToast]);
 
   // Navbar
   const navRef = useRef<HTMLDivElement>(null);
@@ -338,6 +432,74 @@ function PublicSiteApp() {
       if (!meta) { meta = document.createElement("meta"); meta.name = "description"; document.head.appendChild(meta); }
       meta.content = seoDesc;
     }
+  }, [g]);
+
+  // -------- PWA DYNAMIC MANIFEST --------
+  const pwaManifestUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const pwaName = g("pwa_store_name", "");
+    const pwaShortName = g("pwa_store_short_name", "");
+    const pwaThemeColor = g("pwa_store_theme_color", "");
+    const pwaBgColor = g("pwa_store_bg_color", "");
+    const pwaIcon = g("pwa_store_icon", "");
+
+    // Only inject if at least one PWA setting exists
+    if (!pwaName && !pwaShortName && !pwaThemeColor && !pwaBgColor && !pwaIcon) return;
+
+    const supabaseIconBase = "https://enjyflztvyomrlzddavk.supabase.co/storage/v1/object/public/avatars/public";
+    const defaultIcons = [
+      { src: `${supabaseIconBase}/pwa_icon_192.png`, sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: `${supabaseIconBase}/pwa_icon_512.png`, sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: `${supabaseIconBase}/pwa_icon_maskable_192.png`, sizes: "192x192", type: "image/png", purpose: "maskable" },
+      { src: `${supabaseIconBase}/pwa_icon_maskable_512.png`, sizes: "512x512", type: "image/png", purpose: "maskable" },
+    ];
+
+    const origin = window.location.origin;
+    const manifest = {
+      name: pwaName || "VINNX BARBER",
+      short_name: pwaShortName || "VINNX",
+      description: "Agende seu horário na melhor barbearia",
+      start_url: `${origin}/#/site`,
+      scope: `${origin}/`,
+      display: "standalone" as const,
+      background_color: pwaBgColor || "#0f172a",
+      theme_color: pwaThemeColor || "#10b981",
+      orientation: "portrait-primary",
+      icons: pwaIcon
+        ? [
+            { src: pwaIcon, sizes: "512x512", type: "image/png" },
+            { src: pwaIcon, sizes: "512x512", type: "image/png", purpose: "maskable" },
+          ]
+        : defaultIcons,
+    };
+
+    // Inject manifest via blob URL
+    const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    let link = document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null;
+    if (!link) { link = document.createElement("link"); link.rel = "manifest"; document.head.appendChild(link); }
+    link.href = url;
+
+    // Update theme-color meta
+    let themeMeta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null;
+    if (!themeMeta) { themeMeta = document.createElement("meta"); themeMeta.name = "theme-color"; document.head.appendChild(themeMeta); }
+    themeMeta.content = manifest.theme_color;
+
+    // Update apple-touch-icon
+    if (manifest.icons[0]?.src) {
+      let ati = document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement | null;
+      if (!ati) { ati = document.createElement("link"); ati.rel = "apple-touch-icon"; document.head.appendChild(ati); }
+      ati.href = manifest.icons[0].src;
+    }
+
+    // Update apple-mobile-web-app-title
+    let appTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]') as HTMLMetaElement | null;
+    if (!appTitle) { appTitle = document.createElement("meta"); appTitle.name = "apple-mobile-web-app-title"; document.head.appendChild(appTitle); }
+    appTitle.content = manifest.short_name;
+
+    // Revoke previous blob URL
+    if (pwaManifestUrlRef.current) URL.revokeObjectURL(pwaManifestUrlRef.current);
+    pwaManifestUrlRef.current = url;
   }, [g]);
 
   // ============================================================
@@ -484,6 +646,11 @@ function PublicSiteApp() {
       // Load client events
       loadClientEvents(data.name, data.id);
     } else {
+      // If migration claim is in progress, wait and retry instead of auto-creating
+      if (_migrationClaimInProgress) {
+        setTimeout(() => loadClientProfile(authId), 2000);
+        return;
+      }
       // Auto-create client record if missing (e.g. previous signup insert failed)
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
@@ -553,8 +720,8 @@ function PublicSiteApp() {
   useEffect(() => {
     (async () => {
       const [unitsRes, barbersRes, servicesRes, plansRes, schedulesRes, goalsRes] = await Promise.all([
-        supabase.from("units").select("*"),
-        supabase.from("users").select("id, name, email, avatar, role, specialties, station").eq("role", "BARBER"),
+        supabase.from("units").select("*").eq("status", "active").is("deletedAt", null),
+        supabase.from("users").select("id, name, email, avatar, role").eq("role", "BARBER"),
         supabase.from("services").select("*").eq("active", true),
         supabase.from("subscription_plans").select("*").eq("active", true),
         supabase.from("work_schedules").select("*"),
@@ -563,6 +730,7 @@ function PublicSiteApp() {
       if (unitsRes.data) setUnits(unitsRes.data);
       if (barbersRes.data) {
         // Enrich barbers with unit membership
+        // NOTE: specialties/station are on team_members (no anon access), so not fetched here
         const { data: unitMembers } = await supabase.from("unit_members").select("userId, unitId");
         const barberData = barbersRes.data.map((b: any) => {
           const memberOf = (unitMembers || []).filter((um: any) => um.userId === b.id).map((um: any) => um.unitId);
@@ -629,23 +797,29 @@ function PublicSiteApp() {
     if (!navRef.current || !indicatorRef.current) return;
     const active = navRef.current.querySelector(".active") as HTMLElement;
     if (!active) return;
-    const navRect = navRef.current.getBoundingClientRect();
-    const rect = active.getBoundingClientRect();
-    indicatorRef.current.style.left = `${rect.left - navRect.left}px`;
-    indicatorRef.current.style.width = `${rect.width}px`;
+    const pad = 6; // Match navbar CSS padding
+    let left = active.offsetLeft;
+    let width = active.offsetWidth;
+    const navInner = navRef.current.clientWidth; // excludes border
+    // Clamp edges so indicator respects the pill curvature
+    if (left < pad) { width -= (pad - left); left = pad; }
+    if (left + width > navInner - pad) { width = navInner - pad - left; }
+    indicatorRef.current.style.left = `${left}px`;
+    indicatorRef.current.style.width = `${width}px`;
   }, []);
 
   useEffect(() => {
-    updateIndicator();
+    // RAF ensures DOM layout is computed before measuring
+    requestAnimationFrame(() => updateIndicator());
     window.addEventListener("resize", updateIndicator);
     return () => window.removeEventListener("resize", updateIndicator);
-  }, [activeView, updateIndicator]);
+  }, [activeView, tabDefs.length, updateIndicator]);
 
   // ============================================================
   // AUTH MODALS
   // ============================================================
   function showLoginModal(onSuccess?: () => void) {
-    openModal(<LoginForm g={g} primary={primary} onClose={closeModal} onSwitch={(v: string) => { closeModal(() => { if (v === "signup") showSignupModal(onSuccess); else showForgotModal(); }); }} onSuccess={onSuccess} showToast={showToast} setAuthDirect={setAuthDirect} />, "center", true);
+    openModal(<LoginForm g={g} primary={primary} onClose={closeModal} onSwitch={(v: string) => { closeModal(() => { if (v === "signup") showSignupModal(onSuccess); else if (v === "migration") showMigrationModal(onSuccess); else showForgotModal(); }); }} onSuccess={onSuccess} showToast={showToast} setAuthDirect={setAuthDirect} />, "center", true);
   }
 
   function showSignupModal(onSuccess?: () => void) {
@@ -654,6 +828,10 @@ function PublicSiteApp() {
 
   function showForgotModal() {
     openModal(<ForgotForm g={g} primary={primary} onClose={closeModal} onSwitch={() => { closeModal(() => showLoginModal()); }} />, "center", true);
+  }
+
+  function showMigrationModal(onSuccess?: () => void) {
+    openModal(<MigrationForm g={g} primary={primary} onClose={closeModal} onSwitch={() => { closeModal(() => showLoginModal(onSuccess)); }} onSuccess={onSuccess} showToast={showToast} setAuthDirect={setAuthDirect} />, "center", true);
   }
 
   // ============================================================
@@ -690,7 +868,7 @@ function PublicSiteApp() {
     openModal(
       <div className="booking-modal-sheet p-5 pb-8">
         <h3 className="booking-modal-title" style={{ color: primary }}>{g("booking.modal_title_unit", "Escolha uma unidade")}</h3>
-        <div className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar pr-1">
+        <ScrollFadeList className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar px-1 pb-2">
           {units.map((u) => (
             <div key={u.id} onClick={() => { updateSelection({ unit: u, barber: null, service: null, date: null, time: null }); closeModal(); }}
               className={`booking-modal-item ${selection.unit?.id === u.id ? "active" : ""}`}>
@@ -701,7 +879,7 @@ function PublicSiteApp() {
               </div>
             </div>
           ))}
-        </div>
+        </ScrollFadeList>
       </div>
     );
   }
@@ -711,11 +889,12 @@ function PublicSiteApp() {
     if (!selection.unit) return;
     // Filter barbers by unit membership
     const unitBarbers = barbers.filter((b: any) => {
-      // If unit_members data is loaded, filter by it
-      if (b.unitIds && Array.isArray(b.unitIds)) {
+      // If unitIds is an array (unit_members data exists), filter strictly
+      if (Array.isArray(b.unitIds)) {
         return b.unitIds.includes(selection.unit.id);
       }
-      // Fallback: show all barbers (no unit_members data available)
+      // Fallback: unitIds is null = no unit_members data at all (single-unit setup)
+      // Show all barbers in this case
       return true;
     });
     const barberList = allowNoPref
@@ -724,7 +903,7 @@ function PublicSiteApp() {
     openModal(
       <div className="booking-modal-sheet p-5 pb-8">
         <h3 className="booking-modal-title" style={{ color: primary }}>{g("booking.modal_title_barber", "Escolha um profissional")}</h3>
-        <div className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar pr-1">
+        <ScrollFadeList className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar px-1 pb-2">
           {barberList.length === 0 ? (
             <p className="text-gray-400 text-center py-8">Nenhum profissional disponível nesta unidade.</p>
           ) : barberList.map((b: any) => (
@@ -738,7 +917,7 @@ function PublicSiteApp() {
               </div>
             </div>
           ))}
-        </div>
+        </ScrollFadeList>
       </div>
     );
   }
@@ -755,7 +934,7 @@ function PublicSiteApp() {
     openModal(
       <div className="booking-modal-sheet p-5 pb-8">
         <h3 className="booking-modal-title" style={{ color: primary }}>{g("booking.modal_title_service", "Escolha um serviço")}</h3>
-        <div className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar pr-1">
+        <ScrollFadeList className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar px-1 pb-2">
           {filtered.map((s) => (
             <div key={s.id} onClick={() => { updateSelection({ service: s, date: null, time: null }); closeModal(); }}
               className={`booking-modal-item ${selection.service?.id === s.id ? "active" : ""}`}>
@@ -772,7 +951,7 @@ function PublicSiteApp() {
               {showPrices && <span className="font-bold text-lg flex-shrink-0" style={{ color: primary }}>R$ {s.price.toFixed(2)}</span>}
             </div>
           ))}
-        </div>
+        </ScrollFadeList>
       </div>
     );
   }
@@ -867,12 +1046,13 @@ function PublicSiteApp() {
         const { error } = await supabase.from("calendar_events").insert(newEvent);
         if (error) {
           console.error("Error saving event:", error);
-          alert(`Erro ao agendar: ${error.message}`);
+          showToast(`Erro ao agendar: ${error.message}`, "error");
           return;
         }
         // Deduct referral credits after successful booking
         if (selection.isFromCreditRedemption && clientProfile) {
-          const newCredits = Math.max(0, (clientProfile.referralCredits || 0) - 50);
+          const minRedemption = parseInt(g("referral.min_redemption", "50"), 10) || 50;
+          const newCredits = Math.max(0, (clientProfile.referralCredits || 0) - minRedemption);
           await supabase.from("clients").update({ referralCredits: newCredits, updatedAt: new Date().toISOString() }).eq("id", clientProfile.id);
           setClientProfile((prev: any) => prev ? { ...prev, referralCredits: newCredits } : prev);
         }
@@ -888,7 +1068,7 @@ function PublicSiteApp() {
           openModal(
             <div className="p-6 text-center booking-zoom-in" style={{ borderRadius: "1rem" }}>
               <Check className="w-16 h-16 mx-auto mb-4" style={{ color: primary }} />
-              <h3 className="text-2xl font-bold mb-6" style={{ color: primary }}>Agendamento Confirmado!</h3>
+              <h3 className="text-2xl font-bold mb-6" style={{ color: primary }}>{g("booking.success_title", "Agendamento Confirmado!")}</h3>
               <div className="text-left space-y-4 text-sm mb-8">
                 <div>
                   <p><strong className="text-gray-400">Unidade:</strong> <span className="text-white">{unitObj.name}</span></p>
@@ -912,7 +1092,10 @@ function PublicSiteApp() {
   }
 
   // Refresh events after action
+  const skipNextRealtimeRef = useRef(false);
   async function refreshEvents() {
+    // Flag to skip the next realtime event (our own action will trigger it)
+    skipNextRealtimeRef.current = true;
     if (clientProfile) loadClientEvents(clientProfile.name, clientProfile.id);
     // Also refresh availability events
     const { data: allEvData } = await supabase.from("calendar_events").select("id, date, startTime, endTime, barberId, unitId, status, duration").neq("status", "cancelled");
@@ -925,13 +1108,49 @@ function PublicSiteApp() {
     }
   }
 
+  // ═══ REALTIME: calendar_events ═══
+  // Listen for external changes (barber cancel, reschedule, new bookings)
+  // and refresh the client's view automatically
+  useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const channel = supabase
+      .channel('public-site-appointments')
+      .on(
+        'postgres_changes' as any,
+        { event: '*', schema: 'public', table: 'calendar_events' },
+        () => {
+          // Skip if this was triggered by our own action
+          if (skipNextRealtimeRef.current) {
+            skipNextRealtimeRef.current = false;
+            return;
+          }
+          // Debounce to batch rapid changes
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            refreshEvents();
+          }, 800);
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('🟢 PublicSite Realtime: connected to calendar_events');
+        }
+      });
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [clientProfile]);
+
   const uiScale = parseFloat(g("theme.ui_scale", "1")) || 1;
 
   // ============================================================
   // RENDER
   // ============================================================
   return (
-    <div style={{ ...cssVars, fontFamily, backgroundColor: "#000", color: textColor, minHeight: "100vh", zoom: uiScale } as any}>
+    <div style={{ ...cssVars, fontFamily, backgroundColor: "#000", color: textColor, minHeight: "100vh", zoom: uiScale, paddingTop: "env(safe-area-inset-top)" } as any}>
       {/* Loading Screen */}
       {showLoading && (
         <div className={`fixed inset-0 flex flex-col items-center justify-center p-8 z-[60] ${loadingFading ? "booking-loading-fadeout" : ""}`}
@@ -943,12 +1162,33 @@ function PublicSiteApp() {
               <h1 className="text-lg font-bold text-white">{g("loading.title", "Elevando a sua experiência")}</h1>
               <p className="text-gray-400 mt-2 text-xs max-w-[220px] mx-auto">{g("loading.subtitle", "Estilo e precisão em cada corte.")}</p>
             </div>
+            <div className="booking-vinnx-fast mt-24">
+            <svg xmlns="http://www.w3.org/2000/svg" xmlSpace="preserve" viewBox="0 0 13929.2 2791.21" className="w-36 h-auto" style={{ shapeRendering: 'geometricPrecision', fillRule: 'evenodd', clipRule: 'evenodd' }}>
+              <g fill="white">
+                <path className="svg-elem-1" d="M10575.96 2770.97c1.81,-67.93 -6.84,-759.75 0.71,-1074.33 -0.71,-312.44 187.28,-481.99 567.14,-481.99l0.12 -419.71c-284.82,0 -393.93,-2.07 -524.85,182.93 -6.84,-10.88 -90.08,-171.34 -95.66,-182.93l-406.52 0 0 1976.03 459.07 0z" />
+                <path className="svg-elem-2" d="M986.96 822.41c538.09,0 974.29,436.2 974.29,974.28 0,538.09 -436.2,974.29 -974.29,974.29 -194.4,0 -363.1,-73.47 -515.13,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.28,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
+                <path className="svg-elem-3" d="M3159.77 822.38c224.55,0 442.51,58.83 607.26,186.46 230.04,178.2 367.02,474.29 367.02,787.82 0,327.08 -181.77,618.34 -429,795.04 -159.5,113.97 -334.27,179.25 -545.29,179.25 -538.08,0 -974.28,-436.2 -974.28,-974.29 0,-538.08 436.2,-974.28 974.28,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
+                <path className="svg-elem-4" d="M-0 232.77l0 2539.65 445.84 -191.06 0.04 -2581.37c0,0 -437.87,229.95 -445.88,232.77z" />
+                <path className="svg-elem-5" d="M4168.33 794.94l0 1975.96 -445.74 -192.01 0 -1462.39 0 -139.54c0,0 437.73,-184.83 445.74,-182.03z" />
+                <path className="svg-elem-6" d="M4932.59 2770.97c1.81,-67.93 -6.84,-759.75 0.71,-1074.33 -0.71,-312.44 187.28,-481.99 567.14,-481.99l0.12 -419.71c-284.82,0 -393.93,-2.07 -524.85,182.93 -6.84,-10.88 -90.08,-171.34 -95.66,-182.93l-406.52 0 0 1976.03 459.07 0z" />
+                <path className="svg-elem-7" d="M6694.19 822.41c538.08,0 974.28,436.2 974.28,974.28 0,538.09 -436.2,974.29 -974.28,974.29 -194.41,0 -363.11,-73.47 -515.14,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.29,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
+                <path className="svg-elem-8" d="M5707.22 232.77l0 2539.65 445.84 -191.06 0.05 -2581.37c0,0 -437.87,229.95 -445.89,232.77z" />
+                <path className="svg-elem-9" d="M8883.2 822.41c436.12,0 805.27,286.55 929.53,681.63 29.06,92.38 44.76,190.69 44.76,292.65 0,52.14 -4.14,103.3 -12.02,153.22l-1336.29 0.02c0,0 229.95,-437.87 232.76,-445.89l592.44 0c-95.88,-147.51 -262.12,-245.09 -451.18,-245.09 -296.99,0 -537.74,240.75 -537.74,537.74 0,296.99 240.75,537.74 537.74,537.74 205.64,0 384.29,-115.44 474.74,-285.05l322.19 307.78c-176.33,250.29 -467.49,413.82 -796.93,413.82 -194.4,0 -363.1,-73.47 -515.13,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.28,-974.28z" />
+                <path className="svg-elem-10" d="M12954.05 2473.8l-974.83 -1678.86 -369.05 0 1159.51 1996.27 184.37 -317.41zm-184.39 -953.1c140.47,-241.94 280.97,-483.86 421.46,-725.77l-842.93 0 421.47 725.77zm184.51 317.77c61.48,105.87 122.94,211.74 184.42,317.62l790.61 -1361.15 -369.08 0c-201.91,347.88 -403.96,695.69 -605.94,1043.53z" />
+              </g>
+            </svg>
+            </div>
           </div>
         </div>
       )}
 
       {/* Dynamic theme styles — cascades btn/card/heading settings */}
       <style>{`
+        html, body {
+          background-color: ${bgColor} !important;
+          overflow: hidden;
+          height: 100%;
+        }
         .booking-app-container button[style*="background-color"] {
           border-radius: ${btnRadius}px !important;
         }
@@ -966,8 +1206,27 @@ function PublicSiteApp() {
 
       {/* App Container */}
       <div className="booking-app-container w-full flex flex-col h-screen overflow-hidden" style={{ backgroundColor: bgColor, maxWidth: 500, margin: "0 auto" }}>
+
+        {/* Announcement Banner */}
+        {g("announcement.enabled", "false") === "true" && g("announcement.text", "") && !announcementDismissed && (
+          <div className="relative px-4 py-2.5 text-center text-sm font-medium booking-fade-in" style={{
+            backgroundColor: g("announcement.bg_color", "") || (g("announcement.type", "info") === "promo" ? primary : g("announcement.type", "info") === "alert" ? "#dc2626" : "#1e3a5f"),
+            color: g("announcement.text_color", "#ffffff"),
+          }}>
+            <span>{g("announcement.text", "")}</span>
+            {g("announcement.link_label", "") && g("announcement.link_url", "") && (
+              <a href={g("announcement.link_url", "")} target="_blank" rel="noopener noreferrer" className="underline font-bold ml-2">{g("announcement.link_label", "")}</a>
+            )}
+            {g("announcement.dismissible", "true") !== "false" && (
+              <button onClick={() => setAnnouncementDismissed(true)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-black/20 transition-colors">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Main Content */}
-        <div className={`flex-grow overflow-y-auto booking-hide-scrollbar ${modalContent ? "booking-content-blur" : ""}`}>
+        <div className={`flex-grow ${activeView === "agendar" ? "overflow-hidden" : "overflow-y-auto"} booking-hide-scrollbar ${modalContent ? "booking-content-blur" : ""}`} style={{ overscrollBehaviorY: "contain" }}>
           {activeView === "agendar" && <AgendarView
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
             btnBg={btnBg} btnText={btnText} animateReady={animateReady}
@@ -977,6 +1236,9 @@ function PublicSiteApp() {
             onAgendarClick={handleAgendarClick}
             showPrices={showPrices} showDuration={showDuration}
             maxOpenAppts={maxOpenAppts}
+            showInstallBanner={showInstallBanner} isStandalone={isStandalone} isIOS={isIOS} isIOSSafari={isIOSSafari}
+            deferredPrompt={deferredPrompt} installBannerExiting={installBannerExiting}
+            onInstallClick={handleInstallClick} onInstallDismiss={dismissInstallBanner}
           />}
           {activeView === "historico" && <HistoricoView
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
@@ -1010,8 +1272,8 @@ function PublicSiteApp() {
             setActiveView={setActiveView} updateSelection={updateSelection}
             resetSelection={resetSelection}
           />}
-          {/* Footer */}
-          {(() => {
+          {/* Footer — only on Perfil */}
+          {activeView === "perfil" && (() => {
             const ftText = g("footer.text", "");
             const ftLogo = g("footer.logo", "");
             const ftInsta = g("footer.instagram", "");
@@ -1041,8 +1303,8 @@ function PublicSiteApp() {
         </div>
       </div>
 
-      {/* Gradient Fade */}
-      <div className="booking-nav-fade" style={{ background: `linear-gradient(to top, ${bgColor} 0%, ${bgColor}CC 50%, transparent 100%)` }} />
+      {/* Gradient Fade — pointer-events:none ensures Agendar button is clickable */}
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, height: "5rem", pointerEvents: "none", zIndex: 40, background: `linear-gradient(to top, ${bgColor} 0%, ${bgColor}99 60%, transparent 100%)` }} />
 
       {/* WhatsApp Floating Button */}
       {g("extras.whatsapp_float", "false") === "true" && g("extras.whatsapp_number", "") && (
@@ -1065,7 +1327,7 @@ function PublicSiteApp() {
             onClick={() => setActiveView(item.key)}>
             <div className="relative">
               <item.icon style={{ width: 18, height: 18 }} />
-              {item.key === "historico" && needsReview && (
+              {item.key === "historico" && needsReview && g("review.enabled", "true") !== "false" && g("review.show_badge", "true") !== "false" && (
                 <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#ef4444" }} />
               )}
             </div>
@@ -1090,9 +1352,9 @@ function PublicSiteApp() {
               overflowY: "auto",
               ...(modalPosition === "fullscreen"
                 ? { backgroundColor: "transparent", borderRadius: 0, color: textColor }
-                : modalPosition !== "bottom"
-                  ? { backgroundColor: "#1a1a1a", borderRadius: "1rem", color: textColor }
-                  : {}),
+                : modalPosition === "bottom"
+                  ? { backgroundColor: "#1a1a1a", borderTopLeftRadius: "1.25rem", borderTopRightRadius: "1.25rem", color: textColor, paddingBottom: "env(safe-area-inset-bottom)" }
+                  : { backgroundColor: "#1a1a1a", borderRadius: "1rem", color: textColor }),
             }}>
             {modalContent}
           </div>
@@ -1102,7 +1364,7 @@ function PublicSiteApp() {
       {/* Toast Notification */}
       {toast && (
         <div style={{
-          position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)",
+          position: "fixed", top: "calc(24px + env(safe-area-inset-top))", left: "50%", transform: "translateX(-50%)",
           zIndex: 100, padding: "12px 24px", borderRadius: 12,
           backgroundColor: toast.type === "success" ? "#16a34a" : "#dc2626",
           color: "#fff", fontWeight: 600, fontSize: 14,
@@ -1120,7 +1382,7 @@ function PublicSiteApp() {
 // ============================================================
 // AGENDAR VIEW
 // ============================================================
-function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, allEvents, onUnitClick, onBarberClick, onServiceClick, onDateClick, onAgendarClick, showPrices, showDuration, maxOpenAppts }: any) {
+function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, allEvents, onUnitClick, onBarberClick, onServiceClick, onDateClick, onAgendarClick, showPrices, showDuration, maxOpenAppts, showInstallBanner, isStandalone, isIOS, isIOSSafari, deferredPrompt, installBannerExiting, onInstallClick, onInstallDismiss }: any) {
   const heroVideo = g("hero.bg_video", "");
   const heroImage = g("hero.bg_image", "");
   const heroTitle = g("hero.title", "Agende seu horário");
@@ -1138,9 +1400,23 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
     if (e.status === "cancelled" || e.status === "completed") return false;
     return e.date === today.getDate() && e.month === today.getMonth() && e.year === today.getFullYear();
   });
+  const [reminderDismissed, setReminderDismissed] = useState(() => sessionStorage.getItem("vinnx_reminder_dismissed") === "true");
+  const [reminderExiting, setReminderExiting] = useState(false);
+  const dismissReminder = () => { setReminderExiting(true); setTimeout(() => { setReminderDismissed(true); sessionStorage.setItem("vinnx_reminder_dismissed", "true"); }, 350); };
+
+  // Accordion animation for install banner steps
+  const [installStepsExpanded, setInstallStepsExpanded] = useState(false);
+  useEffect(() => {
+    if (showInstallBanner && !isStandalone) {
+      const timer = setTimeout(() => setInstallStepsExpanded(true), 1800);
+      return () => clearTimeout(timer);
+    } else {
+      setInstallStepsExpanded(false);
+    }
+  }, [showInstallBanner, isStandalone]);
 
   return (
-    <div className={`relative flex flex-col ${animateReady ? "" : "booking-anim-paused"}`} style={{ minHeight: "100%" }}>
+    <div className={`relative flex flex-col ${animateReady ? "" : "booking-anim-paused"}`} style={{ height: "100%" }}>
       {/* Hero Background */}
       <div className="booking-video-bg">
         {heroVideo ? (
@@ -1152,25 +1428,168 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
       </div>
 
       {/* Reminder */}
-      {todaysAppt && (
-        <div className="relative z-10 m-6 p-4 rounded-r-lg border-l-4" style={{ backgroundColor: `${primary}15`, borderColor: primary }}>
-          <p className="font-bold text-sm" style={{ color: primary }}>🔔 Lembrete</p>
-          <p className="text-sm text-gray-300">Seu horário é hoje às <strong className="text-white">{todaysAppt.startTime}</strong>.</p>
+      {todaysAppt && !reminderDismissed && g("reminder.enabled", "true") !== "false" && (
+        <div className={`relative z-10 m-6 p-4 rounded-xl flex items-center gap-3 booking-fade-in ${reminderExiting ? "booking-reminder-exit" : ""}`} style={{
+          background: "rgba(255,255,255,0.08)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          border: `1px solid rgba(255,255,255,0.12)`,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.3)"
+        }}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+          </svg>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-sm" style={{ color: primary }}>{g("reminder.title", "Lembrete")}</p>
+            <p className="text-sm text-gray-300">Seu horário é hoje às <strong className="text-white">{todaysAppt.startTime}</strong>.</p>
+          </div>
+          <button onClick={dismissReminder} className="flex-shrink-0 p-1 rounded-lg transition-colors hover:bg-white/10" style={{ color: "rgba(255,255,255,0.5)" }}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* PWA Install Banner */}
+      {showInstallBanner && !isStandalone && (
+        <div className={`relative z-10 mx-6 ${todaysAppt && !reminderDismissed ? "mt-2" : "mt-6"} p-4 rounded-xl booking-fade-in ${installBannerExiting ? "booking-reminder-exit" : ""}`} style={{
+          background: "rgba(255,255,255,0.08)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.3)"
+        }}>
+          <div className="flex items-center gap-3 mb-3">
+            {/* App Icon Preview */}
+            <div className="w-11 h-11 rounded-xl overflow-hidden flex-shrink-0" style={{
+              backgroundColor: g("pwa_store_icon_bg", primary),
+              border: "1.5px solid rgba(255,255,255,0.15)",
+            }}>
+              {g("pwa_store_icon", "") ? (
+                <img src={g("pwa_store_icon", "")} alt="App" className="w-full h-full object-cover" />
+              ) : g("loading.logo", "") ? (
+                <div className="w-full h-full flex items-center justify-center p-1.5">
+                  <img src={g("loading.logo", "")} alt="Logo" className="max-w-full max-h-full object-contain" />
+                </div>
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </div>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-sm text-white">{g("pwa_store_name", g("store_name", "VINNX BARBER"))}</p>
+              <p className="text-[11px] text-gray-400">{isIOS && !deferredPrompt ? "Adicione nosso app à sua tela inicial" : "Acesse mais rápido pela tela inicial"}</p>
+            </div>
+            <button onClick={onInstallDismiss} className="flex-shrink-0 p-1 rounded-lg transition-colors hover:bg-white/10" style={{ color: "rgba(255,255,255,0.5)" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+
+          {/* Accordion — CSS Grid 0fr→1fr for pixel-perfect smooth expansion */}
+          <div style={{
+            display: "grid",
+            gridTemplateRows: installStepsExpanded ? "1fr" : "0fr",
+            transition: "grid-template-rows 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
+          }}>
+            <div style={{ overflow: "hidden", minHeight: 0 }}>
+              <div className="pt-1">
+
+          {isIOS && !deferredPrompt ? (
+            isIOSSafari ? (
+              /* Safari on iOS — show step-by-step instructions */
+              <div className="space-y-1.5">
+                {[
+                  { step: 1, verb: "Toque em", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>, label: "Menu" },
+                  { step: 2, verb: "Escolha", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>, label: "Compartilhar" },
+                  { step: 3, verb: "Toque em", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>, label: "Ver Mais" },
+                  { step: 4, verb: "Escolha", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: "Adicionar à Tela de Início" },
+                ].map(({ step, verb, icon, label }) => (
+                  <div key={step}
+                    className="flex items-center gap-2.5 py-2 px-3 rounded-lg"
+                    style={{
+                      background: "rgba(255,255,255,0.05)",
+                      opacity: installStepsExpanded ? 1 : 0,
+                      transform: installStepsExpanded ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
+                      transition: `opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s`,
+                    }}>
+                    <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: `${primary}25`, color: primary }}>{step}</span>
+                    <span className="text-[12px] text-gray-300">{verb}</span>
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
+                      {icon}
+                      {label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              /* Chrome/Firefox on iOS — need Safari to install */
+              <div className="space-y-2"
+                style={{
+                  opacity: installStepsExpanded ? 1 : 0,
+                  transform: installStepsExpanded ? "translateY(0)" : "translateY(10px)",
+                  transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.3s, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.3s",
+                }}>
+                <div className="flex items-center gap-2.5 py-2.5 px-3 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+                    <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+                  </svg>
+                  <span className="text-[11px] text-gray-300">
+                    Para instalar, abra este link no <strong className="text-white">Safari</strong>
+                  </span>
+                </div>
+                <button
+                  onClick={() => { navigator.clipboard?.writeText(window.location.href); onInstallDismiss(); }}
+                  className="w-full py-2 rounded-lg text-[12px] font-bold transition-colors flex items-center justify-center gap-1.5"
+                  style={{ backgroundColor: primary, color: bgColor }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  Copiar link
+                </button>
+              </div>
+            )
+          ) : (
+            <div className="flex gap-2"
+              style={{
+                opacity: installStepsExpanded ? 1 : 0,
+                transform: installStepsExpanded ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
+                transition: "opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.3s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.3s",
+              }}>
+              <button onClick={onInstallClick}
+                className="flex-1 py-2 rounded-lg text-[12px] font-bold transition-colors flex items-center justify-center gap-1.5"
+                style={{ backgroundColor: primary, color: bgColor }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Instalar App
+              </button>
+              <button onClick={onInstallDismiss}
+                className="px-3 py-2 rounded-lg text-[12px] text-gray-400 transition-colors hover:bg-white/5">
+                Agora não
+              </button>
+            </div>
+          )}
+
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Hero Content */}
-      <div className="relative z-10 flex-grow flex flex-col justify-end p-6">
-        <div className="text-center mb-8">
+      <div className="relative z-10 flex-grow flex flex-col justify-end p-6 pb-4 min-h-0 overflow-hidden">
+        <div className="text-center mb-4">
           {showLogo && heroLogo && <img src={heroLogo} alt="Logo" className="w-32 h-32 mb-4 mx-auto object-contain booking-fade-in" />}
-          <h1 className="text-3xl font-bold text-white booking-fade-in-delay">{heroTitle}</h1>
-          <div className="w-24 h-1 mx-auto my-3 rounded booking-underline" style={{ backgroundColor: primary }} />
-          <p className="text-gray-200 booking-fade-in-delay">{heroSubtitle}</p>
+          <h1 className="text-2xl font-bold text-white booking-fade-in-delay">{heroTitle}</h1>
+          <div className="w-20 h-1 mx-auto my-2 rounded booking-underline" style={{ backgroundColor: primary }} />
+          <p className="text-sm text-gray-200 booking-fade-in-delay">{heroSubtitle}</p>
         </div>
       </div>
 
       {/* Selection Cards */}
-      <div className="relative z-10 p-6 pt-0 pb-24 space-y-4" style={{ background: `linear-gradient(to top, ${bgColor}, transparent)` }}>
+      <div className="relative z-10 px-6 pt-0 space-y-3 flex-shrink-0" style={{ background: `linear-gradient(to top, ${bgColor}, transparent)`, paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
         <SelectionCard delay="100" icon={<Store className="w-5 h-5" style={{ color: primary }} />}
           text={selection.unit?.name || g("booking.label_unit", "Selecionar unidade")} selected={!!selection.unit}
           disabled={false} onClick={onUnitClick} cardBg={cardBg} />
@@ -1180,9 +1599,9 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
 
         {/* Service card — locked during redemption */}
         {selection.isFromCreditRedemption && selection.service ? (
-          <div className="booking-selection-item flex items-center justify-between p-4 rounded-lg booking-slide-up booking-delay-300"
+          <div className="booking-selection-item flex items-center justify-between p-3.5 rounded-lg booking-slide-up booking-delay-300"
             style={{ backgroundColor: cardBg, borderColor: primary, borderWidth: 2 }}>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <Gift className="w-5 h-5" style={{ color: primary }} />
               <div>
                 <span className="text-white font-bold">{selection.service.name}</span>
@@ -1202,7 +1621,7 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
           selected={!!selection.time} disabled={!selection.service} onClick={onDateClick} cardBg={cardBg} />
 
         <button onClick={onAgendarClick} disabled={!allSelected || isMaxed}
-          className={`w-full py-3.5 mt-4 rounded-xl font-bold text-sm tracking-wide booking-slide-up booking-delay-500 ${allSelected && !isMaxed ? "booking-btn-active" : "booking-btn-inactive"}`}
+          className={`w-full py-3 mt-3 rounded-xl font-bold text-sm tracking-wide booking-slide-up booking-delay-500 ${allSelected && !isMaxed ? "booking-btn-active" : "booking-btn-inactive"}`}
           style={allSelected && !isMaxed ? { backgroundColor: primary, color: bgColor, boxShadow: `0 0 24px ${primary}40` } : undefined}>
           {isMaxed ? `Máximo de ${maxOpenAppts} agendamentos em aberto` : g("booking.label_submit", "Agendar")}
         </button>
@@ -1214,9 +1633,9 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
 function SelectionCard({ delay, icon, text, selected, disabled, onClick, cardBg }: any) {
   return (
     <div onClick={disabled ? undefined : onClick}
-      className={`booking-selection-item flex items-center justify-between p-4 rounded-lg booking-slide-up booking-delay-${delay} ${disabled ? "disabled" : ""} ${selected ? "selected" : ""}`}
+      className={`booking-selection-item flex items-center justify-between p-3.5 rounded-lg booking-slide-up booking-delay-${delay} ${disabled ? "disabled" : ""} ${selected ? "selected" : ""}`}
       style={disabled ? { pointerEvents: "none" as const } : undefined}>
-      <div className="flex items-center gap-4 min-w-0">
+      <div className="flex items-center gap-3 min-w-0">
         {icon}
         <span className={`truncate ${selected ? "text-white font-semibold" : "text-gray-400"}`}>{text}</span>
       </div>
@@ -1383,30 +1802,53 @@ function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, max
           })}
         </div>
 
-        {/* Time period toggle */}
-        <h3 className="font-bold text-center mb-3 text-white text-sm">Escolha o melhor horário</h3>
-        <div className="flex gap-2 mb-3">
-          {(["manha", "tarde"] as const).map((p) => (
-            <button key={p} onClick={() => setPeriodo(p)}
-              className="flex-1 py-2 rounded-lg font-semibold text-sm transition-colors"
-              style={{ backgroundColor: periodo === p ? primary : "#4a4a4a", color: periodo === p ? "#111" : "#ccc" }}>
-              {p === "manha" ? "Manhã" : "Tarde"}
-            </button>
-          ))}
+        {/* Time period section */}
+        <div className="mt-1 mb-2">
+          <h3 className="font-bold text-center mb-3 text-white text-sm tracking-wide" style={{ letterSpacing: "0.05em" }}>Escolha o melhor horário</h3>
+          
+          {/* Elegant pill toggle */}
+          <div className="relative flex mb-4 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.06)", padding: 3, border: "1px solid rgba(255,255,255,0.08)" }}>
+            {/* Sliding indicator with glow */}
+            <div
+              className="absolute top-[3px] bottom-[3px] rounded-full transition-all duration-300"
+              style={{
+                width: "calc(50% - 3px)",
+                left: periodo === "manha" ? 3 : "calc(50%)",
+                backgroundColor: primary,
+                boxShadow: `0 0 16px ${primary}44, 0 2px 8px rgba(0,0,0,0.3)`,
+                transitionTimingFunction: "cubic-bezier(0.25, 0.8, 0.25, 1)",
+              }}
+            />
+            {(["manha", "tarde"] as const).map((p) => (
+              <button key={p} onClick={() => setPeriodo(p)}
+                className="relative z-10 flex-1 py-2 rounded-full font-semibold text-sm transition-all duration-250"
+                style={{
+                  color: periodo === p ? "#111" : "rgba(255,255,255,0.45)",
+                  background: "transparent",
+                  letterSpacing: "0.02em",
+                }}>
+                {p === "manha" ? "Manhã" : "Tarde"}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Time slots */}
-        <div className="grid grid-cols-4 gap-2 max-h-40 overflow-y-auto booking-scrollbar">
-          {selectedDate ? (displaySlots.length > 0 ? displaySlots.map((t) => (
+        <div
+          key={periodo}
+          className="grid grid-cols-4 gap-2 max-h-40 overflow-y-auto booking-scrollbar"
+          style={{ animation: "slotsFadeIn 0.25s ease-out both" }}
+        >
+          {selectedDate ? (displaySlots.length > 0 ? displaySlots.map((t, i) => (
             <div key={t} onClick={() => onSelect(selectedDate, t)}
-              className="booking-time-slot p-2.5 rounded-lg text-center text-sm font-medium cursor-pointer hover:opacity-80"
-              style={{ backgroundColor: "#374151", color: "#fff" }}>
+              className="booking-time-slot-elegant p-2.5 rounded-xl text-center text-sm font-medium cursor-pointer"
+              style={{ animationDelay: `${i * 30}ms` }}>
               {t}
             </div>
           )) : (
-            <p className="col-span-4 text-gray-400 text-sm text-center py-3">Não há horários disponíveis para este período.</p>
+            <p className="col-span-4 text-gray-500 text-sm text-center py-4" style={{ fontStyle: "italic" }}>Não há horários disponíveis para este período.</p>
           )) : (
-            <p className="col-span-4 text-gray-400 text-sm text-center py-3">Selecione uma data para ver os horários</p>
+            <p className="col-span-4 text-gray-500 text-sm text-center py-4" style={{ fontStyle: "italic" }}>Selecione uma data para ver os horários</p>
           )}
         </div>
       </div>
@@ -1559,7 +2001,16 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
 
       <div className="mt-8 grid grid-cols-2 gap-4">
         <button onClick={() => onClose()} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
-        <button onClick={async () => { setLoading(true); try { await onConfirm({ couponCode, couponDiscount, finalPrice }); } catch (e) { console.error(e); } finally { setLoading(false); } }} disabled={loading}
+        <button onClick={async () => {
+          setLoading(true);
+          try {
+            await onConfirm({ couponCode, couponDiscount, finalPrice });
+          } catch (e) {
+            console.error("Booking error:", e);
+          } finally {
+            setLoading(false);
+          }
+        }} disabled={loading}
           className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
           {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Confirmar"}
         </button>
@@ -1577,8 +2028,8 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
       <div className="p-6 h-full flex flex-col items-center justify-center text-center min-h-[80vh]">
         <History className="w-16 h-16 text-gray-600 mb-4" />
         <h1 className="text-2xl font-bold" style={{ color: primary }}>Histórico de Serviços</h1>
-        <p className="text-gray-400 mt-2 mb-6">Crie uma conta ou faça login para ver seus agendamentos.</p>
-        <button onClick={onLogin} className="py-3 px-8 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entrar ou Cadastrar</button>
+        <p className="text-gray-400 mt-2 mb-6">{g("auth.historico_prompt", "Crie uma conta ou faça login para ver seus agendamentos.")}</p>
+        <button onClick={onLogin} className="py-3 px-8 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>{g("auth.login_button", "Entrar ou Cadastrar")}</button>
       </div>
     );
   }
@@ -1611,7 +2062,7 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
           {unit && (
             <div>
               <p className="text-gray-400 font-semibold">Unidade</p>
-              <p className="text-white font-bold">{unit.name}</p>
+              <p className="text-white font-bold">{unit.tradeName || unit.name}</p>
               {unit.mapsUrl && <a href={unit.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs flex items-center gap-1 mt-1" style={{ color: primary }}><MapPin className="w-3 h-3" />Ver no mapa <ExternalLink className="w-3 h-3" /></a>}
             </div>
           )}
@@ -1684,11 +2135,12 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
               }} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>
                 <RefreshCw className="w-4 h-4 inline mr-1" />Agendar Novamente
               </button>
-              {!ev.rating ? (
+              {!ev.rating && g("review.enabled", "true") !== "false" && (
                 <button onClick={() => closeModal(() => showAvaliacaoModal(ev))} className="py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
                   <Star className="w-4 h-4 inline mr-1" />Avaliar
                 </button>
-              ) : (
+              )}
+              {ev.rating && (
                 <div className="py-3 text-center">
                   <div className="flex justify-center gap-0.5">
                     {[1, 2, 3, 4, 5].map((s) => <Star key={s} className="w-4 h-4" style={{ color: s <= ev.rating ? "#fbbf24" : "#6b7280", fill: s <= ev.rating ? "#fbbf24" : "none" }} />)}
@@ -1754,7 +2206,7 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
 
   function showAvaliacaoModal(ev: CalendarEvent) {
     openModal(
-      <AvaliacaoModal ev={ev} primary={primary} bgColor={bgColor}
+      <AvaliacaoModal ev={ev} primary={primary} bgColor={bgColor} g={g}
         onClose={() => closeModal()}
         onSubmit={async (rating: number, comment: string) => {
           await supabase.from("calendar_events").update({ rating, ratingComment: comment, updatedAt: new Date().toISOString() }).eq("id", ev.id);
@@ -1774,8 +2226,8 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
             openModal(
               <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
                 <Check className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
-                <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Avaliação Enviada!</h3>
-                <p className="text-gray-300 mb-6">Obrigado pelo seu feedback!</p>
+                <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>{g("review.success_title", "Avaliação Enviada!")}</h3>
+                <p className="text-gray-300 mb-6">{g("review.success_message", "Obrigado pelo seu feedback!")}</p>
                 <button onClick={() => { closeModal(); onRefresh(); }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Fechar</button>
               </div>, "center"
             );
@@ -1786,7 +2238,7 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
   }
 
   return (
-    <div className="p-6 pb-24">
+    <div className="p-6" style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
       <div className="text-center mb-8 pt-4">
         <h2 className="text-3xl font-bold text-white">Meus <span style={{ color: primary }}>Agendamentos</span></h2>
         <div className="w-20 h-1 mx-auto mt-2 rounded-full booking-underline" style={{ backgroundColor: primary }} />
@@ -2060,21 +2512,21 @@ function RemarcarModal({ ev, primary, bgColor, cardBg, barbers, schedules, event
 }
 
 // --- Avaliação Modal ---
-function AvaliacaoModal({ ev, primary, bgColor, onClose, onSubmit }: any) {
+function AvaliacaoModal({ ev, primary, bgColor, onClose, onSubmit, g }: any) {
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
   const [loading, setLoading] = useState(false);
-  const commentLabel = rating > 0 && rating < 3 ? "Algo em que podemos melhorar?" : "Deixar um comentário (opcional)";
+  const commentLabel = rating > 0 && rating < 3 ? (g ? g("review.comment_label_negative", "Algo em que podemos melhorar?") : "Algo em que podemos melhorar?") : (g ? g("review.comment_label", "Deixar um comentário (opcional)") : "Deixar um comentário (opcional)");
 
   return (
     <div className="p-6 booking-auth" style={{ borderRadius: "1rem" }}>
-      <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Avaliar atendimento</h3>
+      <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>{g ? g("review.modal_title", "Avaliar atendimento") : "Avaliar atendimento"}</h3>
       <div className="text-left space-y-3 text-sm mb-6">
         <p><strong className="text-gray-400">Profissional:</strong><br /><span className="text-white">{ev.barberName}</span></p>
         <p><strong className="text-gray-400">Serviço:</strong><br /><span className="text-white">{ev.serviceName || ev.title}</span></p>
       </div>
       <div className="border-t border-b border-gray-700 py-6">
-        <p className="text-center font-semibold mb-4 text-white">Como foi seu atendimento?</p>
+        <p className="text-center font-semibold mb-4 text-white">{g ? g("review.question_text", "Como foi seu atendimento?") : "Como foi seu atendimento?"}</p>
         <div className="flex justify-center gap-2">
           {[1, 2, 3, 4, 5].map((s) => (
             <button key={s} onClick={() => setRating(s)} className="booking-star text-4xl transition-transform hover:scale-110"
@@ -2092,7 +2544,7 @@ function AvaliacaoModal({ ev, primary, bgColor, onClose, onSubmit }: any) {
       <button onClick={async () => { setLoading(true); await onSubmit(rating, comment); }} disabled={rating === 0 || loading}
         className={`w-full py-3 mt-6 font-bold rounded-lg ${rating > 0 ? "" : "opacity-50"}`}
         style={{ backgroundColor: primary, color: bgColor }}>
-        {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Avaliar"}
+        {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : (g ? g("review.submit_label", "Avaliar") : "Avaliar")}
       </button>
     </div>
   );
@@ -2164,7 +2616,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
   }
 
   return (
-    <div className="p-6 pb-24">
+    <div className="p-6" style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
       {subscription && subscription.plan && (
         <div className="pt-4 mb-8">
           <div className="text-center mb-6">
@@ -2273,8 +2725,8 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
       <div className="p-6 h-full flex flex-col items-center justify-center text-center min-h-[80vh]">
         <User className="w-16 h-16 text-gray-600 mb-4" />
         <h1 className="text-2xl font-bold" style={{ color: primary }}>Meu Perfil</h1>
-        <p className="text-gray-400 mt-2 mb-6">Faça login para acessar seu perfil e gerenciar sua conta.</p>
-        <button onClick={onLogin} className="py-3 px-8 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entrar ou Cadastrar</button>
+        <p className="text-gray-400 mt-2 mb-6">{g("auth.perfil_prompt", "Faça login para acessar seu perfil e gerenciar sua conta.")}</p>
+        <button onClick={onLogin} className="py-3 px-8 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>{g("auth.login_button", "Entrar ou Cadastrar")}</button>
       </div>
     );
   }
@@ -2314,11 +2766,13 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
 
   function showIndiqueAmigoModal() {
     const code = clientProfile?.referralCode || "VINNX10";
-    const msg = `Fala, mestre! ✂️ Estou te dando um desconto no seu primeiro serviço. Use meu código *${code}* no agendamento.`;
+    const defaultMsg = `Fala, mestre! ✂️ Estou te dando um desconto no seu primeiro serviço. Use meu código *${code}* no agendamento.`;
+    const customMsg = g("referral.invite_message", "");
+    const msg = customMsg ? customMsg.replace(/\{code\}/g, code) : defaultMsg;
     const waUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
 
     openModal(
-      <IndiqueAmigoModal primary={primary} bgColor={bgColor} code={code} waUrl={waUrl} onClose={() => closeModal()} />, "center"
+      <IndiqueAmigoModal primary={primary} bgColor={bgColor} code={code} waUrl={waUrl} g={g} onClose={() => closeModal()} />, "center"
     );
   }
 
@@ -2327,7 +2781,7 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
       <div className="p-6" style={{ borderRadius: "1rem" }}>
         <div className="text-center mb-6">
           <CreditCard className="w-12 h-12 mx-auto mb-3" style={{ color: primary }} />
-          <h3 className="text-2xl font-bold" style={{ color: primary }}>Programa de Cashback</h3>
+          <h3 className="text-2xl font-bold" style={{ color: primary }}>{g("referral.cashback_title", "Programa de Cashback")}</h3>
           <p className="text-gray-400 text-sm">Acumule créditos e troque por benefícios!</p>
         </div>
         <div className="space-y-6">
@@ -2336,11 +2790,11 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
             <div className="space-y-4 text-sm">
               <div className="flex items-start gap-3">
                 <span className="font-bold w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0" style={{ backgroundColor: primary, color: bgColor }}><Scissors className="w-4 h-4" /></span>
-                <div><p className="font-bold text-white">R$ 2 por Serviço</p><p className="text-gray-400">A cada serviço concluído, você ganha R$ 2,00 de cashback.</p></div>
+                <div><p className="font-bold text-white">{g("referral.credit_per_service_label", "R$ 2 por Serviço")}</p><p className="text-gray-400">{g("referral.credit_per_service_desc", "A cada serviço concluído, você ganha R$ 2,00 de cashback.")}</p></div>
               </div>
               <div className="flex items-start gap-3">
                 <span className="font-bold w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0" style={{ backgroundColor: primary, color: bgColor }}><Share2 className="w-4 h-4" /></span>
-                <div><p className="font-bold text-white">R$ 10 por Indicação</p><p className="text-gray-400">Quando um amigo usa seu código, você ganha R$ 10,00.</p></div>
+                <div><p className="font-bold text-white">{g("referral.credit_per_referral_label", "R$ 10 por Indicação")}</p><p className="text-gray-400">{g("referral.credit_per_referral_desc", "Quando um amigo usa seu código, você ganha R$ 10,00.")}</p></div>
               </div>
             </div>
           </div>
@@ -2382,12 +2836,13 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
   }
 
   function handleResgateCredito() {
-    if (credits < 50) return;
+    if (credits < (parseInt(g("referral.min_redemption", "50"), 10) || 50)) return;
+    const minRedemption = parseInt(g("referral.min_redemption", "50"), 10) || 50;
     openModal(
       <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
         <Gift className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
         <h3 className="text-xl font-bold mb-3" style={{ color: primary }}>Resgatar Crédito</h3>
-        <p className="text-gray-300 mb-6">Você está prestes a usar R$ 50,00 dos seus créditos para resgatar um serviço. Deseja continuar?</p>
+        <p className="text-gray-300 mb-6">Você está prestes a usar R$ {minRedemption.toFixed(2)} dos seus créditos para resgatar um serviço. Deseja continuar?</p>
         <div className="grid grid-cols-2 gap-4">
           <button onClick={() => closeModal()} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Cancelar</button>
           <button onClick={async () => {
@@ -2404,7 +2859,7 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
   }
 
   return (
-    <div className="p-6 pb-24">
+    <div className="p-6" style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
       {/* Avatar + Name */}
       <div className="text-center pt-8 mb-8">
         <div className="relative inline-block">
@@ -2424,9 +2879,10 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
       </div>
 
       {/* Credits card */}
+      {g("referral.enabled", "true") !== "false" && (
       <div className="p-5 rounded-2xl border border-gray-800 mb-6" style={{ background: "linear-gradient(to bottom, #2a2a2a, #1e1e1e)" }}>
         <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setCreditsExpanded(!creditsExpanded)}>
-          <h3 className="font-bold text-white">Créditos de Indicação</h3>
+          <h3 className="font-bold text-white">{g("referral.credits_title", "Créditos de Indicação")}</h3>
           <div className="flex items-center gap-2">
             <Gift className="w-5 h-5" style={{ color: primary }} />
             {creditsExpanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
@@ -2436,14 +2892,14 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
         <p className="text-xs text-gray-400">{referrals} indicações realizadas</p>
 
         {/* Congrats card when credits >= 50 */}
-        {credits >= 50 && (
+        {credits >= (parseInt(g("referral.min_redemption", "50"), 10) || 50) && (
           <div className="mt-4 p-5 rounded-2xl text-center relative overflow-hidden booking-zoom-in" style={{ background: "linear-gradient(135deg, #2a2a2a, #111111)", border: `2px solid ${primary}` }}>
             <div className="relative z-10">
               <Gift className="w-12 h-12 mx-auto mb-3 booking-tada" style={{ color: primary }} />
-              <p className="font-bold text-xl text-white">Parabéns! Você conseguiu!</p>
+              <p className="font-bold text-xl text-white">{g("referral.congrats_title", "Parabéns! Você conseguiu!")}</p>
               <p className="text-5xl font-black my-2" style={{ color: primary }}>R$ {credits.toFixed(2).replace(".", ",")}</p>
               <p className="text-base font-semibold mb-5 text-gray-300">em créditos para usar</p>
-              <button onClick={handleResgateCredito} className="w-full py-3 font-bold rounded-lg transition-all shadow-xl" style={{ backgroundColor: primary, color: bgColor }}>Resgatar Corte Grátis</button>
+              <button onClick={handleResgateCredito} className="w-full py-3 font-bold rounded-lg transition-all shadow-xl" style={{ backgroundColor: primary, color: bgColor }}>{g("referral.redeem_button", "Resgatar Corte Grátis")}</button>
             </div>
           </div>
         )}
@@ -2468,11 +2924,12 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
           </button>
         </div>
       </div>
+      )}
 
       {/* Referral goals */}
-      {goals.length > 0 && (
+      {goals.length > 0 && g("referral.enabled", "true") !== "false" && (
         <div className="p-5 rounded-2xl border border-gray-800 mb-6" style={{ backgroundColor: "#1e1e1e" }}>
-          <h3 className="font-semibold mb-4 text-center" style={{ color: primary }}>Metas de Indicação</h3>
+          <h3 className="font-semibold mb-4 text-center" style={{ color: primary }}>{g("referral.goals_title", "Metas de Indicação")}</h3>
           <div className="space-y-6">
             {goals.map((goal: any) => {
               const progress = Math.min(referrals / goal.target, 1);
@@ -2537,8 +2994,10 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
       {/* Actions */}
       <div className="space-y-3 mb-8">
         {[
-          { icon: Share2, label: "Indique um Amigo", onClick: showIndiqueAmigoModal },
-          { icon: CreditCard, label: "Cashback", onClick: showCashbackModal },
+          ...(g("referral.enabled", "true") !== "false" ? [
+            { icon: Share2, label: "Indique um Amigo", onClick: showIndiqueAmigoModal },
+            { icon: CreditCard, label: "Cashback", onClick: showCashbackModal },
+          ] : []),
           { icon: Bell, label: "Notificações", onClick: showNotificacoesModal },
           { icon: Lock, label: "Alterar Senha", onClick: showAlterarSenhaModal },
           { icon: MessageCircle, label: "Fale Conosco", onClick: showFaleConoscoModal },
@@ -2569,9 +3028,25 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
       </button>
 
       {/* Criado por */}
-      <div className="mt-16 mb-8 text-center">
-        <p className="text-sm text-gray-500">Criado por <span className="font-semibold text-gray-400">VINNX</span></p>
+      {g("branding.show_powered_by", "true") !== "false" && (
+      <div className="mt-16 mb-8 text-center flex flex-col items-center gap-2">
+        <p className="text-sm text-gray-500">Criado por</p>
+        <svg xmlns="http://www.w3.org/2000/svg" xmlSpace="preserve" viewBox="0 0 13929.2 2791.21" className="w-28 h-auto" style={{ shapeRendering: 'geometricPrecision', fillRule: 'evenodd', clipRule: 'evenodd' }}>
+          <g>
+            <path className="svg-elem-1" fill="#9ca3af" d="M10575.96 2770.97c1.81,-67.93 -6.84,-759.75 0.71,-1074.33 -0.71,-312.44 187.28,-481.99 567.14,-481.99l0.12 -419.71c-284.82,0 -393.93,-2.07 -524.85,182.93 -6.84,-10.88 -90.08,-171.34 -95.66,-182.93l-406.52 0 0 1976.03 459.07 0z" />
+            <path className="svg-elem-2" fill="#9ca3af" d="M986.96 822.41c538.09,0 974.29,436.2 974.29,974.28 0,538.09 -436.2,974.29 -974.29,974.29 -194.4,0 -363.1,-73.47 -515.13,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.28,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
+            <path className="svg-elem-3" fill="#9ca3af" d="M3159.77 822.38c224.55,0 442.51,58.83 607.26,186.46 230.04,178.2 367.02,474.29 367.02,787.82 0,327.08 -181.77,618.34 -429,795.04 -159.5,113.97 -334.27,179.25 -545.29,179.25 -538.08,0 -974.28,-436.2 -974.28,-974.29 0,-538.08 436.2,-974.28 974.28,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
+            <path className="svg-elem-4" fill="#9ca3af" d="M-0 232.77l0 2539.65 445.84 -191.06 0.04 -2581.37c0,0 -437.87,229.95 -445.88,232.77z" />
+            <path className="svg-elem-5" fill="#9ca3af" d="M4168.33 794.94l0 1975.96 -445.74 -192.01 0 -1462.39 0 -139.54c0,0 437.73,-184.83 445.74,-182.03z" />
+            <path className="svg-elem-6" fill="#9ca3af" d="M4932.59 2770.97c1.81,-67.93 -6.84,-759.75 0.71,-1074.33 -0.71,-312.44 187.28,-481.99 567.14,-481.99l0.12 -419.71c-284.82,0 -393.93,-2.07 -524.85,182.93 -6.84,-10.88 -90.08,-171.34 -95.66,-182.93l-406.52 0 0 1976.03 459.07 0z" />
+            <path className="svg-elem-7" fill="#9ca3af" d="M6694.19 822.41c538.08,0 974.28,436.2 974.28,974.28 0,538.09 -436.2,974.29 -974.28,974.29 -194.41,0 -363.11,-73.47 -515.14,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.29,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
+            <path className="svg-elem-8" fill="#9ca3af" d="M5707.22 232.77l0 2539.65 445.84 -191.06 0.05 -2581.37c0,0 -437.87,229.95 -445.89,232.77z" />
+            <path className="svg-elem-9" fill="#9ca3af" d="M8883.2 822.41c436.12,0 805.27,286.55 929.53,681.63 29.06,92.38 44.76,190.69 44.76,292.65 0,52.14 -4.14,103.3 -12.02,153.22l-1336.29 0.02c0,0 229.95,-437.87 232.76,-445.89l592.44 0c-95.88,-147.51 -262.12,-245.09 -451.18,-245.09 -296.99,0 -537.74,240.75 -537.74,537.74 0,296.99 240.75,537.74 537.74,537.74 205.64,0 384.29,-115.44 474.74,-285.05l322.19 307.78c-176.33,250.29 -467.49,413.82 -796.93,413.82 -194.4,0 -363.1,-73.47 -515.13,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.28,-974.28z" />
+            <path className="svg-elem-10" fill="#9ca3af" d="M12954.05 2473.8l-974.83 -1678.86 -369.05 0 1159.51 1996.27 184.37 -317.41zm-184.39 -953.1c140.47,-241.94 280.97,-483.86 421.46,-725.77l-842.93 0 421.47 725.77zm184.51 317.77c61.48,105.87 122.94,211.74 184.42,317.62l790.61 -1361.15 -369.08 0c-201.91,347.88 -403.96,695.69 -605.94,1043.53z" />
+          </g>
+        </svg>
       </div>
+      )}
     </div>
   );
 }
@@ -2614,14 +3089,14 @@ function EditarPerfilModal({ primary, bgColor, clientProfile, onClose, onSave }:
 }
 
 // --- Indique Amigo Modal ---
-function IndiqueAmigoModal({ primary, bgColor, code, waUrl, onClose }: any) {
+function IndiqueAmigoModal({ primary, bgColor, code, waUrl, onClose, g }: any) {
   const [copied, setCopied] = useState(false);
 
   return (
     <div className="p-6" style={{ borderRadius: "1rem" }}>
       <div className="text-center mb-6">
         <Gift className="w-12 h-12 mx-auto mb-3" style={{ color: primary }} />
-        <h3 className="text-2xl font-bold" style={{ color: primary }}>Indique e Ganhe!</h3>
+        <h3 className="text-2xl font-bold" style={{ color: primary }}>{g ? g("referral.invite_title", "Indique e Ganhe!") : "Indique e Ganhe!"}</h3>
         <p className="text-gray-400 text-sm">Convide seus amigos e ganhem benefícios juntos.</p>
       </div>
       <div className="p-4 rounded-lg mb-6" style={{ backgroundColor: "#2a2a2a" }}>
@@ -2629,11 +3104,11 @@ function IndiqueAmigoModal({ primary, bgColor, code, waUrl, onClose }: any) {
         <div className="space-y-3 text-sm">
           <div className="flex items-start gap-3">
             <span className="font-bold w-6 h-6 flex items-center justify-center rounded-full flex-shrink-0 text-xs" style={{ backgroundColor: primary, color: bgColor }}>1</span>
-            <p className="text-gray-400">Seu amigo usa seu código e ganha <strong className="text-white">20% OFF</strong> no primeiro serviço.</p>
+            <p className="text-gray-400">Seu amigo usa seu código e ganha <strong className="text-white">{g ? g("referral.friend_discount_text", "20% OFF") : "20% OFF"}</strong> no primeiro serviço.</p>
           </div>
           <div className="flex items-start gap-3">
             <span className="font-bold w-6 h-6 flex items-center justify-center rounded-full flex-shrink-0 text-xs" style={{ backgroundColor: primary, color: bgColor }}>2</span>
-            <p className="text-gray-400">Após o primeiro serviço dele, você ganha <strong className="text-white">R$10 de crédito</strong>.</p>
+            <p className="text-gray-400">Após o primeiro serviço dele, você ganha <strong className="text-white">{g ? g("referral.referrer_credit_text", "R$10 de crédito") : "R$10 de crédito"}</strong>.</p>
           </div>
         </div>
       </div>
@@ -2790,6 +3265,207 @@ function translateSupabaseError(msg: string): string {
   if (msg.includes("Signup is disabled")) return "Cadastro temporariamente desabilitado.";
   return msg;
 }
+// ============================================================
+// MIGRATION FORM — Legacy clients claim their account
+// ============================================================
+function MigrationForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAuthDirect }: any) {
+  const [step, setStep] = useState<"phone" | "found" | "notfound">("phone");
+  const [phone, setPhone] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [birthday, setBirthday] = useState("");
+  const [gender, setGender] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [genderOpen, setGenderOpen] = useState(false);
+  const genderTriggerRef = useRef<HTMLButtonElement>(null);
+  const genderMenuRef = useRef<HTMLDivElement>(null);
+  const genderOptions = [{ value: "Masculino", label: "Masculino" }, { value: "Feminino", label: "Feminino" }, { value: "Outro", label: "Outro" }];
+
+  useEffect(() => {
+    if (!genderOpen) return;
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (genderTriggerRef.current?.contains(t) || genderMenuRef.current?.contains(t)) return;
+      setGenderOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [genderOpen]);
+
+  const phoneDigits = phone.replace(/\D/g, "");
+  const pwValid = password.length >= 6 && password === confirmPw;
+  const formValid = email.includes("@") && pwValid;
+
+  // Step 1: Lookup phone
+  async function handleLookup() {
+    if (phoneDigits.length < 10) { setError("Digite seu telefone completo (DDD + número)."); return; }
+    setLoading(true); setError("");
+    try {
+      const { data, error: err } = await supabase.rpc("lookup_legacy_client", { p_phone: phoneDigits });
+      if (err) { setError("Erro ao buscar. Tente novamente."); setLoading(false); return; }
+      if (data?.found) { setFirstName(data.firstName); setStep("found"); }
+      else { setStep("notfound"); }
+    } catch { setError("Erro de conexão."); }
+    setLoading(false);
+  }
+
+  // Step 2: Create account + claim
+  async function handleMigrate() {
+    if (!formValid) return;
+    setLoading(true); setError("");
+    try {
+      // 1. Set migration flag BEFORE signUp (prevents loadClientProfile auto-create race)
+      _migrationClaimInProgress = true;
+
+      // 2. Create auth user
+      const { data, error: signupErr } = await supabase.auth.signUp({
+        email, password,
+        options: { data: { name: firstName, phone: phoneDigits } },
+      });
+      if (signupErr) { _migrationClaimInProgress = false; setError(translateSupabaseError(signupErr.message)); setLoading(false); return; }
+      if (!data.user || (data.user.identities?.length === 0)) {
+        _migrationClaimInProgress = false;
+        setError("Este email já está cadastrado. Faça login normalmente.");
+        setLoading(false); return;
+      }
+
+      // 3. Convert birthday DD/MM/YYYY → YYYY-MM-DD (BUG 9 fix + BUG 13 validation)
+      let birthdayISO = "";
+      if (birthday && birthday.includes("/")) {
+        const parts = birthday.split("/");
+        if (parts.length === 3) {
+          const candidate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+          if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) birthdayISO = candidate;
+        }
+      }
+
+      // 4. Claim BEFORE setAuthDirect (BUG 7 fix — prevents loadClientProfile race)
+      const { data: claimResult, error: claimErr } = await supabase.rpc("claim_legacy_client", {
+        p_phone: phoneDigits,
+        p_email: email,
+        p_birthday: birthdayISO || null,
+        p_gender: gender || null,
+      });
+
+      // 5. Clear migration flag
+      _migrationClaimInProgress = false;
+
+      if (claimErr || !claimResult?.success) {
+        setError("Erro ao vincular conta. Tente novamente ou faça cadastro normal.");
+        setLoading(false); return;
+      }
+
+      // 4. NOW set auth state (loadClientProfile will find the claimed record)
+      setAuthDirect(
+        { id: data.user.id, email: data.user.email || email },
+        data.session?.access_token || "",
+        data.session?.refresh_token
+      );
+      if (showToast) showToast(`Bem-vindo de volta, ${firstName}! 🎉`);
+      onClose(() => { if (onSuccess) onSuccess(); });
+    } catch (e: any) {
+      setError(translateSupabaseError(e.message || "Erro inesperado."));
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="p-6 text-center booking-auth">
+      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-16 h-16 mb-4 mx-auto object-contain" />}
+      <h2 className="text-2xl font-bold text-white mb-1">Ative sua conta</h2>
+      <p className="text-sm text-gray-400 mb-4">Para clientes que já frequentam a barbearia</p>
+      <div className="w-24 h-0.5 mx-auto mb-6" style={{ backgroundColor: primary }} />
+
+      {step === "phone" && (
+        <>
+          <p className="text-gray-300 text-sm mb-4">Digite o telefone cadastrado:</p>
+          <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))}
+            placeholder="(37) 9 9999-9999" className="w-full p-3 rounded-lg mb-4" inputMode="tel" autoFocus maxLength={18} />
+          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+          <button onClick={handleLookup} disabled={phoneDigits.length < 10 || loading}
+            className={`w-full py-3 font-bold rounded-lg ${phoneDigits.length >= 10 ? "" : "opacity-50"}`}
+            style={{ backgroundColor: primary, color: "#111" }}>
+            {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Buscar"}
+          </button>
+        </>
+      )}
+
+      {step === "found" && (
+        <>
+          <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 mb-4">
+            <p className="text-green-400 font-bold">✓ Encontramos seu cadastro!</p>
+            <p className="text-white mt-1">Olá, <strong>{firstName}</strong>! Complete os dados abaixo para ativar sua conta.</p>
+          </div>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Seu e-mail"
+            className="w-full p-3 rounded-lg mb-3" autoComplete="email" autoFocus />
+          <div className="relative mb-3">
+            <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
+              placeholder="Crie uma senha (mín. 6 caracteres)" className="w-full p-3 rounded-lg pr-10" autoComplete="new-password" />
+            <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
+              {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+            </button>
+          </div>
+          <input type={showPw ? "text" : "password"} value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
+            placeholder="Confirme a senha" className="w-full p-3 rounded-lg mb-3" autoComplete="new-password" />
+          {password && confirmPw && password !== confirmPw && <p className="text-red-400 text-xs mb-2">Senhas não coincidem</p>}
+          <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))}
+            placeholder="Aniversário (DD/MM/AAAA)" className="w-full p-3 rounded-lg mb-3" inputMode="numeric" maxLength={10} />
+          <div className="relative mb-4">
+            <button ref={genderTriggerRef} type="button" onClick={() => setGenderOpen(p => !p)}
+              className={`w-full flex items-center gap-2 px-3 py-3 rounded-xl border text-sm font-bold transition-all text-left ${genderOpen ? "border-primary/40 ring-1 ring-primary/20" : "border-[#555] hover:border-[#777]"}`}
+              style={{ backgroundColor: genderOpen ? "rgba(255,255,255,0.04)" : "#333" }}>
+              <span className="flex-1 truncate" style={{ color: gender ? "#e2e8f0" : "#9ca3af" }}>{gender || "Gênero (opcional)"}</span>
+              <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${genderOpen ? "rotate-180" : ""}`} style={{ color: "#64748b" }} />
+            </button>
+            {genderOpen && (
+              <div ref={genderMenuRef} className="absolute z-[9999] left-0 right-0 bottom-full mb-1.5 rounded-xl border border-[#333] shadow-2xl py-1.5 max-h-[240px] overflow-y-auto" style={{ backgroundColor: "#1e1e1e" }}>
+                {genderOptions.map(opt => (
+                  <button key={opt.value} type="button" onClick={() => { setGender(opt.value === gender ? "" : opt.value); setGenderOpen(false); }}
+                    className={`w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2.5 transition-colors ${
+                      opt.value === gender ? "text-primary bg-primary/10" : "text-slate-300 hover:bg-white/5 hover:text-white"
+                    }`}>
+                    <span className="flex-1 truncate">{opt.label}</span>
+                    {opt.value === gender && <Check className="w-3 h-3 shrink-0" style={{ color: primary }} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+          <button onClick={handleMigrate} disabled={!formValid || loading}
+            className={`w-full py-3 font-bold rounded-lg ${formValid ? "" : "opacity-50"}`}
+            style={{ backgroundColor: primary, color: "#111" }}>
+            {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Ativar minha conta"}
+          </button>
+        </>
+      )}
+
+      {step === "notfound" && (
+        <>
+          <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 mb-4">
+            <p className="text-yellow-400 font-bold">Telefone não encontrado</p>
+            <p className="text-gray-300 mt-1 text-sm">Não encontramos este telefone ({phone}) em nossos registros. Verifique o número ou faça um novo cadastro.</p>
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => { setStep("phone"); setError(""); }} className="flex-1 py-3 font-bold rounded-lg border border-gray-600 text-white">
+              Tentar outro
+            </button>
+            <button onClick={() => onSwitch("signup")} className="flex-1 py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: "#111" }}>
+              Cadastrar
+            </button>
+          </div>
+        </>
+      )}
+
+      <button onClick={() => onSwitch("login")} className="text-sm text-gray-400 mt-6 block mx-auto hover:underline">← Voltar ao login</button>
+      <button onClick={() => onClose()} className="mt-4 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Fechar</button>
+    </div>
+  );
+}
 
 function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAuthDirect }: any) {
   const [email, setEmail] = useState("");
@@ -2850,6 +3526,12 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAut
       </form>
       <button onClick={() => onSwitch("forgot")} className="text-sm text-gray-400 mt-4 block mx-auto hover:underline">Esqueceu a senha?</button>
       <p className="text-sm text-gray-400 mt-2">Não possui conta? <button onClick={() => onSwitch("signup")} className="font-bold hover:underline" style={{ color: primary }}>Faça seu cadastro</button></p>
+      {g("auth.legacy_migration_enabled", "true") !== "false" && (
+        <>
+          <div className="flex items-center gap-2 my-4"><hr className="flex-1 border-gray-700" /><span className="text-xs text-gray-500">ou</span><hr className="flex-1 border-gray-700" /></div>
+          <button onClick={() => onSwitch("migration")} className="text-sm font-bold hover:underline" style={{ color: primary }}>Já é cliente da barbearia? Ative sua conta →</button>
+        </>
+      )}
       <button onClick={() => onClose()} className="mt-8 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar</button>
     </div>
   );

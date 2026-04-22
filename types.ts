@@ -58,7 +58,7 @@ export interface Client {
 export interface TeamMember {
   id: string;
   name: string;
-  role: 'Admin' | 'Sales Executive' | 'Manager' | 'Support' | 'Barber';
+  role: 'Admin' | 'Sales Executive' | 'Manager' | 'Support' | 'Barber' | 'Attendant';
 
   // Auth & Status
   email: string;

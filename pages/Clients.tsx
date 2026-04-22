@@ -864,7 +864,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
               if (successCount > 0) {
                 // Update local state
                 setClients(allClients.map(c => importSelected.has(c.id) ? { ...c, unitId: selectedUnitId } : c));
-                toast.success('Clientes importados', `${successCount} cliente(s) movido(s) para ${selectedUnit?.name || 'esta unidade'}.`);
+                toast.success('Clientes importados', `${successCount} cliente(s) movido(s) para ${selectedUnit?.tradeName || selectedUnit?.name || 'esta unidade'}.`);
                 setIsImportModalOpen(false);
               }
             } catch {
@@ -895,7 +895,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                 <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
                   <div>
                     <h3 className={`font-semibold text-lg ${textMain}`}>Importar Clientes</h3>
-                    <p className={`text-xs ${textSub} mt-0.5`}>Mover clientes de outras unidades para <strong>{selectedUnit?.name}</strong></p>
+                    <p className={`text-xs ${textSub} mt-0.5`}>Mover clientes de outras unidades para <strong>{selectedUnit?.tradeName || selectedUnit?.name}</strong></p>
                   </div>
                   <button onClick={() => setIsImportModalOpen(false)} className={`${textSub} hover:${textMain}`}>
                     <X size={20} />

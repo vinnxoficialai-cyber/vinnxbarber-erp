@@ -47,6 +47,7 @@ import { UnitProvider } from './context/UnitContext';
 import { useAppData } from './hooks/useAppData';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useDynamicFavicon } from './hooks/useDynamicFavicon';
+import { PWAProvider } from './components/PWAProvider';
 import { useClientReassignment, getClientUnitSettings } from './hooks/useClientReassignment';
 import { Client, Contract, TeamMember, PersonalTask, Budget, ProjectTask, Service, CompanySettings, Transaction, BankAccount } from './types';
 
@@ -158,6 +159,9 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<TeamMember | null>(null);
 
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+
+  // Reveal root (hidden via index.html to prevent admin flash on public site)
+  useEffect(() => { document.getElementById("root")?.classList.add("app-ready"); }, []);
 
   // Update favicon when company logo changes
   useDynamicFavicon();
@@ -339,6 +343,7 @@ const App: React.FC = () => {
       <ConfirmProvider isDarkMode={isDarkMode}>
         <PasswordConfirmProvider isDarkMode={isDarkMode}>
           <HashRouter>
+            <PWAProvider />
             <Layout isDarkMode={isDarkMode} toggleTheme={toggleTheme} user={currentUser} onLogout={handleLogout}>
               <Routes>
                 <Route path="/" element={<Dashboard currentUser={currentUser} />} />

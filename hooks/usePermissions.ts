@@ -39,6 +39,11 @@ const ROUTE_ACCESS: Record<string, string[]> = {
         '/clients', '/services',
         '/comanda', '/products',
     ],
+    ATTENDANT: [
+        '/', '/agenda', '/tasks',
+        '/clients', '/services',
+        '/comanda', '/products',
+    ],
 };
 
 // ===== ACTION-LEVEL PERMISSIONS PER ROUTE =====
@@ -79,6 +84,10 @@ const ROUTE_ACTIONS: Record<string, Record<string, ActionLevel>> = {
         '/clients': 'own',
         '/services': 'read',
     },
+    ATTENDANT: {
+        '/clients': 'read',
+        '/services': 'read',
+    },
 };
 
 // ===== OLD RESOURCE-BASED PERMISSIONS (backward compat) =====
@@ -112,6 +121,13 @@ const RESOURCE_PERMISSIONS: Record<string, Partial<Record<ComponentResource, Per
         projects: ['view', 'create', 'edit'],
     },
     BARBER: {
+        payroll: [],
+        finance: [],
+        settings: [],
+        team: ['view'],
+        projects: [],
+    },
+    ATTENDANT: {
         payroll: [],
         finance: [],
         settings: [],
@@ -230,6 +246,7 @@ export function usePermissions(
     const isSales = roleKey === 'SALES';
     const isSupport = roleKey === 'SUPPORT';
     const isBarber = roleKey === 'BARBER';
+    const isAttendant = roleKey === 'ATTENDANT';
     const isAdminOrManager = isAdmin || isManager;
 
     // Backward compatible: old `can(action, resource)` API
@@ -263,6 +280,7 @@ export function usePermissions(
         isSales,
         isSupport,
         isBarber,
+        isAttendant,
         isAdminOrManager,
         getActionLevel,
         effectiveScopingMode, // Export for debug if needed

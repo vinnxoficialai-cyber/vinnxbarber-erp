@@ -457,10 +457,33 @@
 .booking-fade-in {
   animation: bookingFadeIn 1s ease-in-out;
 }
+@keyframes bookingReminderExit {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(-16px) scale(0.97); }
+}
+.booking-reminder-exit {
+  animation: bookingReminderExit 0.35s ease-in-out forwards;
+  pointer-events: none;
+}
 .booking-fade-in-delay {
   animation: bookingFadeIn 1s ease-in-out 0.3s;
   animation-fill-mode: both;
 }
+
+/* Fast VINNX SVG letter animation for loading screen */
+.booking-vinnx-fast {
+  animation: bookingFadeIn 0.8s ease-in-out 0.3s both;
+}
+.booking-vinnx-fast .svg-elem-1 { animation: animate-svg-fill-1 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 0.4s both; }
+.booking-vinnx-fast .svg-elem-2 { animation: animate-svg-fill-2 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 0.48s both; }
+.booking-vinnx-fast .svg-elem-3 { animation: animate-svg-fill-3 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 0.56s both; }
+.booking-vinnx-fast .svg-elem-4 { animation: animate-svg-fill-4 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 0.64s both; }
+.booking-vinnx-fast .svg-elem-5 { animation: animate-svg-fill-5 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 0.72s both; }
+.booking-vinnx-fast .svg-elem-6 { animation: animate-svg-fill-6 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 0.8s both; }
+.booking-vinnx-fast .svg-elem-7 { animation: animate-svg-fill-7 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 0.88s both; }
+.booking-vinnx-fast .svg-elem-8 { animation: animate-svg-fill-8 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 0.96s both; }
+.booking-vinnx-fast .svg-elem-9 { animation: animate-svg-fill-9 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 1.04s both; }
+.booking-vinnx-fast .svg-elem-10 { animation: animate-svg-fill-10 0.6s cubic-bezier(0.47, 0, 0.745, 0.715) 1.12s both; }
 
 /* Pause all animations until loading is done */
 .booking-anim-paused .booking-fade-in,
@@ -629,7 +652,7 @@
   transform: translateX(-50%);
   width: 92%;
   max-width: 420px;
-  height: 52px;
+  height: 56px;
   padding: 6px;
   border-radius: 9999px;
   background: var(--booking-navbar-bg, rgba(20, 20, 20, 0.85));
@@ -641,6 +664,19 @@
   display: flex;
   align-items: center;
   justify-content: space-around;
+}
+
+/* Fix mobile viewport: 100vh includes browser chrome (address bar),
+   100dvh adjusts to the actual visible viewport dynamically */
+.booking-app-container {
+  height: 100dvh !important;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+}
+@supports not (height: 100dvh) {
+  .booking-app-container {
+    height: -webkit-fill-available !important;
+  }
 }
 
 /* Navbar gradient fade */
@@ -657,8 +693,8 @@
 /* Navbar sliding indicator */
 .booking-nav-indicator {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
+  top: 6px;
+  bottom: 6px;
   border-radius: 9999px;
   transition: left 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
               width 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
@@ -809,6 +845,50 @@
   border-color: #374151;
 }
 
+/* Time slots period transition */
+@keyframes slotsFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slotItemIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Elegant time slot — glass pill */
+.booking-time-slot-elegant {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+  animation: slotItemIn 0.3s ease-out both;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.booking-time-slot-elegant:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: var(--booking-primary, #fbb62c);
+  box-shadow: 0 0 12px rgba(251, 182, 44, 0.2);
+  transform: translateY(-1px);
+}
+.booking-time-slot-elegant:active {
+  transform: scale(0.96);
+  background: rgba(255, 255, 255, 0.18);
+}
+
 /* Plan card */
 .booking-plan-card {
   border: 1px solid #444;
@@ -842,7 +922,7 @@
 .booking-auth select:focus {
   border-color: var(--booking-primary, #00BF62);
   outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--booking-primary, #00BF62) 40%, transparent);
+  box-shadow: 0 0 0 2px rgba(0, 191, 98, 0.4);
 }
 
 /* Rating stars */
@@ -885,11 +965,9 @@
 }
 .booking-video-bg video,
 .booking-video-bg img {
-  min-width: 100%; min-height: 100%;
-  width: auto; height: auto;
+  width: 100%; height: 100%;
   position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
+  top: 0; left: 0;
   object-fit: cover;
 }
 .booking-video-overlay {
@@ -903,13 +981,19 @@
 .booking-hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* Custom scrollbar for service lists */
-.booking-scrollbar::-webkit-scrollbar { width: 8px; }
-.booking-scrollbar::-webkit-scrollbar-track { background: #1e1e1e; border-radius: 10px; }
+.booking-scrollbar::-webkit-scrollbar { width: 6px; }
+.booking-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.booking-scrollbar::-webkit-scrollbar-button,
+.booking-scrollbar::-webkit-scrollbar-corner,
+.booking-scrollbar::-webkit-resizer { display: none; width: 0; height: 0; }
 .booking-scrollbar::-webkit-scrollbar-thumb {
-  background-color: var(--booking-primary, #00BF62);
+  background-color: rgba(255, 255, 255, 0.12);
   border-radius: 10px;
-  border: 2px solid #1e1e1e;
 }
+.booking-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.22);
+}
+.booking-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.12) transparent; }
 
 /* Footer section */
 .booking-footer {

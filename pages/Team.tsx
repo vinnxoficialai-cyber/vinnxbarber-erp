@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { Search, Filter, Plus, X, User, Mail, Phone, Shield, Briefcase, Lock, Image as ImageIcon, Upload, Trash2, MoreHorizontal, Eye, EyeOff, CheckCircle2, Trophy, TrendingUp, CalendarClock, DollarSign, FileText, Percent, Loader2, Building2, CreditCard, Banknote, Wallet, Scissors, Crown, ShoppingBag, BarChart3, Star, Users, PieChart, Target, Download, ChevronDown, MapPin } from 'lucide-react';
+import { Search, Filter, Plus, X, User, Mail, Phone, Shield, Briefcase, Lock, Image as ImageIcon, Upload, Trash2, MoreHorizontal, Eye, EyeOff, CheckCircle2, Trophy, TrendingUp, CalendarClock, DollarSign, FileText, Percent, Loader2, Building2, CreditCard, Banknote, Wallet, Scissors, Crown, ShoppingBag, BarChart3, Star, Users, PieChart, Target, Download, ChevronDown, MapPin, Headset } from 'lucide-react';
 import { TeamMember, Client, Contract, ClientReview, Comanda, Subscription, Unit } from '../types';
 import { CustomDropdown } from '../components/CustomDropdown';
 import { useConfirm } from '../components/ConfirmModal';
@@ -680,6 +680,7 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
       case 'Sales Executive': return 'bg-primary/10 text-primary border-primary/20';
       case 'Manager': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
       case 'Barber': return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+      case 'Attendant': return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
       default: return isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-500 border-slate-200';
     }
   };
@@ -918,6 +919,7 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
                           options={[
                             { value: 'Admin', label: 'Admin (Acesso Total)', icon: <Shield size={12} /> },
                             { value: 'Barber', label: 'Barbeiro / Profissional', icon: <Scissors size={12} /> },
+                            { value: 'Attendant', label: 'Atendente', icon: <Headset size={12} /> },
                             { value: 'Sales Executive', label: 'Executivo de Vendas', icon: <Briefcase size={12} /> },
                             { value: 'Manager', label: 'Gerente de Projetos', icon: <Crown size={12} /> },
                             { value: 'Support', label: 'Suporte', icon: <User size={12} /> },
@@ -1252,7 +1254,7 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
                             {/* Info */}
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-0.5">
-                                <p className={`text-sm font-bold ${textMain} truncate`}>{unit.name}</p>
+                                <p className={`text-sm font-bold ${textMain} truncate`}>{unit.tradeName || unit.name}</p>
                                 {isLinked && !isGlobalRole && (
                                   <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
                                     Vinculado
@@ -1541,7 +1543,7 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
           try {
             const result = await saveUnitMembersBulk(selectedUnitId, Array.from(importSelected));
             if (result.success) {
-              toast.success('Colaboradores importados', `${importSelected.size} colaborador(es) vinculado(s) a ${selectedUnit?.name || 'esta unidade'}.`);
+              toast.success('Colaboradores importados', `${importSelected.size} colaborador(es) vinculado(s) a ${selectedUnit?.tradeName || selectedUnit?.name || 'esta unidade'}.`);
               // Update local state instead of full refresh
               const now = new Date().toISOString();
               const newLinks = Array.from(importSelected).map(userId => ({
@@ -1585,7 +1587,7 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
               <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
                 <div>
                   <h3 className={`font-semibold text-lg ${textMain}`}>Importar Colaboradores</h3>
-                  <p className={`text-xs ${textSub} mt-0.5`}>Selecione colaboradores de outras unidades para vincular a <strong>{selectedUnit?.name}</strong></p>
+                  <p className={`text-xs ${textSub} mt-0.5`}>Selecione colaboradores de outras unidades para vincular a <strong>{selectedUnit?.tradeName || selectedUnit?.name}</strong></p>
                 </div>
                 <button onClick={() => setIsImportModalOpen(false)} className={`${textSub} hover:${textMain}`}>
                   <X size={20} />
@@ -1630,7 +1632,7 @@ export const Team: React.FC<TeamProps> = ({ members, setMembers, clients, contra
                   const isSelected = importSelected.has(m.id);
                   const memberUnits = unitMembers
                     .filter(um => um.userId === m.id)
-                    .map(um => units.find(u => u.id === um.unitId)?.name)
+                    .map(um => { const u = units.find(u => u.id === um.unitId); return u?.tradeName || u?.name; })
                     .filter(Boolean);
                   return (
                     <button

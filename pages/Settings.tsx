@@ -111,7 +111,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
     { path: '/settings', label: 'Configurações', section: 'Sistema' },
   ];
 
-  const ROLES: Role[] = ['Admin', 'Manager', 'Sales Executive', 'Support', 'Barber'];
+  const ROLES: Role[] = ['Admin', 'Manager', 'Sales Executive', 'Support', 'Barber', 'Attendant'];
 
   const DEFAULT_PERMISSIONS: PermissionMatrix = {
     'Admin': Object.fromEntries(PAGES_LIST.map(p => [p.path, true])),
@@ -124,6 +124,9 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
     ])),
     'Barber': Object.fromEntries(PAGES_LIST.map(p => [p.path,
     ['/', '/agenda'].includes(p.path)
+    ])),
+    'Attendant': Object.fromEntries(PAGES_LIST.map(p => [p.path,
+    ['/', '/agenda', '/tasks', '/clients', '/services', '/comanda', '/products'].includes(p.path)
     ])),
   };
 
