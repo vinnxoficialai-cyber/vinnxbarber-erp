@@ -3437,7 +3437,7 @@ function MigrationForm({ g, primary, onClose, onSwitch, onSuccess, showToast, se
       </button>
 
       {/* Header */}
-      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-14 h-14 mb-3 mx-auto object-contain" />}
+      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-20 h-20 mb-4 mx-auto object-contain" />}
       <h2 style={{ fontSize: "1.5rem", fontWeight: 800, letterSpacing: "-0.02em", color: "#fff", marginBottom: "0.25rem" }}>Ative sua conta</h2>
       <p style={{ fontSize: "0.85rem", color: "rgba(255,255,255,0.4)", marginBottom: "1.5rem" }}>Para clientes que já frequentam a barbearia</p>
 
@@ -3587,7 +3587,7 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAut
       </button>
 
       {/* Header */}
-      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-16 h-16 mb-4 mx-auto object-contain" />}
+      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-20 h-20 mb-4 mx-auto object-contain" />}
       <h2 style={{ fontSize: "1.6rem", fontWeight: 800, letterSpacing: "-0.02em", color: "#fff", marginBottom: "0.25rem" }}>Bem-vindo de volta</h2>
       <p style={{ fontSize: "0.85rem", color: "rgba(255,255,255,0.4)", marginBottom: "1.75rem" }}>Faça login para continuar</p>
 
@@ -3655,9 +3655,26 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
+  const [birthday, setBirthday] = useState("");
+  const [gender, setGender] = useState("");
+  const [genderOpen, setGenderOpen] = useState(false);
+  const genderTriggerRef = useRef<HTMLButtonElement>(null);
+  const genderMenuRef = useRef<HTMLDivElement>(null);
+  const genderOptions = [{ value: "Masculino", label: "Masculino" }, { value: "Feminino", label: "Feminino" }, { value: "Outro", label: "Outro" }];
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!genderOpen) return;
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (genderTriggerRef.current?.contains(t) || genderMenuRef.current?.contains(t)) return;
+      setGenderOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [genderOpen]);
 
   const hasLetter = /[a-zA-Z]/.test(password);
   const hasNumber = /[0-9]/.test(password);
@@ -3687,6 +3704,15 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
         }
         // DB trigger auto-creates client record — but try frontend insert as fallback
         const referralCode = name.split(" ")[0].toUpperCase().substring(0, 4) + Math.floor(1000 + Math.random() * 9000);
+        // Convert birthday DD/MM/YYYY → YYYY-MM-DD for DB
+        let birthdayISO = "";
+        if (birthday && birthday.includes("/")) {
+          const parts = birthday.split("/");
+          if (parts.length === 3) {
+            const candidate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+            if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) birthdayISO = candidate;
+          }
+        }
         await supabase.from("clients").insert({
           id: crypto.randomUUID(),
           name, email, phone: phone.replace(/\D/g, ""),
@@ -3697,6 +3723,8 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
           referralCode,
           referralCredits: 0,
           referralsMade: 0,
+          birthday: birthdayISO || null,
+          gender: gender || null,
           updatedAt: new Date().toISOString(),
         }).then(({ error: insertErr }) => {
           if (insertErr) console.log("Client insert fallback (trigger may have handled):", insertErr.message);
@@ -3761,6 +3789,42 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
             className="w-full p-3.5" autoComplete="new-password" />
         </div>
         {password && confirmPw && password !== confirmPw && <p style={{ color: "#f87171", fontSize: "0.85rem", marginBottom: "0.5rem" }}>As senhas não conferem.</p>}
+
+        {/* Birthday */}
+        <div className="booking-auth-input-wrap">
+          <Calendar className="auth-icon" />
+          <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))}
+            placeholder="Aniversário (DD/MM/AAAA) — opcional" className="w-full p-3.5" inputMode="numeric" maxLength={10} />
+        </div>
+
+        {/* Gender dropdown */}
+        <div className="relative" style={{ marginBottom: "1rem" }}>
+          <button ref={genderTriggerRef} type="button" onClick={() => setGenderOpen(p => !p)}
+            className="w-full flex items-center gap-2 px-3 py-3.5 rounded-xl text-sm font-medium transition-all text-left"
+            style={{
+              background: "rgba(255,255,255,0.06)",
+              border: `1px solid ${genderOpen ? "var(--booking-primary, #00BF62)" : "rgba(255,255,255,0.12)"}`,
+            }}>
+            <User className="w-4 h-4 shrink-0" style={{ color: genderOpen ? "var(--booking-primary)" : "rgba(255,255,255,0.25)" }} />
+            <span className="flex-1 truncate" style={{ color: gender ? "#e2e8f0" : "rgba(255,255,255,0.35)" }}>{gender || "Gênero — opcional"}</span>
+            <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${genderOpen ? "rotate-180" : ""}`} style={{ color: "rgba(255,255,255,0.3)" }} />
+          </button>
+          {genderOpen && (
+            <div ref={genderMenuRef} className="absolute z-[9999] left-0 right-0 bottom-full mb-1.5 rounded-xl shadow-2xl py-1.5 max-h-[240px] overflow-y-auto"
+              style={{ backgroundColor: "#1a1a1a", border: "1px solid rgba(255,255,255,0.1)" }}>
+              {genderOptions.map(opt => (
+                <button key={opt.value} type="button" onClick={() => { setGender(opt.value === gender ? "" : opt.value); setGenderOpen(false); }}
+                  className={`w-full text-left px-3 py-2.5 text-sm flex items-center gap-2.5 transition-colors ${
+                    opt.value === gender ? "font-semibold" : "hover:bg-white/5"
+                  }`} style={{ color: opt.value === gender ? primary : "rgba(255,255,255,0.7)" }}>
+                  <span className="flex-1">{opt.label}</span>
+                  {opt.value === gender && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: primary }} />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         {error && <p style={{ color: "#f87171", fontSize: "0.85rem", marginBottom: "0.75rem", textAlign: "center" }}>{error}</p>}
         <button type="submit" disabled={!valid || loading} className="booking-auth-btn"
           style={{ backgroundColor: primary, color: "#111" }}>
