@@ -690,9 +690,9 @@
 }
 
 /* ── Platform-specific navbar positioning ── */
-/* iOS PWA: no browser chrome, just home indicator */
+/* iOS PWA: no browser chrome, sits just above home indicator */
 .booking-navbar.navbar-ios-standalone {
-  bottom: env(safe-area-inset-bottom, 4px);
+  bottom: 2px;
 }
 /* iOS browser: Safari has bottom toolbar, needs more space */
 .booking-navbar.navbar-ios-browser {
