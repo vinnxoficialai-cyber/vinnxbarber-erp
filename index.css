@@ -999,7 +999,7 @@
   border: 1px solid #444;
 }
 
-/* Auth form — modern glassmorphism inputs (ChatGPT/Grok inspired) */
+/* Auth form inputs — clean dark style */
 .booking-auth input,
 .booking-auth textarea,
 .booking-auth select {
@@ -1008,9 +1008,7 @@
   color: #f1f1f1;
   border-radius: 0.75rem;
   font-size: 0.9rem;
-  transition: all 0.25s ease;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .booking-auth input::placeholder,
 .booking-auth textarea::placeholder {

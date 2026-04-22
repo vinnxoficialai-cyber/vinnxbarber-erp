@@ -3772,7 +3772,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail"
             className="w-full p-3.5" autoComplete="email" />
         </div>
-        <div className="booking-auth-input-wrap" style={{ marginBottom: "0.25rem" }}>
+        <div className="booking-auth-input-wrap">
           <Lock className="auth-icon" />
           <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
             placeholder="Senha (mín. 6, letras e números)" className="w-full p-3.5 pr-11" autoComplete="new-password" />
@@ -3781,7 +3781,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
           </button>
         </div>
         {pwIndicator && (
-          <p style={{ fontSize: "0.75rem", marginBottom: "0.5rem", textAlign: "left", paddingLeft: "0.25rem", color: pwIndicator.color }}>{pwIndicator.text}</p>
+          <p style={{ fontSize: "0.7rem", marginTop: "-0.5rem", marginBottom: "0.5rem", textAlign: "left", paddingLeft: "2.75rem", color: pwIndicator.color }}>{pwIndicator.text}</p>
         )}
         <div className="booking-auth-input-wrap">
           <Lock className="auth-icon" />
@@ -3794,7 +3794,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
         <div className="booking-auth-input-wrap">
           <Calendar className="auth-icon" />
           <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))}
-            placeholder="Aniversário (DD/MM/AAAA) — opcional" className="w-full p-3.5" inputMode="numeric" maxLength={10} />
+            placeholder="Aniversário (DD/MM/AAAA) — opcional" className="w-full p-3.5" inputMode="numeric" maxLength={10} autoComplete="bday" />
         </div>
 
         {/* Gender dropdown */}
