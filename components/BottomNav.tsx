@@ -105,6 +105,17 @@ export const BottomNav: React.FC<BottomNavProps> = ({ onOpenMenu, currentUser })
   // Sliding indicator state
   const [indicatorStyle, setIndicatorStyle] = useState<{ left: number; width: number } | null>(null);
 
+  // ── Platform detection (same as PublicSite) ──
+  const isStandalone = typeof window !== "undefined" && (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    (window.navigator as any).standalone === true
+  );
+  const isIOS = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
+  const navbarPlatformClass = isStandalone
+    ? (isIOS ? "navbar-ios-standalone" : isAndroid ? "navbar-android-standalone" : "navbar-desktop-standalone")
+    : (isIOS ? "navbar-ios-browser" : isAndroid ? "navbar-android-browser" : "navbar-desktop");
+
   // Check if user has access to a page (centralized)
   const hasAccess = (path: string): boolean => canAccess(path);
 
@@ -185,7 +196,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ onOpenMenu, currentUser })
         )}
 
         <div className={`relative z-10 flex flex-col items-center gap-0.5 transition-transform duration-300 ${isModalOpen && !isActive ? 'scale-95' : ''}`}>
-          <SectionIcon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
+          <SectionIcon size={20} strokeWidth={isActive ? 2.5 : 1.8} />
           <span className={`text-[10px] font-medium leading-tight transition-opacity duration-200 ${isActive || isModalOpen ? 'opacity-100' : 'opacity-70'}`}>
             {section.label}
           </span>
@@ -209,23 +220,22 @@ export const BottomNav: React.FC<BottomNavProps> = ({ onOpenMenu, currentUser })
         badges={menuBadges}
       />
 
-      {/* Gradient Fade Out */}
+      {/* Gradient Fade */}
       <div className="fixed bottom-0 left-0 w-full h-28 bg-gradient-to-t from-slate-50 via-slate-50/80 to-transparent dark:from-dark dark:via-dark/80 dark:to-transparent pointer-events-none z-40 lg:hidden" />
 
-      {/* Bottom Bar — Capsule/Stadium shape */}
-      <div
-        className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-[420px] bg-white/85 dark:bg-dark-surface/85 backdrop-blur-2xl rounded-full shadow-lg shadow-black/8 dark:shadow-black/40 border border-white/30 dark:border-white/10 z-50 lg:hidden p-1.5"
-        style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
-      >
-        <div ref={containerRef} className="relative flex items-center justify-around h-[52px]">
+      {/* Bottom Bar — Liquid Glass (shared CSS with PublicSite) */}
+      <div className={`admin-bottom-nav booking-navbar ${navbarPlatformClass} lg:hidden`}>
+        <div ref={containerRef} className="relative flex items-center justify-around w-full h-full">
 
-          {/* Sliding Indicator — single shared element */}
+          {/* Sliding Indicator */}
           {indicatorStyle && (
             <div
-              className="absolute top-0 bottom-0 bg-primary/10 dark:bg-primary/15 rounded-full z-0"
+              className="absolute top-[7px] bottom-[7px] rounded-[26px] z-0"
               style={{
                 left: indicatorStyle.left,
                 width: indicatorStyle.width,
+                backgroundColor: 'var(--color-primary, #10b981)',
+                opacity: 0.12,
                 transition: 'left 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
               }}
             />
