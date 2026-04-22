@@ -181,6 +181,19 @@ function formatBirthdate(value: string): string {
   return v;
 }
 
+// Smart capitalize: capitalize first letter of each word,
+// except Portuguese prepositions/articles (de, do, dos, da, das, e, etc.)
+const _lowercaseWords = new Set(["de", "do", "dos", "da", "das", "e", "em", "no", "na", "nos", "nas", "por", "para", "com"]);
+function smartCapitalize(value: string): string {
+  return value.replace(/\S+/g, (word, index) => {
+    if (index > 0 && _lowercaseWords.has(word.toLowerCase())) {
+      return word.toLowerCase();
+    }
+    if (word.length === 0) return word;
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  });
+}
+
 // Scroll-aware fade: only shows fade on edges with hidden content
 function ScrollFadeList({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -3120,7 +3133,7 @@ function EditarPerfilModal({ primary, bgColor, clientProfile, onClose, onSave }:
     <div className="p-6 booking-auth" style={{ borderRadius: "1rem" }}>
       <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Editar Perfil</h3>
       <div className="space-y-4">
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome" className="w-full p-3 rounded-lg" />
+        <input type="text" value={name} onChange={(e) => setName(smartCapitalize(e.target.value))} placeholder="Nome" className="w-full p-3 rounded-lg" />
         <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))} placeholder="Telefone (celular)" className="w-full p-3 rounded-lg" inputMode="numeric" />
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full p-3 rounded-lg" />
         <div>
@@ -3759,7 +3772,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
       <form onSubmit={handleSignup}>
         <div className="booking-auth-input-wrap">
           <User className="auth-icon" />
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome e Sobrenome"
+          <input type="text" value={name} onChange={(e) => setName(smartCapitalize(e.target.value))} placeholder="Nome e Sobrenome"
             className="w-full p-3.5" autoComplete="name" autoFocus />
         </div>
         <div className="booking-auth-input-wrap">
@@ -3775,7 +3788,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
         <div className="booking-auth-input-wrap">
           <Lock className="auth-icon" />
           <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
-            placeholder="Senha (mín. 6, letras e números)" className="w-full p-3.5 pr-11" autoComplete="new-password" />
+            placeholder="Senha" className="w-full p-3.5 pr-11" autoComplete="new-password" />
           <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3.5" style={{ zIndex: 1 }}>
             {showPw ? <EyeOff className="w-4 h-4" style={{ color: "rgba(255,255,255,0.3)" }} /> : <Eye className="w-4 h-4" style={{ color: "rgba(255,255,255,0.3)" }} />}
           </button>
@@ -3794,7 +3807,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
         <div className="booking-auth-input-wrap">
           <Calendar className="auth-icon" />
           <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))}
-            placeholder="Aniversário (DD/MM/AAAA) — opcional" className="w-full p-3.5" maxLength={10} autoComplete="one-time-code" />
+            placeholder="Aniversário" className="w-full p-3.5" maxLength={10} autoComplete="one-time-code" />
         </div>
 
         {/* Gender dropdown */}
@@ -3806,7 +3819,7 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
               border: `1px solid ${genderOpen ? "var(--booking-primary, #00BF62)" : "rgba(255,255,255,0.12)"}`,
             }}>
             <User className="w-4 h-4 shrink-0" style={{ color: genderOpen ? "var(--booking-primary)" : "rgba(255,255,255,0.25)" }} />
-            <span className="flex-1 truncate" style={{ color: gender ? "#e2e8f0" : "rgba(255,255,255,0.35)" }}>{gender || "Gênero — opcional"}</span>
+            <span className="flex-1 truncate" style={{ color: gender ? "#e2e8f0" : "rgba(255,255,255,0.35)" }}>{gender || "Gênero"}</span>
             <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${genderOpen ? "rotate-180" : ""}`} style={{ color: "rgba(255,255,255,0.3)" }} />
           </button>
           {genderOpen && (
