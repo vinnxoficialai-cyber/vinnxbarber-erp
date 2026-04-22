@@ -692,7 +692,7 @@
 /* ── Platform-specific navbar positioning ── */
 /* iOS PWA: no browser chrome, sits just above home indicator */
 .booking-navbar.navbar-ios-standalone {
-  bottom: 2px;
+  bottom: 12px;
 }
 /* iOS browser: Safari has bottom toolbar, needs more space */
 .booking-navbar.navbar-ios-browser {
