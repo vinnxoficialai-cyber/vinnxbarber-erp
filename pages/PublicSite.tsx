@@ -808,7 +808,7 @@ function PublicSiteApp() {
     if (!navRef.current || !indicatorRef.current) return;
     const active = navRef.current.querySelector(".active") as HTMLElement;
     if (!active) return;
-    const pad = 6; // Match navbar CSS padding
+    const pad = 8; // Match navbar CSS padding
     let left = active.offsetLeft;
     let width = active.offsetWidth;
     const navInner = navRef.current.clientWidth; // excludes border

@@ -644,22 +644,22 @@
   pointer-events: none;
 }
 
-/* Floating pill navbar */
+/* Floating pill navbar — iOS Liquid Glass proportions */
 .booking-navbar {
   position: fixed;
-  bottom: calc(0.75rem + env(safe-area-inset-bottom));
+  bottom: calc(0.5rem + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   width: 92%;
   max-width: 420px;
-  height: 56px;
-  padding: 6px;
-  border-radius: 9999px;
-  background: var(--booking-navbar-bg, rgba(20, 20, 20, 0.85));
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  height: 72px;
+  padding: 8px;
+  border-radius: 36px;
+  background: var(--booking-navbar-bg, rgba(20, 20, 20, 0.75));
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   z-index: 50;
   display: flex;
   align-items: center;
@@ -693,9 +693,9 @@
 /* Navbar sliding indicator */
 .booking-nav-indicator {
   position: absolute;
-  top: 6px;
-  bottom: 6px;
-  border-radius: 9999px;
+  top: 8px;
+  bottom: 8px;
+  border-radius: 28px;
   transition: left 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
               width 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
   pointer-events: none;
@@ -717,8 +717,8 @@
   -webkit-tap-highlight-color: transparent;
 }
 .booking-nav-item span {
-  font-size: 0.6rem;
-  margin-top: 2px;
+  font-size: 0.65rem;
+  margin-top: 3px;
   opacity: 0.7;
   transition: all 0.3s ease-out;
 }
