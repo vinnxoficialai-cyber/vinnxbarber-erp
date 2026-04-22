@@ -1314,8 +1314,11 @@ function PublicSiteApp() {
         </div>
       </div>
 
+      {/* Solid background fill below navbar — eliminates gap in standalone PWA mode */}
+      <div className="booking-navbar-bg-fill" style={{ backgroundColor: bgColor }} />
+
       {/* Gradient Fade — pointer-events:none ensures Agendar button is clickable */}
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, height: "5rem", pointerEvents: "none", zIndex: 40, background: `linear-gradient(to top, ${bgColor} 0%, ${bgColor}99 60%, transparent 100%)` }} />
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, height: `calc(5rem + env(safe-area-inset-bottom, 0px))`, pointerEvents: "none", zIndex: 40, background: `linear-gradient(to top, ${bgColor} 0%, ${bgColor}99 60%, transparent 100%)` }} />
 
       {/* WhatsApp Floating Button */}
       {g("extras.whatsapp_float", "false") === "true" && g("extras.whatsapp_number", "") && (
