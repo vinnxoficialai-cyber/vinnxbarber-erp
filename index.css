@@ -999,20 +999,158 @@
   border: 1px solid #444;
 }
 
-/* Auth form inputs */
+/* Auth form — modern glassmorphism inputs (ChatGPT/Grok inspired) */
 .booking-auth input,
 .booking-auth textarea,
 .booking-auth select {
-  background-color: #333;
-  border: 1px solid #555;
-  color: white;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f1f1f1;
+  border-radius: 0.75rem;
+  font-size: 0.9rem;
+  transition: all 0.25s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.booking-auth input::placeholder,
+.booking-auth textarea::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 400;
 }
 .booking-auth input:focus,
 .booking-auth textarea:focus,
 .booking-auth select:focus {
   border-color: var(--booking-primary, #00BF62);
   outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 191, 98, 0.4);
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: 0 0 0 3px rgba(var(--booking-primary-rgb, 0, 191, 98), 0.12),
+              0 0 20px rgba(var(--booking-primary-rgb, 0, 191, 98), 0.06);
+}
+
+/* Auth modal container — premium layout */
+.booking-auth-modal {
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+.booking-auth-modal h2 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #fff;
+  margin-bottom: 0.25rem;
+}
+.booking-auth-modal .auth-subtitle {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 1.5rem;
+}
+.booking-auth-modal .auth-divider {
+  width: 2.5rem;
+  height: 3px;
+  border-radius: 2px;
+  margin: 0 auto 1.75rem;
+}
+
+/* Auth primary button — gradient with glow */
+.booking-auth-btn {
+  width: 100%;
+  padding: 0.8rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+  border-radius: 0.75rem;
+  border: none;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+.booking-auth-btn:not(:disabled):hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+.booking-auth-btn:not(:disabled):active {
+  transform: translateY(0);
+  filter: brightness(0.95);
+}
+.booking-auth-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Auth link buttons — subtle and elegant */
+.booking-auth-link {
+  background: none;
+  border: none;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+  padding: 0.25rem 0;
+}
+.booking-auth-link:hover {
+  opacity: 0.8;
+}
+
+/* Auth back button — pill style */
+.booking-auth-back {
+  margin-top: 1.5rem;
+  padding: 0.5rem 1.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.booking-auth-back:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+/* Auth divider line with "ou" */
+.booking-auth-or {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+}
+.booking-auth-or hr {
+  flex: 1;
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.booking-auth-or span {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Auth input with icon — wrapper */
+.booking-auth-input-wrap {
+  position: relative;
+  margin-bottom: 0.875rem;
+}
+.booking-auth-input-wrap .auth-icon {
+  position: absolute;
+  left: 0.875rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 255, 0.25);
+  width: 1rem;
+  height: 1rem;
+  pointer-events: none;
+  transition: color 0.25s ease;
+}
+.booking-auth-input-wrap input:focus ~ .auth-icon,
+.booking-auth-input-wrap:focus-within .auth-icon {
+  color: var(--booking-primary, #00BF62);
+}
+.booking-auth-input-wrap input {
+  padding-left: 2.75rem;
 }
 
 /* Rating stars */

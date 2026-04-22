@@ -3426,20 +3426,22 @@ function MigrationForm({ g, primary, onClose, onSwitch, onSuccess, showToast, se
   }
 
   return (
-    <div className="p-6 text-center booking-auth">
-      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-16 h-16 mb-4 mx-auto object-contain" />}
-      <h2 className="text-2xl font-bold text-white mb-1">Ative sua conta</h2>
-      <p className="text-sm text-gray-400 mb-4">Para clientes que já frequentam a barbearia</p>
-      <div className="w-24 h-0.5 mx-auto mb-6" style={{ backgroundColor: primary }} />
+    <div className="booking-auth-modal booking-auth">
+      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-14 h-14 mb-3 mx-auto object-contain" style={{ opacity: 0.9 }} />}
+      <h2>Ative sua conta</h2>
+      <p className="auth-subtitle">Para clientes que já frequentam a barbearia</p>
+      <div className="auth-divider" style={{ backgroundColor: primary }} />
 
       {step === "phone" && (
         <>
-          <p className="text-gray-300 text-sm mb-4">Digite o telefone cadastrado:</p>
-          <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))}
-            placeholder="(37) 9 9999-9999" className="w-full p-3 rounded-lg mb-4" inputMode="tel" autoFocus maxLength={18} />
-          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-          <button onClick={handleLookup} disabled={phoneDigits.length < 10 || loading}
-            className={`w-full py-3 font-bold rounded-lg ${phoneDigits.length >= 10 ? "" : "opacity-50"}`}
+          <p className="text-sm mb-4" style={{ color: "rgba(255,255,255,0.55)" }}>Digite o telefone cadastrado:</p>
+          <div className="booking-auth-input-wrap">
+            <Phone className="auth-icon" />
+            <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))}
+              placeholder="(37) 9 9999-9999" className="w-full p-3" inputMode="tel" autoFocus maxLength={18} />
+          </div>
+          {error && <p className="text-sm mb-3" style={{ color: "#f87171" }}>{error}</p>}
+          <button onClick={handleLookup} disabled={phoneDigits.length < 10 || loading} className="booking-auth-btn"
             style={{ backgroundColor: primary, color: "#111" }}>
             {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Buscar"}
           </button>
@@ -3448,48 +3450,62 @@ function MigrationForm({ g, primary, onClose, onSwitch, onSuccess, showToast, se
 
       {step === "found" && (
         <>
-          <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 mb-4">
-            <p className="text-green-400 font-bold">✓ Encontramos seu cadastro!</p>
-            <p className="text-white mt-1">Olá, <strong>{firstName}</strong>! Complete os dados abaixo para ativar sua conta.</p>
+          <div className="mb-4 p-4 rounded-xl text-left" style={{ backgroundColor: "rgba(22,163,74,0.12)", border: "1px solid rgba(22,163,74,0.2)" }}>
+            <p className="font-bold text-sm" style={{ color: "#4ade80" }}>✓ Encontramos seu cadastro!</p>
+            <p className="text-sm mt-1 text-white">Olá, <strong>{firstName}</strong>! Complete os dados abaixo.</p>
           </div>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Seu e-mail"
-            className="w-full p-3 rounded-lg mb-3" autoComplete="email" autoFocus />
-          <div className="relative mb-3">
+          <div className="booking-auth-input-wrap">
+            <Mail className="auth-icon" />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Seu e-mail"
+              className="w-full p-3" autoComplete="email" autoFocus />
+          </div>
+          <div className="booking-auth-input-wrap">
+            <Lock className="auth-icon" />
             <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
-              placeholder="Crie uma senha (mín. 6 caracteres)" className="w-full p-3 rounded-lg pr-10" autoComplete="new-password" />
-            <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
-              {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+              placeholder="Crie uma senha (mín. 6 caracteres)" className="w-full p-3 pr-10" autoComplete="new-password" />
+            <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3" style={{ zIndex: 1 }}>
+              {showPw ? <EyeOff className="w-4 h-4" style={{ color: "rgba(255,255,255,0.3)" }} /> : <Eye className="w-4 h-4" style={{ color: "rgba(255,255,255,0.3)" }} />}
             </button>
           </div>
-          <input type={showPw ? "text" : "password"} value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
-            placeholder="Confirme a senha" className="w-full p-3 rounded-lg mb-3" autoComplete="new-password" />
-          {password && confirmPw && password !== confirmPw && <p className="text-red-400 text-xs mb-2">Senhas não coincidem</p>}
-          <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))}
-            placeholder="Aniversário (DD/MM/AAAA)" className="w-full p-3 rounded-lg mb-3" inputMode="numeric" maxLength={10} />
+          <div className="booking-auth-input-wrap">
+            <Lock className="auth-icon" />
+            <input type={showPw ? "text" : "password"} value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
+              placeholder="Confirme a senha" className="w-full p-3" autoComplete="new-password" />
+          </div>
+          {password && confirmPw && password !== confirmPw && <p className="text-xs mb-2" style={{ color: "#f87171" }}>Senhas não coincidem</p>}
+          <div className="booking-auth-input-wrap">
+            <Calendar className="auth-icon" />
+            <input type="text" value={birthday} onChange={(e) => setBirthday(formatBirthdate(e.target.value))}
+              placeholder="Aniversário (DD/MM/AAAA)" className="w-full p-3" inputMode="numeric" maxLength={10} />
+          </div>
           <div className="relative mb-4">
             <button ref={genderTriggerRef} type="button" onClick={() => setGenderOpen(p => !p)}
-              className={`w-full flex items-center gap-2 px-3 py-3 rounded-xl border text-sm font-bold transition-all text-left ${genderOpen ? "border-primary/40 ring-1 ring-primary/20" : "border-[#555] hover:border-[#777]"}`}
-              style={{ backgroundColor: genderOpen ? "rgba(255,255,255,0.04)" : "#333" }}>
-              <span className="flex-1 truncate" style={{ color: gender ? "#e2e8f0" : "#9ca3af" }}>{gender || "Gênero (opcional)"}</span>
-              <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${genderOpen ? "rotate-180" : ""}`} style={{ color: "#64748b" }} />
+              className="w-full flex items-center gap-2 px-3 py-3 rounded-xl border text-sm font-medium transition-all text-left"
+              style={{
+                backgroundColor: genderOpen ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.06)",
+                borderColor: genderOpen ? "var(--booking-primary, #00BF62)" : "rgba(255,255,255,0.12)",
+              }}>
+              <User className="w-4 h-4 shrink-0" style={{ color: genderOpen ? "var(--booking-primary)" : "rgba(255,255,255,0.25)" }} />
+              <span className="flex-1 truncate" style={{ color: gender ? "#e2e8f0" : "rgba(255,255,255,0.35)" }}>{gender || "Gênero (opcional)"}</span>
+              <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${genderOpen ? "rotate-180" : ""}`} style={{ color: "rgba(255,255,255,0.3)" }} />
             </button>
             {genderOpen && (
-              <div ref={genderMenuRef} className="absolute z-[9999] left-0 right-0 bottom-full mb-1.5 rounded-xl border border-[#333] shadow-2xl py-1.5 max-h-[240px] overflow-y-auto" style={{ backgroundColor: "#1e1e1e" }}>
+              <div ref={genderMenuRef} className="absolute z-[9999] left-0 right-0 bottom-full mb-1.5 rounded-xl shadow-2xl py-1.5 max-h-[240px] overflow-y-auto"
+                style={{ backgroundColor: "#1a1a1a", border: "1px solid rgba(255,255,255,0.1)" }}>
                 {genderOptions.map(opt => (
                   <button key={opt.value} type="button" onClick={() => { setGender(opt.value === gender ? "" : opt.value); setGenderOpen(false); }}
-                    className={`w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2.5 transition-colors ${
-                      opt.value === gender ? "text-primary bg-primary/10" : "text-slate-300 hover:bg-white/5 hover:text-white"
-                    }`}>
-                    <span className="flex-1 truncate">{opt.label}</span>
-                    {opt.value === gender && <Check className="w-3 h-3 shrink-0" style={{ color: primary }} />}
+                    className={`w-full text-left px-3 py-2.5 text-sm flex items-center gap-2.5 transition-colors ${
+                      opt.value === gender ? "font-semibold" : "hover:bg-white/5"
+                    }`} style={{ color: opt.value === gender ? primary : "rgba(255,255,255,0.7)" }}>
+                    <span className="flex-1">{opt.label}</span>
+                    {opt.value === gender && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: primary }} />}
                   </button>
                 ))}
               </div>
             )}
           </div>
-          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-          <button onClick={handleMigrate} disabled={!formValid || loading}
-            className={`w-full py-3 font-bold rounded-lg ${formValid ? "" : "opacity-50"}`}
+          {error && <p className="text-sm mb-3" style={{ color: "#f87171" }}>{error}</p>}
+          <button onClick={handleMigrate} disabled={!formValid || loading} className="booking-auth-btn"
             style={{ backgroundColor: primary, color: "#111" }}>
             {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Ativar minha conta"}
           </button>
@@ -3498,23 +3514,24 @@ function MigrationForm({ g, primary, onClose, onSwitch, onSuccess, showToast, se
 
       {step === "notfound" && (
         <>
-          <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 mb-4">
-            <p className="text-yellow-400 font-bold">Telefone não encontrado</p>
-            <p className="text-gray-300 mt-1 text-sm">Não encontramos este telefone ({phone}) em nossos registros. Verifique o número ou faça um novo cadastro.</p>
+          <div className="mb-4 p-4 rounded-xl text-left" style={{ backgroundColor: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.2)" }}>
+            <p className="font-bold text-sm" style={{ color: "#facc15" }}>Telefone não encontrado</p>
+            <p className="text-sm mt-1" style={{ color: "rgba(255,255,255,0.6)" }}>Não encontramos ({phone}) nos registros. Verifique ou faça um novo cadastro.</p>
           </div>
           <div className="flex gap-3">
-            <button onClick={() => { setStep("phone"); setError(""); }} className="flex-1 py-3 font-bold rounded-lg border border-gray-600 text-white">
+            <button onClick={() => { setStep("phone"); setError(""); }} className="booking-auth-back flex-1" style={{ marginTop: 0 }}>
               Tentar outro
             </button>
-            <button onClick={() => onSwitch("signup")} className="flex-1 py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: "#111" }}>
+            <button onClick={() => onSwitch("signup")} className="booking-auth-btn flex-1"
+              style={{ backgroundColor: primary, color: "#111" }}>
               Cadastrar
             </button>
           </div>
         </>
       )}
 
-      <button onClick={() => onSwitch("login")} className="text-sm text-gray-400 mt-6 block mx-auto hover:underline">← Voltar ao login</button>
-      <button onClick={() => onClose()} className="mt-4 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Fechar</button>
+      <button onClick={() => onSwitch("login")} className="booking-auth-link block mx-auto mt-5" style={{ color: "rgba(255,255,255,0.4)" }}>← Voltar ao login</button>
+      <button onClick={() => onClose()} className="booking-auth-back">Fechar</button>
     </div>
   );
 }
@@ -3556,35 +3573,39 @@ function LoginForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAut
   }
 
   return (
-    <div className="p-6 text-center booking-auth">
-      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-16 h-16 mb-4 mx-auto object-contain" />}
-      <h2 className="text-2xl font-bold text-white mb-2">Acesse sua conta</h2>
-      <div className="w-24 h-0.5 mx-auto mb-8" style={{ backgroundColor: primary }} />
+    <div className="booking-auth-modal booking-auth">
+      {g("loading.logo") && <img src={g("loading.logo")} alt="Logo" className="w-14 h-14 mb-3 mx-auto object-contain" style={{ opacity: 0.9 }} />}
+      <h2>Acesse sua conta</h2>
+      <div className="auth-divider" style={{ backgroundColor: primary }} />
       <form onSubmit={handleLogin}>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail"
-          className="w-full p-3 rounded-lg mb-4" autoComplete="email" autoFocus />
-        <div className="relative mb-4">
+        <div className="booking-auth-input-wrap">
+          <Mail className="auth-icon" />
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail"
+            className="w-full p-3" autoComplete="email" autoFocus />
+        </div>
+        <div className="booking-auth-input-wrap">
+          <Lock className="auth-icon" />
           <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
-            placeholder="Senha" className="w-full p-3 rounded-lg pr-10" autoComplete="current-password" />
-          <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
-            {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+            placeholder="Senha" className="w-full p-3 pr-10" autoComplete="current-password" />
+          <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3" style={{ zIndex: 1 }}>
+            {showPw ? <EyeOff className="w-4 h-4" style={{ color: "rgba(255,255,255,0.3)" }} /> : <Eye className="w-4 h-4" style={{ color: "rgba(255,255,255,0.3)" }} />}
           </button>
         </div>
-        {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-        <button type="submit" disabled={!valid || loading} className={`w-full py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
+        {error && <p className="text-sm mb-3" style={{ color: "#f87171" }}>{error}</p>}
+        <button type="submit" disabled={!valid || loading} className="booking-auth-btn"
           style={{ backgroundColor: primary, color: "#111" }}>
-          {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Login"}
+          {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Entrar"}
         </button>
       </form>
-      <button onClick={() => onSwitch("forgot")} className="text-sm text-gray-400 mt-4 block mx-auto hover:underline">Esqueceu a senha?</button>
-      <p className="text-sm text-gray-400 mt-2">Não possui conta? <button onClick={() => onSwitch("signup")} className="font-bold hover:underline" style={{ color: primary }}>Faça seu cadastro</button></p>
+      <button onClick={() => onSwitch("forgot")} className="booking-auth-link block mx-auto mt-4" style={{ color: "rgba(255,255,255,0.45)" }}>Esqueceu a senha?</button>
+      <p className="text-sm mt-2" style={{ color: "rgba(255,255,255,0.4)" }}>Não possui conta? <button onClick={() => onSwitch("signup")} className="booking-auth-link font-bold" style={{ color: primary }}>Criar conta</button></p>
       {g("auth.legacy_migration_enabled", "true") !== "false" && (
         <>
-          <div className="flex items-center gap-2 my-4"><hr className="flex-1 border-gray-700" /><span className="text-xs text-gray-500">ou</span><hr className="flex-1 border-gray-700" /></div>
-          <button onClick={() => onSwitch("migration")} className="text-sm font-bold hover:underline" style={{ color: primary }}>Já é cliente da barbearia? Ative sua conta →</button>
+          <div className="booking-auth-or"><hr /><span>ou</span><hr /></div>
+          <button onClick={() => onSwitch("migration")} className="booking-auth-link font-semibold" style={{ color: primary }}>Já é cliente? Ative sua conta →</button>
         </>
       )}
-      <button onClick={() => onClose()} className="mt-8 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar</button>
+      <button onClick={() => onClose()} className="booking-auth-back">Voltar</button>
     </div>
   );
 }
@@ -3659,37 +3680,50 @@ function SignupForm({ g, primary, onClose, onSwitch, onSuccess, showToast, setAu
     : { color: "#eab308", text: "Razoável" };
 
   return (
-    <div className="p-6 text-center booking-auth">
-      <h2 className="text-2xl font-bold text-white mb-2">Criar conta</h2>
-      <p className="text-gray-400 text-sm mb-6">Preencha o formulário com seus dados</p>
+    <div className="booking-auth-modal booking-auth">
+      <h2>Criar conta</h2>
+      <p className="auth-subtitle">Preencha seus dados para começar</p>
       <form onSubmit={handleSignup}>
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome e Sobrenome"
-          className="w-full p-3 rounded-lg mb-4" autoComplete="name" autoFocus />
-        <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))} placeholder="Telefone (celular)"
-          className="w-full p-3 rounded-lg mb-4" inputMode="numeric" autoComplete="tel" />
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail"
-          className="w-full p-3 rounded-lg mb-4" autoComplete="email" />
-        <div className="relative mb-1">
+        <div className="booking-auth-input-wrap">
+          <User className="auth-icon" />
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome e Sobrenome"
+            className="w-full p-3" autoComplete="name" autoFocus />
+        </div>
+        <div className="booking-auth-input-wrap">
+          <Phone className="auth-icon" />
+          <input type="tel" value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))} placeholder="Telefone (celular)"
+            className="w-full p-3" inputMode="numeric" autoComplete="tel" />
+        </div>
+        <div className="booking-auth-input-wrap">
+          <Mail className="auth-icon" />
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail"
+            className="w-full p-3" autoComplete="email" />
+        </div>
+        <div className="booking-auth-input-wrap" style={{ marginBottom: "0.25rem" }}>
+          <Lock className="auth-icon" />
           <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
-            placeholder="Senha (mín. 6, com letras e números)" className="w-full p-3 rounded-lg pr-10" autoComplete="new-password" />
-          <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3">
-            {showPw ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+            placeholder="Senha (mín. 6, letras e números)" className="w-full p-3 pr-10" autoComplete="new-password" />
+          <button type="button" onClick={() => setShowPw(!showPw)} className="absolute inset-y-0 right-0 flex items-center pr-3" style={{ zIndex: 1 }}>
+            {showPw ? <EyeOff className="w-4 h-4" style={{ color: "rgba(255,255,255,0.3)" }} /> : <Eye className="w-4 h-4" style={{ color: "rgba(255,255,255,0.3)" }} />}
           </button>
         </div>
         {pwIndicator && (
-          <p className="text-xs mb-3 text-left" style={{ color: pwIndicator.color }}>{pwIndicator.text}</p>
+          <p className="text-xs mb-3 text-left pl-1" style={{ color: pwIndicator.color }}>{pwIndicator.text}</p>
         )}
-        <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Confirme a senha"
-          className="w-full p-3 rounded-lg mb-4" autoComplete="new-password" />
-        {password && confirmPw && password !== confirmPw && <p className="text-red-400 text-sm mb-2">As senhas não conferem.</p>}
-        {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-        <button type="submit" disabled={!valid || loading} className={`w-full py-3 font-bold rounded-lg ${valid ? "" : "opacity-50"}`}
+        <div className="booking-auth-input-wrap">
+          <Lock className="auth-icon" />
+          <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Confirme a senha"
+            className="w-full p-3" autoComplete="new-password" />
+        </div>
+        {password && confirmPw && password !== confirmPw && <p className="text-sm mb-2" style={{ color: "#f87171" }}>As senhas não conferem.</p>}
+        {error && <p className="text-sm mb-3" style={{ color: "#f87171" }}>{error}</p>}
+        <button type="submit" disabled={!valid || loading} className="booking-auth-btn"
           style={{ backgroundColor: primary, color: "#111" }}>
           {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Criar conta"}
         </button>
       </form>
-      <p className="text-xs text-gray-400 mt-4">Ao se cadastrar, você aceita os Termos de Uso e Política de Privacidade.</p>
-      <button onClick={() => onSwitch()} className="mt-6 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar</button>
+      <p className="text-xs mt-4" style={{ color: "rgba(255,255,255,0.3)" }}>Ao se cadastrar, você aceita os Termos de Uso e Política de Privacidade.</p>
+      <button onClick={() => onSwitch()} className="booking-auth-back">Voltar</button>
     </div>
   );
 }
@@ -3715,24 +3749,30 @@ function ForgotForm({ g, primary, onClose, onSwitch }: any) {
   }
 
   return (
-    <div className="p-6 text-center booking-auth">
-      <h2 className="text-2xl font-bold text-white mb-2">Redefinir senha</h2>
+    <div className="booking-auth-modal booking-auth">
+      <h2>Redefinir senha</h2>
       {sent ? (
         <>
-          <p className="text-gray-400 text-sm mb-6">Enviamos um link de redefinição para <strong className="text-white">{email}</strong>. Verifique sua caixa de entrada e spam.</p>
-          <button onClick={() => onSwitch()} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: "#111" }}>Ir para Login</button>
+          <div className="mt-4 mb-6 p-4 rounded-xl" style={{ backgroundColor: "rgba(22,163,74,0.12)", border: "1px solid rgba(22,163,74,0.2)" }}>
+            <Mail className="w-8 h-8 mx-auto mb-2" style={{ color: primary }} />
+            <p className="text-sm" style={{ color: "rgba(255,255,255,0.7)" }}>Link enviado para <strong className="text-white">{email}</strong>. Verifique sua caixa de entrada e spam.</p>
+          </div>
+          <button onClick={() => onSwitch()} className="booking-auth-btn" style={{ backgroundColor: primary, color: "#111" }}>Ir para Login</button>
         </>
       ) : (
         <form onSubmit={handleReset}>
-          <p className="text-gray-400 text-sm mb-6">Informe seu e-mail para receber um link de redefinição de senha.</p>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Seu e-mail"
-            className="w-full p-3 rounded-lg mb-4" autoComplete="email" autoFocus />
-          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-          <button type="submit" disabled={!email.includes("@") || loading} className={`w-full py-3 font-bold rounded-lg ${email.includes("@") ? "" : "opacity-50"}`}
+          <p className="auth-subtitle">Informe seu e-mail para receber um link de redefinição.</p>
+          <div className="booking-auth-input-wrap">
+            <Mail className="auth-icon" />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Seu e-mail"
+              className="w-full p-3" autoComplete="email" autoFocus />
+          </div>
+          {error && <p className="text-sm mb-3" style={{ color: "#f87171" }}>{error}</p>}
+          <button type="submit" disabled={!email.includes("@") || loading} className="booking-auth-btn"
             style={{ backgroundColor: primary, color: "#111" }}>
-            {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Enviar"}
+            {loading ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Enviar link"}
           </button>
-          <button type="button" onClick={() => onSwitch()} className="mt-6 py-2 px-6 rounded-full border border-gray-600 text-white text-sm" style={{ backgroundColor: "#1a1a1a" }}>Voltar para Login</button>
+          <button type="button" onClick={() => onSwitch()} className="booking-auth-back">Voltar ao Login</button>
         </form>
       )}
     </div>
