@@ -365,6 +365,12 @@ function PublicSiteApp() {
   );
   const isIOS = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isIOSSafari = isIOS && /safari/i.test(navigator.userAgent) && !/crios|fxios|opios|edgios/i.test(navigator.userAgent);
+  const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
+
+  // Platform-specific navbar positioning class
+  const navbarPlatformClass = isStandalone
+    ? (isIOS ? "navbar-ios-standalone" : isAndroid ? "navbar-android-standalone" : "navbar-desktop-standalone")
+    : (isIOS ? "navbar-ios-browser" : isAndroid ? "navbar-android-browser" : "navbar-desktop");
 
   useEffect(() => {
     if (isStandalone) return;
@@ -1329,7 +1335,7 @@ function PublicSiteApp() {
       )}
 
       {/* Floating Pill Navbar */}
-      <div ref={navRef} className={`booking-navbar ${modalContent ? "booking-content-blur" : ""}`}>
+      <div ref={navRef} className={`booking-navbar ${navbarPlatformClass} ${modalContent ? "booking-content-blur" : ""}`}>
         <div ref={indicatorRef} className="booking-nav-indicator" style={{ backgroundColor: `${navbarActiveColor}20` }} />
         {tabDefs.map((item) => (
           <div key={item.key}

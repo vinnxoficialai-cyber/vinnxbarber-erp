@@ -689,6 +689,29 @@
   z-index: 0;
 }
 
+/* ── Platform-specific navbar positioning ── */
+/* iOS PWA: no browser chrome, just home indicator */
+.booking-navbar.navbar-ios-standalone {
+  bottom: env(safe-area-inset-bottom, 4px);
+}
+/* iOS browser: Safari has bottom toolbar, needs more space */
+.booking-navbar.navbar-ios-browser {
+  bottom: calc(0.5rem + env(safe-area-inset-bottom));
+}
+/* Android PWA: no browser chrome, small margin */
+.booking-navbar.navbar-android-standalone {
+  bottom: 8px;
+}
+/* Android browser: has nav buttons, modest spacing */
+.booking-navbar.navbar-android-browser {
+  bottom: 12px;
+}
+/* Desktop: standard spacing */
+.booking-navbar.navbar-desktop,
+.booking-navbar.navbar-desktop-standalone {
+  bottom: 12px;
+}
+
 /* Fix mobile viewport: 100vh includes browser chrome (address bar),
    100dvh adjusts to the actual visible viewport dynamically */
 .booking-app-container {
