@@ -2070,6 +2070,13 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
     return eventDate < todayStart || e.status === "completed";
   });
 
+  // Resolve barber name — fallback to barbers array if barberName looks like a UUID
+  const isUUID = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s || "");
+  const resolveBarberName = (e: CalendarEvent) =>
+    e.barberName && !isUUID(e.barberName)
+      ? e.barberName
+      : barbers.find((b: any) => b.id === e.barberId)?.name || e.barberName || "A definir";
+
   // Show appointment details
   function showDetalhes(ev: CalendarEvent) {
     const eventDate = new Date(ev.year, ev.month, ev.date);
@@ -2077,11 +2084,8 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
     const isOpen = eventDate >= todayStart && ev.status !== "completed";
     const unit = units.find((u: any) => u.id === ev.unitId);
 
-    // Resolve barber name — fallback to barbers array if barberName looks like a UUID
-    const isUUID = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s || "");
-    const resolvedBarber = ev.barberName && !isUUID(ev.barberName)
-      ? ev.barberName
-      : barbers.find((b: any) => b.id === ev.barberId)?.name || ev.barberName || "A definir";
+    // Use the shared resolveBarberName helper (defined in HistoricoView scope)
+    const resolvedBarber = resolveBarberName(ev);
 
     const svc = services.find((s: any) => s.id === ev.serviceId);
     const price = ev.finalPrice != null ? Number(ev.finalPrice) : (svc?.price ?? null);
@@ -2286,12 +2290,6 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
     );
   }
 
-  // Resolve barber name — fallback to barbers array if barberName looks like a UUID
-  const isUUID = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s || "");
-  const resolveBarberName = (e: CalendarEvent) =>
-    e.barberName && !isUUID(e.barberName)
-      ? e.barberName
-      : barbers.find((b: any) => b.id === e.barberId)?.name || e.barberName || "A definir";
 
   return (
     <div className="p-6" style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
