@@ -553,18 +553,43 @@
   animation: bookingUnderlineExpand 0.7s ease-out 0.4s both;
 }
 
-/* Modal backdrop — dark translucent overlay only */
+/* Modal backdrop — animated overlay with blur */
 .booking-modal-backdrop {
-  background-color: rgba(0, 0, 0, 0.6);
+  background-color: rgba(0, 0, 0, 0);
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+  transition: background-color 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+              backdrop-filter 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+              -webkit-backdrop-filter 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.booking-modal-backdrop.backdrop-visible {
+  background-color: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
 }
 
-/* Modal slide-up transition — bottom sheet */
+/* Modal content — zoom + fade + blur enter/exit transitions */
 .booking-modal-enter {
-  transform: translateY(100%);
-  transition: transform 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+  opacity: 0;
+  transform: scale(1.04) translateY(8px);
+  filter: blur(6px);
+  transition: opacity 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+              filter 0.38s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .booking-modal-enter-active {
-  transform: translateY(0);
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  filter: blur(0px);
+}
+/* Exit state — zoom out + blur + fade */
+.booking-modal-exit {
+  opacity: 0 !important;
+  transform: scale(0.88) translateY(6px) !important;
+  filter: blur(10px) !important;
+  transition: opacity 0.32s cubic-bezier(0.4, 0, 1, 1),
+              transform 0.32s cubic-bezier(0.4, 0, 1, 1),
+              filter 0.32s cubic-bezier(0.4, 0, 1, 1) !important;
 }
 
 /* Modal sheet — layout container only, no visual */

@@ -783,7 +783,10 @@ function PublicSiteApp() {
   // ============================================================
   // MODAL SYSTEM
   // ============================================================
+  const [modalExiting, setModalExiting] = useState(false);
+
   const openModal = useCallback((content: React.ReactNode, pos: ModalPosition = "bottom", isAuth = false) => {
+    setModalExiting(false);
     setModalContent(content);
     setModalPosition(pos);
     setModalIsAuth(isAuth);
@@ -792,12 +795,14 @@ function PublicSiteApp() {
   }, []);
 
   const closeModal = useCallback((callback?: () => void) => {
+    setModalExiting(true);
     setModalVisible(false);
     setTimeout(() => {
+      setModalExiting(false);
       setModalContent(null);
       setModalIsAuth(false);
       if (callback) callback();
-    }, 300);
+    }, 420); // matches longest CSS transition (backdrop 400ms) + buffer
   }, []);
 
   // ============================================================
@@ -983,7 +988,7 @@ function PublicSiteApp() {
     if (pendingBooking && authUser && clientProfile) {
       setPendingBooking(false);
       // Small delay to ensure modal is closed and UI is stable
-      setTimeout(() => showResumoModal(), 400);
+      setTimeout(() => showResumoModal(), 500);
     }
   }, [pendingBooking, authUser, clientProfile]);
 
@@ -1349,13 +1354,13 @@ function PublicSiteApp() {
 
       {/* Modal Overlay — Bottom Sheet / Center Dialog / Fullscreen */}
       {modalContent && (
-        <div className="fixed inset-0 z-50 flex justify-center booking-modal-backdrop"
+        <div className={`fixed inset-0 z-50 flex justify-center booking-modal-backdrop ${modalVisible ? "backdrop-visible" : ""}`}
           style={{
             alignItems: modalPosition !== "bottom" ? "center" : "flex-end",
             padding: modalPosition === "fullscreen" ? 0 : modalPosition === "center" ? "1rem" : 0,
           }}
           onClick={(e) => { if (e.target === e.currentTarget && !modalIsAuth) closeModal(); }}>
-          <div className={`w-full booking-modal-enter booking-hide-scrollbar ${modalVisible ? "booking-modal-enter-active" : ""}`}
+          <div className={`w-full booking-modal-enter booking-hide-scrollbar ${modalVisible ? "booking-modal-enter-active" : ""} ${modalExiting ? "booking-modal-exit" : ""}`}
             style={{
               maxWidth: modalPosition === "fullscreen" ? "100%" : 420,
               maxHeight: modalPosition === "fullscreen" ? "100dvh" : "85vh",
