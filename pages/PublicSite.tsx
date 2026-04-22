@@ -635,6 +635,8 @@ function PublicSiteApp() {
         setAuthUser(null);
         setClientProfile(null);
         setClientSubscription(null);
+        setAllEvents([]);
+        sessionStorage.removeItem("vinnx_reminder_dismissed");
         saveAuthBackup(null);
         return;
       }
@@ -1284,7 +1286,7 @@ function PublicSiteApp() {
             authUser={authUser} clientProfile={clientProfile}
             goals={goals} services={services}
             onLogin={() => showLoginModal()} openModal={openModal} closeModal={closeModal}
-            onLogout={async () => { lastSignInRef.current = 0; _psAccessToken = null; localStorage.removeItem("vinnx_ps_user"); await supabase.auth.signOut(); setAuthUser(null); setClientProfile(null); setClientSubscription(null); }}
+            onLogout={async () => { lastSignInRef.current = 0; _psAccessToken = null; localStorage.removeItem("vinnx_ps_user"); sessionStorage.removeItem("vinnx_reminder_dismissed"); await supabase.auth.signOut(); setAuthUser(null); setClientProfile(null); setClientSubscription(null); setAllEvents([]); resetSelection(); }}
             onProfileUpdate={(p: any) => setClientProfile(p)}
             setActiveView={setActiveView} updateSelection={updateSelection}
             resetSelection={resetSelection}
