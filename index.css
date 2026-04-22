@@ -556,7 +556,7 @@
 /* Modal backdrop — dark overlay with fade */
 .booking-modal-backdrop {
   background-color: rgba(0, 0, 0, 0);
-  transition: background-color 0.3s ease;
+  transition: background-color 0.35s ease-out;
 }
 .booking-modal-backdrop.backdrop-visible {
   background-color: rgba(0, 0, 0, 0.6);
@@ -578,11 +578,11 @@
 }
 /* Exit — harmonic slide-down + fade + blur */
 .booking-modal-exit {
-  transform: translateY(20%) !important;
+  transform: translateY(18%) !important;
   opacity: 0 !important;
   filter: blur(8px) !important;
-  transition-duration: 0.32s !important;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.7, 1) !important;
+  transition-duration: 0.34s !important;
+  transition-timing-function: ease-out !important;
 }
 
 /* Modal sheet — layout container only, no visual */
