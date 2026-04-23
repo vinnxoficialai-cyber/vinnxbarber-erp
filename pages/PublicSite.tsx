@@ -1652,7 +1652,7 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
   }, [showPushBanner]);
 
   return (
-    <div className={`relative flex flex-col ${animateReady ? "" : "booking-anim-paused"}`} style={{ height: "100%" }}>
+    <div className={`relative flex flex-col ${animateReady ? "" : "booking-anim-paused"}`} style={{ height: "100%", paddingTop: "env(safe-area-inset-top, 0px)" }}>
       {/* Hero Background */}
       <div className="booking-video-bg">
         {heroVideo ? (

@@ -1183,10 +1183,13 @@
   max-height: 500px;
 }
 
-/* Video background for hero */
+/* Video background for hero — extends into status bar area for edge-to-edge effect */
 .booking-video-bg {
   position: absolute;
-  top: 0; left: 0; width: 100%; height: 100%;
+  top: calc(-1 * env(safe-area-inset-top, 0px));
+  left: 0;
+  width: 100%;
+  height: calc(100% + env(safe-area-inset-top, 0px));
   overflow: hidden;
 }
 .booking-video-bg video,
