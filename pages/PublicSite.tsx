@@ -461,8 +461,9 @@ function PublicSiteApp() {
   const subscribeToPush = useCallback(async () => {
     if (!pushSupported || !clientProfile?.id || !authUser) return;
     try {
-      const vapidKey = g('push.vapid_public_key', '');
-      if (!vapidKey) { showToast('Push não configurado pelo admin', 'error'); return; }
+      // VAPID public key (public, not a secret — generated for this project)
+      const vapidKey = 'BC5Yy_ldhetSkjkSbNWdKydHhfRRPIP9tfHT2YhAfq-GUykUF4UL6tssmP7ovARdvlq3lUUfMC4DxbpFKbbcLPQ';
+      if (!vapidKey) { showToast('Push não configurado', 'error'); return; }
 
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({
@@ -494,7 +495,7 @@ function PublicSiteApp() {
       }
       dismissPushBanner();
     }
-  }, [pushSupported, clientProfile, authUser, g, urlBase64ToUint8Array, showToast, dismissPushBanner]);
+  }, [pushSupported, clientProfile, authUser, urlBase64ToUint8Array, showToast, dismissPushBanner]);
 
   const unsubscribeFromPush = useCallback(async () => {
     try {
