@@ -419,7 +419,7 @@ function PublicSiteApp() {
   const [pushPermission, setPushPermission] = useState<NotificationPermission | 'default'>('default');
   const [showPushBanner, setShowPushBanner] = useState(false);
   const [pushBannerExiting, setPushBannerExiting] = useState(false);
-  const [showIOSPushGuide, setShowIOSPushGuide] = useState(false);
+
 
   // Helper: convert VAPID key from base64url to Uint8Array
   const urlBase64ToUint8Array = useCallback((base64String: string) => {
@@ -560,12 +560,7 @@ function PublicSiteApp() {
     return () => clearTimeout(timer);
   }, [pushSupported, pushSubscribed]);
 
-  // iOS without PWA: show guidance banner to install app for push support
-  useEffect(() => {
-    if (!isIOS || isStandalone || pushSupported || pushSubscribed) return;
-    const timer = setTimeout(() => setShowIOSPushGuide(true), 2500);
-    return () => clearTimeout(timer);
-  }, [isIOS, isStandalone, pushSupported, pushSubscribed]);
+
 
   // Navbar
   const navRef = useRef<HTMLDivElement>(null);
@@ -1448,7 +1443,7 @@ function PublicSiteApp() {
             showPushBanner={showPushBanner} pushBannerExiting={pushBannerExiting}
             pushSubscribed={pushSubscribed} pushPermission={pushPermission}
             onPushSubscribe={subscribeToPush} onPushDismiss={dismissPushBanner}
-            showIOSPushGuide={showIOSPushGuide} onIOSPushGuideDismiss={() => setShowIOSPushGuide(false)}
+
           />}
           {activeView === "historico" && <HistoricoView
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
@@ -1594,7 +1589,7 @@ function PublicSiteApp() {
 // ============================================================
 // AGENDAR VIEW
 // ============================================================
-function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, allEvents, onUnitClick, onBarberClick, onServiceClick, onDateClick, onAgendarClick, showPrices, showDuration, maxOpenAppts, showInstallBanner, isStandalone, isIOS, isIOSSafari, deferredPrompt, installBannerExiting, onInstallClick, onInstallDismiss, showPushBanner, pushBannerExiting, pushSubscribed, pushPermission, onPushSubscribe, onPushDismiss, showIOSPushGuide, onIOSPushGuideDismiss }: any) {
+function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, allEvents, onUnitClick, onBarberClick, onServiceClick, onDateClick, onAgendarClick, showPrices, showDuration, maxOpenAppts, showInstallBanner, isStandalone, isIOS, isIOSSafari, deferredPrompt, installBannerExiting, onInstallClick, onInstallDismiss, showPushBanner, pushBannerExiting, pushSubscribed, pushPermission, onPushSubscribe, onPushDismiss }: any) {
   const heroVideo = g("hero.bg_video", "");
   const heroImage = g("hero.bg_image", "");
   const heroTitle = g("hero.title", "Agende seu horário");
@@ -1899,54 +1894,7 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
         </div>
       )}
 
-      {/* iOS Push Guide Banner — shown when iOS user is NOT in PWA */}
-      {showIOSPushGuide && (
-        <div className="relative z-10 mx-6 mt-2 p-4 rounded-xl booking-fade-in" style={{
-          background: "rgba(255,255,255,0.08)",
-          backdropFilter: "blur(16px)",
-          WebkitBackdropFilter: "blur(16px)",
-          border: "1px solid rgba(255,255,255,0.12)",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.3)"
-        }}>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 flex items-center justify-center" style={{
-              backgroundColor: `${primary}20`,
-              border: "1.5px solid rgba(255,255,255,0.15)",
-            }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-bold text-sm text-white">Instale o app</p>
-              <p className="text-[11px] text-gray-400">Para receber notificações no iPhone</p>
-            </div>
-            <button onClick={onIOSPushGuideDismiss} className="flex-shrink-0 p-1 rounded-lg transition-colors hover:bg-white/10" style={{ color: "rgba(255,255,255,0.5)" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-            </button>
-          </div>
-          <div className="space-y-1.5 mb-3">
-            {[
-              { step: 1, verb: "Toque em", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>, label: "Compartilhar" },
-              { step: 2, verb: "Escolha", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: "Adicionar à Tela de Início" },
-              { step: 3, verb: "", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>, label: "Abra o app e ative as notificações" },
-            ].map(({ step, verb, icon, label }) => (
-              <div key={step}
-                className="flex items-center gap-2.5 py-2 px-3 rounded-lg"
-                style={{ background: "rgba(255,255,255,0.05)" }}>
-                <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: `${primary}25`, color: primary }}>{step}</span>
-                {verb && <span className="text-[12px] text-gray-300">{verb}</span>}
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
-                  {icon}
-                  {label}
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="text-[10px] text-gray-500 mb-2">No iPhone, notificações só funcionam com o app instalado.</p>
-          <button onClick={onIOSPushGuideDismiss} className="px-3 py-2 rounded-lg text-[12px] text-gray-400 transition-colors hover:bg-white/5">Agora não</button>
-        </div>
-      )}
+
 
       {/* Hero Content */}
       <div className="relative z-10 flex-grow flex flex-col justify-end p-6 pb-4 min-h-0 overflow-hidden">
