@@ -459,11 +459,10 @@ function PublicSiteApp() {
   }, []);
 
   const subscribeToPush = useCallback(async () => {
-    if (!pushSupported || !clientProfile?.id || !authUser) return;
+    if (!pushSupported) return;
     try {
       // VAPID public key (public, not a secret — generated for this project)
       const vapidKey = 'BC5Yy_ldhetSkjkSbNWdKydHhfRRPIP9tfHT2YhAfq-GUykUF4UL6tssmP7ovARdvlq3lUUfMC4DxbpFKbbcLPQ';
-      if (!vapidKey) { showToast('Push não configurado', 'error'); return; }
 
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({
@@ -471,15 +470,18 @@ function PublicSiteApp() {
         userVisibleOnly: true,
       });
 
-      const j = sub.toJSON();
-      await supabase.from('push_subscriptions').upsert({
-        clientId: clientProfile.id,
-        authUserId: authUser.id,
-        endpoint: j.endpoint,
-        keys: j.keys,
-        userAgent: navigator.userAgent,
-        updatedAt: new Date().toISOString(),
-      }, { onConflict: 'endpoint' });
+      // Save subscription to DB only if user is logged in
+      if (clientProfile?.id && authUser) {
+        const j = sub.toJSON();
+        await supabase.from('push_subscriptions').upsert({
+          clientId: clientProfile.id,
+          authUserId: authUser.id,
+          endpoint: j.endpoint,
+          keys: j.keys,
+          userAgent: navigator.userAgent,
+          updatedAt: new Date().toISOString(),
+        }, { onConflict: 'endpoint' });
+      }
 
       setPushSubscribed(true);
       setPushPermission('granted');
@@ -513,13 +515,14 @@ function PublicSiteApp() {
     }
   }, [showToast]);
 
-  // Show push modal immediately when user is logged in and not subscribed
+  // Show push modal for ALL visitors (even not logged in)
   useEffect(() => {
-    if (!pushSupported || pushSubscribed || !authUser) return;
+    if (!pushSupported || pushSubscribed) return;
     if (Notification.permission === 'denied') return;
-    // If already granted but not subscribed, auto-subscribe silently
+    // If already granted, auto-subscribe silently (needs auth for DB save)
     if (Notification.permission === 'granted') {
-      subscribeToPush();
+      if (authUser && clientProfile?.id) subscribeToPush();
+      setPushSubscribed(true); // Mark as subscribed to prevent modal
       return;
     }
     // Re-show after 7 days if dismissed
@@ -531,7 +534,7 @@ function PublicSiteApp() {
     // Small delay to let page settle (1.5s)
     const timer = setTimeout(() => setShowPushBanner(true), 1500);
     return () => clearTimeout(timer);
-  }, [pushSupported, pushSubscribed, authUser, subscribeToPush]);
+  }, [pushSupported, pushSubscribed, authUser, clientProfile, subscribeToPush]);
 
   // Navbar
   const navRef = useRef<HTMLDivElement>(null);
