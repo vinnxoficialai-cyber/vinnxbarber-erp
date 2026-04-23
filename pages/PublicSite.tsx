@@ -515,14 +515,13 @@ function PublicSiteApp() {
     }
   }, [showToast]);
 
-  // Show push modal for ALL visitors (even not logged in)
+  // Show push banner for ALL visitors (even not logged in)
   useEffect(() => {
     if (!pushSupported || pushSubscribed) return;
     if (Notification.permission === 'denied') return;
-    // If already granted, auto-subscribe silently (needs auth for DB save)
+    // If already granted, try to subscribe silently (no banner needed)
     if (Notification.permission === 'granted') {
-      if (authUser && clientProfile?.id) subscribeToPush();
-      setPushSubscribed(true); // Mark as subscribed to prevent modal
+      subscribeToPush();
       return;
     }
     // Re-show after 24h if dismissed (new key ignores old banner dismissals)
