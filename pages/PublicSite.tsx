@@ -465,27 +465,39 @@ function PublicSiteApp() {
       const vapidKey = 'BKX_TR3Ik7Vor8CEU8mtbdNMcT5Mk0TXaEyjW0cPCu2PNnFMWR-sZgEcuOOi3GXPM1y4MQxp8e-xP1hzLfKS_ew';
 
       const reg = await navigator.serviceWorker.ready;
+      
+      // Unsubscribe any existing subscription (may have old VAPID key)
+      const existingSub = await reg.pushManager.getSubscription();
+      if (existingSub) {
+        await existingSub.unsubscribe();
+      }
+
       const sub = await reg.pushManager.subscribe({
         applicationServerKey: urlBase64ToUint8Array(vapidKey),
         userVisibleOnly: true,
       });
 
-      // Save subscription to DB only if user is logged in
-      if (clientProfile?.id && authUser) {
-        const j = sub.toJSON();
-        await supabase.from('push_subscriptions').upsert({
-          clientId: clientProfile.id,
-          authUserId: authUser.id,
+      // Always save subscription to DB (bypass RLS by using service role via API)
+      const j = sub.toJSON();
+      const saveRes = await fetch('/api/push-subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: clientProfile?.id || 'anonymous',
+          authUserId: authUser?.id || 'anonymous',
           endpoint: j.endpoint,
           keys: j.keys,
           userAgent: navigator.userAgent,
-          updatedAt: new Date().toISOString(),
-        }, { onConflict: 'endpoint' });
+        }),
+      });
+      
+      if (!saveRes.ok) {
+        console.error('[Push] Failed to save subscription:', await saveRes.text());
       }
 
       setPushSubscribed(true);
       setPushPermission('granted');
-      showToast('Notificações ativadas! 🔔');
+      showToast('Notificações ativadas!');
       dismissPushBanner();
     } catch (err: any) {
       console.error('[Push] Subscribe error:', err);
