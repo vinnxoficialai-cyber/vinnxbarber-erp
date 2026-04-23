@@ -325,18 +325,80 @@ async function processScheduledCampaigns() {
 }
 
 // ══════════════════════════════════════
+// FLOW 6: INACTIVE CLIENTS (daily)
+// ══════════════════════════════════════
+async function processInactiveClients() {
+  const config = await getConfig('inactive');
+  if (!config?.enabled) return { flow: 'inactive', skipped: true };
+
+  const inactiveDays = config.config?.inactiveDays || 30;
+  const maxNudgesPerMonth = config.config?.maxNudgesPerMonth || 1;
+
+  // Find clients with push subscriptions who haven't had a completed event recently
+  const cutoffISO = new Date(Date.now() - inactiveDays * 24 * 60 * 60 * 1000).toISOString();
+  const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Get all clients with push subscriptions
+  const subs = await sbQuery(`push_subscriptions?select="clientId"&"clientId"=not.eq.anonymous`);
+  if (!subs?.length) return { flow: 'inactive', sent: 0 };
+
+  const clientIds = [...new Set(subs.map(s => s.clientId))];
+  let sent = 0;
+
+  for (const clientId of clientIds) {
+    // Check last completed event for this client
+    const recentEvents = await sbQuery(
+      `calendar_events?"clientId"=eq.${clientId}&status=eq.completed&order=date.desc&limit=1&select=date`
+    );
+
+    // If they have recent events, skip
+    if (recentEvents?.length) {
+      const lastDate = new Date(recentEvents[0].date);
+      if (lastDate > new Date(cutoffISO)) continue;
+    }
+
+    // Check if already nudged this month
+    const recentNudges = await sbQuery(
+      `push_log?type=eq.inactive&"clientId"=eq.${clientId}&"createdAt"=gte.${monthAgo}&select=id`
+    );
+    if (recentNudges?.length >= maxNudgesPerMonth) continue;
+
+    const body = config.messageTemplate || 'Faz tempo que não te vemos! 💈 Agende seu horário';
+    await sendPush(clientId, '💈 Sentimos sua falta!', body, `inactive-${clientId}`, config.imageUrl);
+
+    // Log
+    await sbFetch('push_log', {
+      method: 'POST',
+      body: JSON.stringify({
+        clientId,
+        type: 'inactive',
+        title: '💈 Sentimos sua falta!',
+        body,
+        status: 'sent',
+      }),
+    });
+    sent++;
+  }
+
+  return { flow: 'inactive', sent };
+}
+
+// ══════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  // Accept GET (for pg_cron/Vercel cron) and POST (for direct calls)
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-  // Auth: x-push-secret only
-  const secret = req.headers['x-push-secret'];
+  // Auth: x-push-secret from header or query param
+  const secret = req.headers['x-push-secret'] || req.query?.secret;
   if (!secret || secret !== process.env.PUSH_API_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { type } = req.body || {};
+  const type = req.body?.type || req.query?.type;
   const results = [];
 
   try {
@@ -347,6 +409,7 @@ export default async function handler(req, res) {
     } else if (type === 'daily') {
       results.push(await processIncompleteProfiles());
       results.push(await processBirthdays());
+      results.push(await processInactiveClients());
     } else {
       return res.status(400).json({ error: 'Invalid type. Use hourly or daily.' });
     }

@@ -421,6 +421,7 @@ function PublicSiteApp() {
   const [pushPermission, setPushPermission] = useState<NotificationPermission | 'default'>('default');
   const [showPushBanner, setShowPushBanner] = useState(false);
   const [pushBannerExiting, setPushBannerExiting] = useState(false);
+  const [showIOSPushGuide, setShowIOSPushGuide] = useState(false);
 
   // Helper: convert VAPID key from base64url to Uint8Array
   const urlBase64ToUint8Array = useCallback((base64String: string) => {
@@ -549,6 +550,13 @@ function PublicSiteApp() {
     const timer = setTimeout(() => setShowPushBanner(true), 1500);
     return () => clearTimeout(timer);
   }, [pushSupported, pushSubscribed]);
+
+  // iOS without PWA: show guidance banner to install app for push support
+  useEffect(() => {
+    if (!isIOS || isStandalone || pushSupported || pushSubscribed) return;
+    const timer = setTimeout(() => setShowIOSPushGuide(true), 2500);
+    return () => clearTimeout(timer);
+  }, [isIOS, isStandalone, pushSupported, pushSubscribed]);
 
   // Navbar
   const navRef = useRef<HTMLDivElement>(null);
@@ -761,6 +769,27 @@ function PublicSiteApp() {
         setAuthUser(u);
         saveAuthBackup(u, session.access_token, session.refresh_token);
         loadClientProfile(u.id);
+        // Link anonymous push subscription to real client
+        navigator.serviceWorker?.ready?.then(async (reg) => {
+          const sub = await reg.pushManager.getSubscription();
+          if (sub) {
+            const j = sub.toJSON();
+            const { data: cl } = await supabase.from('clients').select('id').eq('authUserId', session.user.id).single();
+            if (cl?.id) {
+              fetch('/api/push-subscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  clientId: cl.id,
+                  authUserId: session.user.id,
+                  endpoint: j.endpoint,
+                  keys: j.keys,
+                  userAgent: navigator.userAgent,
+                }),
+              }).catch(() => {});
+            }
+          }
+        }).catch(() => {});
         return;
       }
       if (event === "SIGNED_OUT") {
@@ -1212,6 +1241,12 @@ function PublicSiteApp() {
           showToast(`Erro ao agendar: ${error.message}`, "error");
           return;
         }
+        // Fire-and-forget: send booking confirmation push
+        fetch('/api/push-booking-confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventId: newEvent.id }),
+        }).catch(() => {});
         // Deduct referral credits after successful booking
         if (selection.isFromCreditRedemption && clientProfile) {
           const minRedemption = parseInt(g("referral.min_redemption", "50"), 10) || 50;
@@ -1409,6 +1444,7 @@ function PublicSiteApp() {
             showPushBanner={showPushBanner} pushBannerExiting={pushBannerExiting}
             pushSubscribed={pushSubscribed} pushPermission={pushPermission}
             onPushSubscribe={subscribeToPush} onPushDismiss={dismissPushBanner}
+            showIOSPushGuide={showIOSPushGuide} onIOSPushGuideDismiss={() => setShowIOSPushGuide(false)}
           />}
           {activeView === "historico" && <HistoricoView
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
@@ -1554,7 +1590,7 @@ function PublicSiteApp() {
 // ============================================================
 // AGENDAR VIEW
 // ============================================================
-function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, allEvents, onUnitClick, onBarberClick, onServiceClick, onDateClick, onAgendarClick, showPrices, showDuration, maxOpenAppts, showInstallBanner, isStandalone, isIOS, isIOSSafari, deferredPrompt, installBannerExiting, onInstallClick, onInstallDismiss, showPushBanner, pushBannerExiting, pushSubscribed, pushPermission, onPushSubscribe, onPushDismiss }: any) {
+function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, allEvents, onUnitClick, onBarberClick, onServiceClick, onDateClick, onAgendarClick, showPrices, showDuration, maxOpenAppts, showInstallBanner, isStandalone, isIOS, isIOSSafari, deferredPrompt, installBannerExiting, onInstallClick, onInstallDismiss, showPushBanner, pushBannerExiting, pushSubscribed, pushPermission, onPushSubscribe, onPushDismiss, showIOSPushGuide, onIOSPushGuideDismiss }: any) {
   const heroVideo = g("hero.bg_video", "");
   const heroImage = g("hero.bg_image", "");
   const heroTitle = g("hero.title", "Agende seu horário");
@@ -1856,6 +1892,52 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* iOS Push Guide Banner — shown when iOS user is NOT in PWA */}
+      {showIOSPushGuide && (
+        <div className="relative z-10 mx-6 mt-2 p-4 rounded-xl booking-fade-in" style={{
+          background: "rgba(255,255,255,0.08)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.3)"
+        }}>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 flex items-center justify-center" style={{
+              backgroundColor: `${primary}20`,
+              border: "1.5px solid rgba(255,255,255,0.15)",
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 18h.01"/><path d="M7.9 17.39A8 8 0 0 1 12 4a8 8 0 0 1 4.1 13.39"/><path d="M15 17h.01"/><path d="M9 17h.01"/>
+                <rect x="2" y="20" width="20" height="2" rx="1"/>
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-sm text-white">📲 Instale o app</p>
+              <p className="text-[11px] text-gray-400">Para receber notificações no iPhone</p>
+            </div>
+            <button onClick={onIOSPushGuideDismiss} className="flex-shrink-0 p-1 rounded-lg transition-colors hover:bg-white/10" style={{ color: "rgba(255,255,255,0.5)" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+          <div className="space-y-1.5 mb-3">
+            <div className="flex items-center gap-2.5 py-2 px-3 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
+              <span className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 text-[11px] font-bold" style={{ background: `${primary}25`, color: primary }}>1</span>
+              <span className="text-[12px] text-gray-300">Toque em <span className="inline-block" style={{ fontSize: 16 }}>⬆️</span> <strong>Compartilhar</strong></span>
+            </div>
+            <div className="flex items-center gap-2.5 py-2 px-3 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
+              <span className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 text-[11px] font-bold" style={{ background: `${primary}25`, color: primary }}>2</span>
+              <span className="text-[12px] text-gray-300">Toque em <strong>Adicionar à Tela de Início</strong></span>
+            </div>
+            <div className="flex items-center gap-2.5 py-2 px-3 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
+              <span className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 text-[11px] font-bold" style={{ background: `${primary}25`, color: primary }}>3</span>
+              <span className="text-[12px] text-gray-300">Abra o app e ative as notificações</span>
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-500 mb-2">No iPhone, notificações só funcionam com o app instalado.</p>
+          <button onClick={onIOSPushGuideDismiss} className="px-3 py-2 rounded-lg text-[12px] text-gray-400 transition-colors hover:bg-white/5">Agora não</button>
         </div>
       )}
 
