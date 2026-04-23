@@ -453,25 +453,10 @@ function PublicSiteApp() {
     }).catch(() => {});
   }, [pushSupported, authUser, clientProfile]);
 
-  // Show push modal immediately when user is logged in and not subscribed
-  useEffect(() => {
-    if (!pushSupported || pushSubscribed || !authUser) return;
-    if (Notification.permission === 'denied') return;
-    // If already granted but not subscribed, auto-subscribe silently
-    if (Notification.permission === 'granted') {
-      subscribeToPush();
-      return;
-    }
-    // Re-show after 7 days if dismissed
-    const dismissed = localStorage.getItem('vinnx_push_dismissed');
-    if (dismissed) {
-      const diff = Date.now() - Number(dismissed);
-      if (diff < 7 * 24 * 60 * 60 * 1000) return; // 7 days
-    }
-    // Small delay to let page settle (1.5s)
-    const timer = setTimeout(() => setShowPushBanner(true), 1500);
-    return () => clearTimeout(timer);
-  }, [pushSupported, pushSubscribed, authUser, subscribeToPush]);
+  const dismissPushBanner = useCallback(() => {
+    setPushBannerExiting(true);
+    setTimeout(() => { setShowPushBanner(false); localStorage.setItem('vinnx_push_dismissed', String(Date.now())); }, 350);
+  }, []);
 
   const subscribeToPush = useCallback(async () => {
     if (!pushSupported || !clientProfile?.id || !authUser) return;
@@ -509,7 +494,7 @@ function PublicSiteApp() {
       }
       dismissPushBanner();
     }
-  }, [pushSupported, clientProfile, authUser, g, urlBase64ToUint8Array, showToast]);
+  }, [pushSupported, clientProfile, authUser, g, urlBase64ToUint8Array, showToast, dismissPushBanner]);
 
   const unsubscribeFromPush = useCallback(async () => {
     try {
@@ -527,10 +512,25 @@ function PublicSiteApp() {
     }
   }, [showToast]);
 
-  const dismissPushBanner = useCallback(() => {
-    setPushBannerExiting(true);
-    setTimeout(() => { setShowPushBanner(false); localStorage.setItem('vinnx_push_dismissed', String(Date.now())); }, 350);
-  }, []);
+  // Show push modal immediately when user is logged in and not subscribed
+  useEffect(() => {
+    if (!pushSupported || pushSubscribed || !authUser) return;
+    if (Notification.permission === 'denied') return;
+    // If already granted but not subscribed, auto-subscribe silently
+    if (Notification.permission === 'granted') {
+      subscribeToPush();
+      return;
+    }
+    // Re-show after 7 days if dismissed
+    const dismissed = localStorage.getItem('vinnx_push_dismissed');
+    if (dismissed) {
+      const diff = Date.now() - Number(dismissed);
+      if (diff < 7 * 24 * 60 * 60 * 1000) return; // 7 days
+    }
+    // Small delay to let page settle (1.5s)
+    const timer = setTimeout(() => setShowPushBanner(true), 1500);
+    return () => clearTimeout(timer);
+  }, [pushSupported, pushSubscribed, authUser, subscribeToPush]);
 
   // Navbar
   const navRef = useRef<HTMLDivElement>(null);
