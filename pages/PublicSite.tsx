@@ -432,23 +432,36 @@ function PublicSiteApp() {
     return arr;
   }, []);
 
-  // Sync subscription on app-load (replaces pushsubscriptionchange in SW)
+  // Sync subscription on app-load — save to DB via API (bypasses RLS)
   useEffect(() => {
-    if (!pushSupported || !authUser || !clientProfile?.id) return;
+    if (!pushSupported) return;
     setPushPermission(Notification.permission);
     
     navigator.serviceWorker.ready.then(async (reg) => {
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
+        // Save via API route (service_role, bypasses RLS)
         const j = sub.toJSON();
-        await supabase.from('push_subscriptions').upsert({
-          clientId: clientProfile.id,
-          authUserId: authUser.id,
-          endpoint: j.endpoint,
-          keys: j.keys,
-          updatedAt: new Date().toISOString(),
-        }, { onConflict: 'endpoint' });
-        setPushSubscribed(true);
+        try {
+          const res = await fetch('/api/push-subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              clientId: clientProfile?.id || 'anonymous',
+              authUserId: authUser?.id || 'anonymous',
+              endpoint: j.endpoint,
+              keys: j.keys,
+              userAgent: navigator.userAgent,
+            }),
+          });
+          if (res.ok) {
+            setPushSubscribed(true);
+          } else {
+            console.warn('[Push] Sync failed:', await res.text());
+          }
+        } catch (err) {
+          console.warn('[Push] Sync error:', err);
+        }
       }
     }).catch(() => {});
   }, [pushSupported, authUser, clientProfile]);

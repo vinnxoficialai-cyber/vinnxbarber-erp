@@ -101,7 +101,7 @@ export function PushPanel({ isDarkMode, textMain, textSub, bgInput, borderCol }:
         });
         const data = await res.json();
         if (res.ok) {
-          alert(`✅ Enviado! ${data.sent} sucesso, ${data.failed} falhas`);
+          alert(`✅ Enviado! ${data.sent} sucesso, ${data.failed || 0} falhas`);
         } else {
           alert(`❌ Erro: ${data.error}`);
         }
