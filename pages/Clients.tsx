@@ -139,11 +139,11 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
     }
     const query = searchQuery.toLowerCase();
     return data.filter(client =>
-      client.name.toLowerCase().includes(query) ||
-      client.company.toLowerCase().includes(query) ||
-      client.email.toLowerCase().includes(query) ||
-      (client.phone && client.phone.includes(query)) ||
-      (client.cpfCnpj && client.cpfCnpj.includes(query))
+      (client.name || '').toLowerCase().includes(query) ||
+      (client.company || '').toLowerCase().includes(query) ||
+      (client.email || '').toLowerCase().includes(query) ||
+      (client.phone || '').includes(query) ||
+      (client.cpfCnpj || '').includes(query)
     );
   }, [clients, searchQuery, viewAll, currentUser.id]);
 
