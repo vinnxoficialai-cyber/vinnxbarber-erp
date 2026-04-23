@@ -457,7 +457,11 @@ function PublicSiteApp() {
   useEffect(() => {
     if (!pushSupported || pushSubscribed || !authUser) return;
     if (Notification.permission === 'denied') return;
-    if (Notification.permission === 'granted') return;
+    // If already granted but not subscribed, auto-subscribe silently
+    if (Notification.permission === 'granted') {
+      subscribeToPush();
+      return;
+    }
     // Re-show after 7 days if dismissed
     const dismissed = localStorage.getItem('vinnx_push_dismissed');
     if (dismissed) {
@@ -467,7 +471,7 @@ function PublicSiteApp() {
     // Small delay to let page settle (1.5s)
     const timer = setTimeout(() => setShowPushBanner(true), 1500);
     return () => clearTimeout(timer);
-  }, [pushSupported, pushSubscribed, authUser]);
+  }, [pushSupported, pushSubscribed, authUser, subscribeToPush]);
 
   const subscribeToPush = useCallback(async () => {
     if (!pushSupported || !clientProfile?.id || !authUser) return;

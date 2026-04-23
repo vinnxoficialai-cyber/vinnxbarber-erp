@@ -75,7 +75,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ sent: 0, message: 'No matching clients' });
       }
 
-      subsQuery += `&"clientId"=in.(${targetClientIds.map(id => `"${id}"`).join(',')})`;
+      subsQuery += `&"clientId"=in.(${targetClientIds.join(',')})`;
     }
 
     const subsRes = await sbFetch(subsQuery);
