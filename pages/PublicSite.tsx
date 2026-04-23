@@ -455,7 +455,7 @@ function PublicSiteApp() {
 
   const dismissPushBanner = useCallback(() => {
     setPushBannerExiting(true);
-    setTimeout(() => { setShowPushBanner(false); localStorage.setItem('vinnx_push_v2_dismissed', String(Date.now())); }, 350);
+    setTimeout(() => { setShowPushBanner(false); }, 350);
   }, []);
 
   const subscribeToPush = useCallback(async () => {
@@ -515,25 +515,15 @@ function PublicSiteApp() {
     }
   }, [showToast]);
 
-  // Show push banner for ALL visitors (even not logged in)
+  // Show push banner for ALL visitors on EVERY page load until they subscribe
   useEffect(() => {
     if (!pushSupported || pushSubscribed) return;
     if (Notification.permission === 'denied') return;
-    // If already granted, try to subscribe silently (no banner needed)
-    if (Notification.permission === 'granted') {
-      subscribeToPush();
-      return;
-    }
-    // Re-show after 24h if dismissed (new key ignores old banner dismissals)
-    const dismissed = localStorage.getItem('vinnx_push_v2_dismissed');
-    if (dismissed) {
-      const diff = Date.now() - Number(dismissed);
-      if (diff < 24 * 60 * 60 * 1000) return; // 24 hours
-    }
-    // Small delay to let page settle (1.5s)
+    // Show banner after 1.5s — no cooldown, no dismiss memory
+    // If permission is already 'granted' but not subscribed in DB, still show
     const timer = setTimeout(() => setShowPushBanner(true), 1500);
     return () => clearTimeout(timer);
-  }, [pushSupported, pushSubscribed, authUser, clientProfile, subscribeToPush]);
+  }, [pushSupported, pushSubscribed]);
 
   // Navbar
   const navRef = useRef<HTMLDivElement>(null);
@@ -1283,7 +1273,10 @@ function PublicSiteApp() {
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('🟢 PublicSite Realtime: connected to calendar_events');
+          console.log('[Realtime] PublicSite connected');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.warn('[Realtime] calendar_events channel error — tables may not be published. Disabling reconnect.');
+          supabase.removeChannel(channel);
         }
       });
 

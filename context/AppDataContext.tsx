@@ -907,7 +907,10 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
 
         channel.subscribe((status) => {
             if (status === 'SUBSCRIBED') {
-                console.log('🔴 Realtime: connected to', REALTIME_TABLES.length, 'tables');
+                console.log('[Realtime] ERP connected to', REALTIME_TABLES.length, 'tables');
+            } else if (status === 'CHANNEL_ERROR') {
+                console.warn('[Realtime] Channel error — tables may not be published in supabase_realtime. Disabling reconnect.');
+                supabase.removeChannel(channel);
             }
         });
 
