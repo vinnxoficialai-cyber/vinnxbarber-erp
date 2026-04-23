@@ -453,17 +453,21 @@ function PublicSiteApp() {
     }).catch(() => {});
   }, [pushSupported, authUser, clientProfile]);
 
-  // Show push banner after delay (only if not subscribed, not denied, and install banner not showing)
+  // Show push modal immediately when user is logged in and not subscribed
   useEffect(() => {
     if (!pushSupported || pushSubscribed || !authUser) return;
     if (Notification.permission === 'denied') return;
-    if (localStorage.getItem('vinnx_push_dismissed')) return;
-
-    const timer = setTimeout(() => {
-      if (!showInstallBanner) setShowPushBanner(true);
-    }, 15000); // 15s after load
+    if (Notification.permission === 'granted') return;
+    // Re-show after 7 days if dismissed
+    const dismissed = localStorage.getItem('vinnx_push_dismissed');
+    if (dismissed) {
+      const diff = Date.now() - Number(dismissed);
+      if (diff < 7 * 24 * 60 * 60 * 1000) return; // 7 days
+    }
+    // Small delay to let page settle (1.5s)
+    const timer = setTimeout(() => setShowPushBanner(true), 1500);
     return () => clearTimeout(timer);
-  }, [pushSupported, pushSubscribed, authUser, showInstallBanner]);
+  }, [pushSupported, pushSubscribed, authUser]);
 
   const subscribeToPush = useCallback(async () => {
     if (!pushSupported || !clientProfile?.id || !authUser) return;
@@ -1502,6 +1506,91 @@ function PublicSiteApp() {
         </div>
       )}
 
+      {/* ═══ Push Notifications Modal ═══ */}
+      {showPushBanner && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-6"
+          style={{
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            opacity: pushBannerExiting ? 0 : 1,
+            transition: 'opacity 0.35s ease',
+          }}
+          onClick={dismissPushBanner}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl overflow-hidden"
+            style={{
+              background: 'linear-gradient(145deg, #1e293b 0%, #0f172a 100%)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+              transform: pushBannerExiting ? 'scale(0.95) translateY(20px)' : 'scale(1) translateY(0)',
+              transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header with glow */}
+            <div className="relative pt-8 pb-4 px-6 text-center">
+              <div
+                className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 rounded-full"
+                style={{
+                  background: `radial-gradient(circle, ${primary}30 0%, transparent 70%)`,
+                  filter: 'blur(20px)',
+                }}
+              />
+              <div
+                className="relative w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center"
+                style={{
+                  background: `linear-gradient(135deg, ${primary}, ${primary}cc)`,
+                  boxShadow: `0 8px 24px ${primary}40`,
+                }}
+              >
+                <span className="text-3xl">🔔</span>
+              </div>
+              <h3 className="text-xl font-bold text-white mb-1">Ative as Notificações</h3>
+              <p className="text-sm text-gray-400">Fique por dentro de tudo</p>
+            </div>
+
+            {/* Benefits */}
+            <div className="px-6 pb-4 space-y-3">
+              {[
+                { icon: '📅', text: 'Lembretes de agendamentos' },
+                { icon: '🎁', text: 'Promoções e descontos exclusivos' },
+                { icon: '🎂', text: 'Surpresas no seu aniversário' },
+                { icon: '⭐', text: 'Avalie e ajude a melhorar nosso serviço' },
+              ].map((b, i) => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  <span className="text-lg flex-shrink-0">{b.icon}</span>
+                  <span className="text-sm text-gray-300">{b.text}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="px-6 pb-6 pt-2 space-y-2">
+              <button
+                onClick={subscribeToPush}
+                className="w-full py-3.5 rounded-xl text-sm font-bold transition-all active:scale-[0.98]"
+                style={{
+                  background: `linear-gradient(135deg, ${primary}, ${primary}dd)`,
+                  color: bgColor,
+                  boxShadow: `0 4px 16px ${primary}40`,
+                }}
+              >
+                Ativar Notificações
+              </button>
+              <button
+                onClick={dismissPushBanner}
+                className="w-full py-3 rounded-xl text-sm text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                Agora não
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toast && (
         <div style={{
@@ -1722,40 +1811,6 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
         </div>
       )}
 
-      {/* ═══ Push Notification Banner ═══ */}
-      {showPushBanner && !showInstallBanner && (
-        <div className="absolute bottom-4 left-4 right-4 z-50 booking-slide-up"
-          style={{
-            opacity: pushBannerExiting ? 0 : 1,
-            transform: pushBannerExiting ? 'translateY(20px)' : 'translateY(0)',
-            transition: 'all 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
-          }}>
-          <div className="rounded-2xl p-4 flex items-center gap-3"
-            style={{
-              background: 'rgba(0,0,0,0.7)',
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
-              border: '1px solid rgba(255,255,255,0.08)',
-            }}>
-            <span className="text-2xl">🔔</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-white text-[13px] font-semibold">Quer receber lembretes?</p>
-              <p className="text-gray-400 text-[11px]">Notificações de agendamentos e promoções</p>
-            </div>
-            <div className="flex gap-2 flex-shrink-0">
-              <button onClick={onPushSubscribe}
-                className="px-3 py-1.5 rounded-lg text-[12px] font-bold"
-                style={{ backgroundColor: primary, color: bgColor }}>
-                Ativar
-              </button>
-              <button onClick={onPushDismiss}
-                className="px-2 py-1.5 rounded-lg text-[12px] text-gray-400 hover:bg-white/5">
-                ✕
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Hero Content */}
       <div className="relative z-10 flex-grow flex flex-col justify-end p-6 pb-4 min-h-0 overflow-hidden">
