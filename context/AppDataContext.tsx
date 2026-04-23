@@ -341,6 +341,12 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                     status: e.status || 'confirmed',
                     serviceIds: Array.isArray(e.serviceIds) ? e.serviceIds : (typeof e.serviceIds === 'string' ? JSON.parse(e.serviceIds || '[]') : []),
                     comandaId: e.comandaId || undefined,
+                    clientId: e.clientId || undefined,
+                    clientName: e.clientName || undefined,
+                    finalPrice: e.finalPrice != null ? Number(e.finalPrice) : undefined,
+                    rating: e.rating != null ? Number(e.rating) : undefined,
+                    ratingComment: e.ratingComment || undefined,
+                    usedReferralCredit: e.usedReferralCredit || false,
                 };
             });
 
