@@ -462,7 +462,7 @@ function PublicSiteApp() {
     if (!pushSupported) return;
     try {
       // VAPID public key (public, not a secret — generated for this project)
-      const vapidKey = 'BC5Yy_ldhetSkjkSbNWdKydHhfRRPIP9tfHT2YhAfq-GUykUF4UL6tssmP7ovARdvlq3lUUfMC4DxbpFKbbcLPQ';
+      const vapidKey = 'BKX_TR3Ik7Vor8CEU8mtbdNMcT5Mk0TXaEyjW0cPCu2PNnFMWR-sZgEcuOOi3GXPM1y4MQxp8e-xP1hzLfKS_ew';
 
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({
