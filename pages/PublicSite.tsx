@@ -455,7 +455,7 @@ function PublicSiteApp() {
 
   const dismissPushBanner = useCallback(() => {
     setPushBannerExiting(true);
-    setTimeout(() => { setShowPushBanner(false); localStorage.setItem('vinnx_push_dismissed', String(Date.now())); }, 350);
+    setTimeout(() => { setShowPushBanner(false); localStorage.setItem('vinnx_push_v2_dismissed', String(Date.now())); }, 350);
   }, []);
 
   const subscribeToPush = useCallback(async () => {
@@ -525,11 +525,11 @@ function PublicSiteApp() {
       setPushSubscribed(true); // Mark as subscribed to prevent modal
       return;
     }
-    // Re-show after 7 days if dismissed
-    const dismissed = localStorage.getItem('vinnx_push_dismissed');
+    // Re-show after 24h if dismissed (new key ignores old banner dismissals)
+    const dismissed = localStorage.getItem('vinnx_push_v2_dismissed');
     if (dismissed) {
       const diff = Date.now() - Number(dismissed);
-      if (diff < 7 * 24 * 60 * 60 * 1000) return; // 7 days
+      if (diff < 24 * 60 * 60 * 1000) return; // 24 hours
     }
     // Small delay to let page settle (1.5s)
     const timer = setTimeout(() => setShowPushBanner(true), 1500);
