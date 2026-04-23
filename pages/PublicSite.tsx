@@ -1514,98 +1514,7 @@ function PublicSiteApp() {
         </div>
       )}
 
-      {/* ═══ Push Notifications Modal ═══ */}
-      {showPushBanner && (
-        <div
-          className={`fixed inset-0 z-50 flex justify-center booking-modal-backdrop backdrop-visible`}
-          style={{ alignItems: 'flex-end' }}
-          onClick={dismissPushBanner}
-        >
-          <div
-            className="w-full booking-modal-enter booking-modal-enter-active booking-hide-scrollbar"
-            style={{
-              maxWidth: 420,
-              backgroundColor: '#1a1a1a',
-              borderTopLeftRadius: '1.25rem',
-              borderTopRightRadius: '1.25rem',
-              color: textColor,
-              paddingBottom: 'env(safe-area-inset-bottom)',
-              opacity: pushBannerExiting ? 0 : 1,
-              transform: pushBannerExiting ? 'translateY(14%)' : 'translateY(0)',
-              filter: pushBannerExiting ? 'blur(6px)' : 'blur(0)',
-              transition: 'all 0.22s cubic-bezier(0.4, 0, 1, 1)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="booking-auth-modal booking-auth" style={{ position: 'relative', padding: '2.5rem 1.75rem 2rem' }}>
-              {/* Close X */}
-              <button
-                onClick={dismissPushBanner}
-                style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}
-              >
-                <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '1.25rem' }}>✕</span>
-              </button>
 
-              {/* Divider accent */}
-              <div className="auth-divider" style={{ backgroundColor: primary, width: '2.5rem', height: 3, borderRadius: 2, margin: '0 auto 1.75rem' }} />
-
-              {/* Title */}
-              <h2 style={{ fontSize: '1.5rem', fontWeight: 800, letterSpacing: '-0.02em', color: '#fff', marginBottom: '0.25rem' }}>
-                Ative as notificações
-              </h2>
-              <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.4)', marginBottom: '1.5rem' }}>
-                Fique por dentro de tudo que acontece
-              </p>
-
-              {/* Benefits — using booking-modal-item style */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                {[
-                  { icon: '📅', title: 'Lembretes', desc: 'Notificações antes dos seus agendamentos' },
-                  { icon: '🏷️', title: 'Promoções', desc: 'Descontos e ofertas exclusivas' },
-                  { icon: '🎂', title: 'Aniversário', desc: 'Surpresas especiais no seu dia' },
-                ].map((b, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.75rem',
-                      padding: '0.75rem',
-                      borderRadius: '0.75rem',
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                    }}
-                  >
-                    <span style={{ fontSize: '1.25rem', flexShrink: 0 }}>{b.icon}</span>
-                    <div>
-                      <p style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginBottom: 1 }}>{b.title}</p>
-                      <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)' }}>{b.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* CTA Button — booking-auth-btn */}
-              <button
-                onClick={subscribeToPush}
-                className="booking-auth-btn"
-                style={{ backgroundColor: primary, color: '#111' }}
-              >
-                Ativar Notificações
-              </button>
-
-              {/* Dismiss link — booking-auth-link */}
-              <button
-                onClick={dismissPushBanner}
-                className="booking-auth-link"
-                style={{ color: 'rgba(255,255,255,0.35)', display: 'block', margin: '1rem auto 0', fontSize: '0.8rem' }}
-              >
-                Agora não
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Toast Notification */}
       {toast && (
@@ -1660,6 +1569,17 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
       setInstallStepsExpanded(false);
     }
   }, [showInstallBanner, isStandalone]);
+
+  // Accordion animation for push notification banner
+  const [pushStepsExpanded, setPushStepsExpanded] = useState(false);
+  useEffect(() => {
+    if (showPushBanner) {
+      const timer = setTimeout(() => setPushStepsExpanded(true), 1200);
+      return () => clearTimeout(timer);
+    } else {
+      setPushStepsExpanded(false);
+    }
+  }, [showPushBanner]);
 
   return (
     <div className={`relative flex flex-col ${animateReady ? "" : "booking-anim-paused"}`} style={{ height: "100%" }}>
@@ -1827,6 +1747,100 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
         </div>
       )}
 
+      {/* Push Notifications Banner — same format as PWA install */}
+      {showPushBanner && (
+        <div className={`relative z-10 mx-6 ${(showInstallBanner && !isStandalone) || (todaysAppt && !reminderDismissed) ? "mt-2" : "mt-6"} p-4 rounded-xl booking-fade-in ${pushBannerExiting ? "booking-reminder-exit" : ""}`} style={{
+          background: "rgba(255,255,255,0.08)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.3)"
+        }}>
+          <div className="flex items-center gap-3 mb-3">
+            {/* Bell Icon */}
+            <div className="w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 flex items-center justify-center" style={{
+              backgroundColor: `${primary}20`,
+              border: "1.5px solid rgba(255,255,255,0.15)",
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-sm text-white">Ative as notificações</p>
+              <p className="text-[11px] text-gray-400">Fique por dentro dos seus agendamentos</p>
+            </div>
+            <button onClick={onPushDismiss} className="flex-shrink-0 p-1 rounded-lg transition-colors hover:bg-white/10" style={{ color: "rgba(255,255,255,0.5)" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+
+          {/* Accordion — CSS Grid 0fr→1fr for pixel-perfect smooth expansion */}
+          <div style={{
+            display: "grid",
+            gridTemplateRows: pushStepsExpanded ? "1fr" : "0fr",
+            transition: "grid-template-rows 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
+          }}>
+            <div style={{ overflow: "hidden", minHeight: 0 }}>
+              <div className="pt-1">
+
+                {/* Benefits list with stagger animation */}
+                <div className="space-y-1.5">
+                  {[
+                    { step: 1, icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>, label: "Lembretes antes dos agendamentos" },
+                    { step: 2, icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>, label: "Promoções e descontos exclusivos" },
+                    { step: 3, icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>, label: "Surpresas especiais no aniversário" },
+                  ].map(({ step, icon, label }) => (
+                    <div key={step}
+                      className="flex items-center gap-2.5 py-2 px-3 rounded-lg"
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        opacity: pushStepsExpanded ? 1 : 0,
+                        transform: pushStepsExpanded ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
+                        transition: `opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s`,
+                      }}>
+                      <span className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0" style={{ background: `${primary}25`, color: primary }}>
+                        {icon}
+                      </span>
+                      <span className="text-[12px] text-gray-300">{label}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Note */}
+                <p className="text-[10px] text-gray-500 mt-2 mb-3" style={{
+                  opacity: pushStepsExpanded ? 1 : 0,
+                  transition: "opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) 1.5s",
+                }}>Você pode desativar a qualquer momento nas configurações.</p>
+
+                {/* Actions */}
+                <div className="flex gap-2"
+                  style={{
+                    opacity: pushStepsExpanded ? 1 : 0,
+                    transform: pushStepsExpanded ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
+                    transition: "opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) 1.6s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) 1.6s",
+                  }}>
+                  <button onClick={onPushSubscribe}
+                    className="flex-1 py-2 rounded-lg text-[12px] font-bold transition-colors flex items-center justify-center gap-1.5"
+                    style={{ backgroundColor: primary, color: bgColor }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                    </svg>
+                    Ativar Notificações
+                  </button>
+                  <button onClick={onPushDismiss}
+                    className="px-3 py-2 rounded-lg text-[12px] text-gray-400 transition-colors hover:bg-white/5">
+                    Agora não
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hero Content */}
       <div className="relative z-10 flex-grow flex flex-col justify-end p-6 pb-4 min-h-0 overflow-hidden">
