@@ -1517,80 +1517,88 @@ function PublicSiteApp() {
       {/* ═══ Push Notifications Modal ═══ */}
       {showPushBanner && (
         <div
-          className="fixed inset-0 z-[200] flex items-center justify-center p-6"
-          style={{
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            opacity: pushBannerExiting ? 0 : 1,
-            transition: 'opacity 0.35s ease',
-          }}
+          className={`fixed inset-0 z-50 flex justify-center booking-modal-backdrop backdrop-visible`}
+          style={{ alignItems: 'flex-end' }}
           onClick={dismissPushBanner}
         >
           <div
-            className="w-full max-w-sm rounded-3xl overflow-hidden"
+            className="w-full booking-modal-enter booking-modal-enter-active booking-hide-scrollbar"
             style={{
-              background: 'linear-gradient(145deg, #1e293b 0%, #0f172a 100%)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
-              transform: pushBannerExiting ? 'scale(0.95) translateY(20px)' : 'scale(1) translateY(0)',
-              transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+              maxWidth: 420,
+              backgroundColor: '#1a1a1a',
+              borderTopLeftRadius: '1.25rem',
+              borderTopRightRadius: '1.25rem',
+              color: textColor,
+              paddingBottom: 'env(safe-area-inset-bottom)',
+              opacity: pushBannerExiting ? 0 : 1,
+              transform: pushBannerExiting ? 'translateY(14%)' : 'translateY(0)',
+              filter: pushBannerExiting ? 'blur(6px)' : 'blur(0)',
+              transition: 'all 0.22s cubic-bezier(0.4, 0, 1, 1)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header with glow */}
-            <div className="relative pt-8 pb-4 px-6 text-center">
-              <div
-                className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 rounded-full"
-                style={{
-                  background: `radial-gradient(circle, ${primary}30 0%, transparent 70%)`,
-                  filter: 'blur(20px)',
-                }}
-              />
-              <div
-                className="relative w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center"
-                style={{
-                  background: `linear-gradient(135deg, ${primary}, ${primary}cc)`,
-                  boxShadow: `0 8px 24px ${primary}40`,
-                }}
+            <div className="booking-auth-modal booking-auth" style={{ position: 'relative', padding: '2.5rem 1.75rem 2rem' }}>
+              {/* Close X */}
+              <button
+                onClick={dismissPushBanner}
+                style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}
               >
-                <span className="text-3xl">🔔</span>
+                <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '1.25rem' }}>✕</span>
+              </button>
+
+              {/* Divider accent */}
+              <div className="auth-divider" style={{ backgroundColor: primary, width: '2.5rem', height: 3, borderRadius: 2, margin: '0 auto 1.75rem' }} />
+
+              {/* Title */}
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 800, letterSpacing: '-0.02em', color: '#fff', marginBottom: '0.25rem' }}>
+                Ative as notificações
+              </h2>
+              <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.4)', marginBottom: '1.5rem' }}>
+                Fique por dentro de tudo que acontece
+              </p>
+
+              {/* Benefits — using booking-modal-item style */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                {[
+                  { icon: '📅', title: 'Lembretes', desc: 'Notificações antes dos seus agendamentos' },
+                  { icon: '🏷️', title: 'Promoções', desc: 'Descontos e ofertas exclusivas' },
+                  { icon: '🎂', title: 'Aniversário', desc: 'Surpresas especiais no seu dia' },
+                ].map((b, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.75rem',
+                      padding: '0.75rem',
+                      borderRadius: '0.75rem',
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <span style={{ fontSize: '1.25rem', flexShrink: 0 }}>{b.icon}</span>
+                    <div>
+                      <p style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginBottom: 1 }}>{b.title}</p>
+                      <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)' }}>{b.desc}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <h3 className="text-xl font-bold text-white mb-1">Ative as Notificações</h3>
-              <p className="text-sm text-gray-400">Fique por dentro de tudo</p>
-            </div>
 
-            {/* Benefits */}
-            <div className="px-6 pb-4 space-y-3">
-              {[
-                { icon: '📅', text: 'Lembretes de agendamentos' },
-                { icon: '🎁', text: 'Promoções e descontos exclusivos' },
-                { icon: '🎂', text: 'Surpresas no seu aniversário' },
-                { icon: '⭐', text: 'Avalie e ajude a melhorar nosso serviço' },
-              ].map((b, i) => (
-                <div key={i} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  <span className="text-lg flex-shrink-0">{b.icon}</span>
-                  <span className="text-sm text-gray-300">{b.text}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Actions */}
-            <div className="px-6 pb-6 pt-2 space-y-2">
+              {/* CTA Button — booking-auth-btn */}
               <button
                 onClick={subscribeToPush}
-                className="w-full py-3.5 rounded-xl text-sm font-bold transition-all active:scale-[0.98]"
-                style={{
-                  background: `linear-gradient(135deg, ${primary}, ${primary}dd)`,
-                  color: bgColor,
-                  boxShadow: `0 4px 16px ${primary}40`,
-                }}
+                className="booking-auth-btn"
+                style={{ backgroundColor: primary, color: '#111' }}
               >
                 Ativar Notificações
               </button>
+
+              {/* Dismiss link — booking-auth-link */}
               <button
                 onClick={dismissPushBanner}
-                className="w-full py-3 rounded-xl text-sm text-gray-500 hover:text-gray-300 transition-colors"
+                className="booking-auth-link"
+                style={{ color: 'rgba(255,255,255,0.35)', display: 'block', margin: '1rem auto 0', fontSize: '0.8rem' }}
               >
                 Agora não
               </button>
