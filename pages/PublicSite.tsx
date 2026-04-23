@@ -1665,7 +1665,8 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
 
       {/* Reminder */}
       {todaysAppt && !reminderDismissed && g("reminder.enabled", "true") !== "false" && (
-        <div className={`relative z-10 m-6 p-4 rounded-xl flex items-center gap-3 booking-fade-in ${reminderExiting ? "booking-reminder-exit" : ""}`} style={{
+        <div className={`relative z-10 mx-6 p-4 rounded-xl flex items-center gap-3 booking-fade-in ${reminderExiting ? "booking-reminder-exit" : ""}`} style={{
+          marginTop: "max(1.5rem, env(safe-area-inset-top, 1.5rem))",
           background: "rgba(255,255,255,0.08)",
           backdropFilter: "blur(16px)",
           WebkitBackdropFilter: "blur(16px)",
@@ -1689,7 +1690,8 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
 
       {/* PWA Install Banner */}
       {showInstallBanner && !isStandalone && (
-        <div className={`relative z-10 mx-6 ${todaysAppt && !reminderDismissed ? "mt-2" : "mt-6"} p-4 rounded-xl booking-fade-in ${installBannerExiting ? "booking-reminder-exit" : ""}`} style={{
+        <div className={`relative z-10 mx-6 p-4 rounded-xl booking-fade-in ${installBannerExiting ? "booking-reminder-exit" : ""}`} style={{
+          marginTop: todaysAppt && !reminderDismissed ? "0.5rem" : "max(1.5rem, env(safe-area-inset-top, 1.5rem))",
           background: "rgba(255,255,255,0.08)",
           backdropFilter: "blur(16px)",
           WebkitBackdropFilter: "blur(16px)",
@@ -1853,7 +1855,8 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
 
       {/* Push Notifications Banner — same format as PWA install */}
       {showPushBanner && (
-        <div className={`relative z-10 mx-6 ${(showInstallBanner && !isStandalone) || (todaysAppt && !reminderDismissed) ? "mt-2" : "mt-6"} p-4 rounded-xl booking-fade-in ${pushBannerExiting ? "booking-reminder-exit" : ""}`} style={{
+        <div className={`relative z-10 mx-6 p-4 rounded-xl booking-fade-in ${pushBannerExiting ? "booking-reminder-exit" : ""}`} style={{
+          marginTop: (showInstallBanner && !isStandalone) || (todaysAppt && !reminderDismissed) ? "0.5rem" : "max(1.5rem, env(safe-area-inset-top, 1.5rem))",
           background: "rgba(255,255,255,0.08)",
           backdropFilter: "blur(16px)",
           WebkitBackdropFilter: "blur(16px)",
