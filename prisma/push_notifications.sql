@@ -140,7 +140,10 @@ INSERT INTO push_automation_config (id, enabled, config, "messageTemplate") VALU
    'Complete seu perfil e ganhe desconto de aniversário! 🎁'),
   ('birthday', true,
    '{"discountPercent": 15, "sendHour": 9}',
-   'Feliz aniversário, {nome}! 🎂 Ganhe {desconto}% no próximo corte!')
+   'Feliz aniversário, {nome}! 🎂 Ganhe {desconto}% no próximo corte!'),
+  ('inactive', true,
+   '{"inactiveDays": 30, "maxNudgesPerMonth": 1}',
+   'Faz tempo que não te vemos! 💈 Que tal agendar um horário?')
 ON CONFLICT (id) DO NOTHING;
 
 -- ══════════════════════════════════════════════════
@@ -164,6 +167,14 @@ $$;
 -- ══════════════════════════════════════════════════
 -- 7. TRIGGER: notify_push_on_event_change
 -- ══════════════════════════════════════════════════
+-- ⚠️ ATENÇÃO: Este trigger envia push automaticamente via pg_net.
+-- Se ativado, NÃO use também o /api/push-booking-confirm no frontend
+-- e remova o push do handleStatusChange na Agenda.tsx para evitar
+-- notificações duplicadas. Escolha UMA abordagem:
+--   A) Trigger (este) — automático, funciona de qualquer fonte
+--   B) Endpoints de API — mais controle, mais flexível
+-- Atualmente os endpoints estão ativos. Para usar o trigger,
+-- descomente o CREATE TRIGGER abaixo e remova os endpoints.
 CREATE OR REPLACE FUNCTION notify_push_on_event_change()
 RETURNS TRIGGER AS $$
 DECLARE
