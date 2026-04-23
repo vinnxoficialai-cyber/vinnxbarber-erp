@@ -390,10 +390,28 @@ function PublicSiteApp() {
     const handler = (e: Event) => { e.preventDefault(); setDeferredPrompt(e); };
     window.addEventListener("beforeinstallprompt", handler);
 
-    // Show after 10s on every page load for non-standalone users
-    const timer = setTimeout(() => setShowInstallBanner(true), 10000);
-    return () => { window.removeEventListener("beforeinstallprompt", handler); clearTimeout(timer); };
-  }, [isStandalone]);
+    // On iOS: always show banner (no API to detect if PWA is installed from browser)
+    // On Android/Desktop: banner visibility is controlled by deferredPrompt
+    // (beforeinstallprompt only fires when app is NOT installed — if user uninstalls, it fires again)
+    if (isIOS) {
+      const timer = setTimeout(() => setShowInstallBanner(true), 10000);
+      return () => { window.removeEventListener("beforeinstallprompt", handler); clearTimeout(timer); };
+    }
+
+    return () => { window.removeEventListener("beforeinstallprompt", handler); };
+  }, [isStandalone, isIOS]);
+
+  // Android/Desktop: show install banner only when beforeinstallprompt fires (app NOT installed)
+  useEffect(() => {
+    if (isStandalone || isIOS) return;
+    if (deferredPrompt) {
+      const timer = setTimeout(() => setShowInstallBanner(true), 5000);
+      return () => clearTimeout(timer);
+    } else {
+      // No prompt = app already installed or not installable → hide banner
+      setShowInstallBanner(false);
+    }
+  }, [deferredPrompt, isStandalone, isIOS]);
 
   const dismissInstallBanner = useCallback(() => {
     setInstallBannerExiting(true);
