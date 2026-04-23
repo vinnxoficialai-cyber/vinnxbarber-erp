@@ -415,6 +415,115 @@ function PublicSiteApp() {
     }
   }, [deferredPrompt, dismissInstallBanner, showToast]);
 
+  // ═══ PUSH NOTIFICATIONS ═══
+  const [pushSupported] = useState(() => typeof window !== 'undefined' && 'PushManager' in window && 'serviceWorker' in navigator);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | 'default'>('default');
+  const [showPushBanner, setShowPushBanner] = useState(false);
+  const [pushBannerExiting, setPushBannerExiting] = useState(false);
+
+  // Helper: convert VAPID key from base64url to Uint8Array
+  const urlBase64ToUint8Array = useCallback((base64String: string) => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const arr = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }, []);
+
+  // Sync subscription on app-load (replaces pushsubscriptionchange in SW)
+  useEffect(() => {
+    if (!pushSupported || !authUser || !clientProfile?.id) return;
+    setPushPermission(Notification.permission);
+    
+    navigator.serviceWorker.ready.then(async (reg) => {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        const j = sub.toJSON();
+        await supabase.from('push_subscriptions').upsert({
+          clientId: clientProfile.id,
+          authUserId: authUser.id,
+          endpoint: j.endpoint,
+          keys: j.keys,
+          updatedAt: new Date().toISOString(),
+        }, { onConflict: 'endpoint' });
+        setPushSubscribed(true);
+      }
+    }).catch(() => {});
+  }, [pushSupported, authUser, clientProfile]);
+
+  // Show push banner after delay (only if not subscribed, not denied, and install banner not showing)
+  useEffect(() => {
+    if (!pushSupported || pushSubscribed || !authUser) return;
+    if (Notification.permission === 'denied') return;
+    if (localStorage.getItem('vinnx_push_dismissed')) return;
+
+    const timer = setTimeout(() => {
+      if (!showInstallBanner) setShowPushBanner(true);
+    }, 15000); // 15s after load
+    return () => clearTimeout(timer);
+  }, [pushSupported, pushSubscribed, authUser, showInstallBanner]);
+
+  const subscribeToPush = useCallback(async () => {
+    if (!pushSupported || !clientProfile?.id || !authUser) return;
+    try {
+      const vapidKey = g('push.vapid_public_key', '');
+      if (!vapidKey) { showToast('Push não configurado pelo admin', 'error'); return; }
+
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        userVisibleOnly: true,
+      });
+
+      const j = sub.toJSON();
+      await supabase.from('push_subscriptions').upsert({
+        clientId: clientProfile.id,
+        authUserId: authUser.id,
+        endpoint: j.endpoint,
+        keys: j.keys,
+        userAgent: navigator.userAgent,
+        updatedAt: new Date().toISOString(),
+      }, { onConflict: 'endpoint' });
+
+      setPushSubscribed(true);
+      setPushPermission('granted');
+      showToast('Notificações ativadas! 🔔');
+      dismissPushBanner();
+    } catch (err: any) {
+      console.error('[Push] Subscribe error:', err);
+      if (Notification.permission === 'denied') {
+        setPushPermission('denied');
+        showToast('Notificações bloqueadas. Ative nas configurações do navegador.', 'error');
+      } else {
+        showToast('Erro ao ativar notificações', 'error');
+      }
+      dismissPushBanner();
+    }
+  }, [pushSupported, clientProfile, authUser, g, urlBase64ToUint8Array, showToast]);
+
+  const unsubscribeFromPush = useCallback(async () => {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        const endpoint = sub.endpoint;
+        await sub.unsubscribe();
+        await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
+      }
+      setPushSubscribed(false);
+      showToast('Notificações desativadas');
+    } catch (err) {
+      console.error('[Push] Unsubscribe error:', err);
+    }
+  }, [showToast]);
+
+  const dismissPushBanner = useCallback(() => {
+    setPushBannerExiting(true);
+    setTimeout(() => { setShowPushBanner(false); localStorage.setItem('vinnx_push_dismissed', String(Date.now())); }, 350);
+  }, []);
+
   // Navbar
   const navRef = useRef<HTMLDivElement>(null);
   const indicatorRef = useRef<HTMLDivElement>(null);
@@ -1268,6 +1377,9 @@ function PublicSiteApp() {
             showInstallBanner={showInstallBanner} isStandalone={isStandalone} isIOS={isIOS} isIOSSafari={isIOSSafari}
             deferredPrompt={deferredPrompt} installBannerExiting={installBannerExiting}
             onInstallClick={handleInstallClick} onInstallDismiss={dismissInstallBanner}
+            showPushBanner={showPushBanner} pushBannerExiting={pushBannerExiting}
+            pushSubscribed={pushSubscribed} pushPermission={pushPermission}
+            onPushSubscribe={subscribeToPush} onPushDismiss={dismissPushBanner}
           />}
           {activeView === "historico" && <HistoricoView
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
@@ -1411,7 +1523,7 @@ function PublicSiteApp() {
 // ============================================================
 // AGENDAR VIEW
 // ============================================================
-function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, allEvents, onUnitClick, onBarberClick, onServiceClick, onDateClick, onAgendarClick, showPrices, showDuration, maxOpenAppts, showInstallBanner, isStandalone, isIOS, isIOSSafari, deferredPrompt, installBannerExiting, onInstallClick, onInstallDismiss }: any) {
+function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, allEvents, onUnitClick, onBarberClick, onServiceClick, onDateClick, onAgendarClick, showPrices, showDuration, maxOpenAppts, showInstallBanner, isStandalone, isIOS, isIOSSafari, deferredPrompt, installBannerExiting, onInstallClick, onInstallDismiss, showPushBanner, pushBannerExiting, pushSubscribed, pushPermission, onPushSubscribe, onPushDismiss }: any) {
   const heroVideo = g("hero.bg_video", "");
   const heroImage = g("hero.bg_image", "");
   const heroTitle = g("hero.title", "Agende seu horário");
@@ -1605,6 +1717,41 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
           )}
 
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Push Notification Banner ═══ */}
+      {showPushBanner && !showInstallBanner && (
+        <div className="absolute bottom-4 left-4 right-4 z-50 booking-slide-up"
+          style={{
+            opacity: pushBannerExiting ? 0 : 1,
+            transform: pushBannerExiting ? 'translateY(20px)' : 'translateY(0)',
+            transition: 'all 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+          }}>
+          <div className="rounded-2xl p-4 flex items-center gap-3"
+            style={{
+              background: 'rgba(0,0,0,0.7)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}>
+            <span className="text-2xl">🔔</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-[13px] font-semibold">Quer receber lembretes?</p>
+              <p className="text-gray-400 text-[11px]">Notificações de agendamentos e promoções</p>
+            </div>
+            <div className="flex gap-2 flex-shrink-0">
+              <button onClick={onPushSubscribe}
+                className="px-3 py-1.5 rounded-lg text-[12px] font-bold"
+                style={{ backgroundColor: primary, color: bgColor }}>
+                Ativar
+              </button>
+              <button onClick={onPushDismiss}
+                className="px-2 py-1.5 rounded-lg text-[12px] text-gray-400 hover:bg-white/5">
+                ✕
+              </button>
             </div>
           </div>
         </div>

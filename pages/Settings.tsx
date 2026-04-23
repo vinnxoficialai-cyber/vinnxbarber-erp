@@ -4,17 +4,18 @@ import {
   Clock, Briefcase, DollarSign, Bell, Settings2, ChevronRight,
   Plus, Trash2, Edit2, X, Check, AlertCircle, Shield, Loader2,
   Bug, Database, ChevronUp, Upload, Image as ImageIcon, Eye,
-  Palette
+  Palette, Send, Smartphone, ToggleLeft, ToggleRight, RefreshCw, MessageSquare
 } from 'lucide-react';
 import { safeStorage } from '../utils';
 import { CustomDropdown } from '../components/CustomDropdown';
 import { isBase64, uploadBase64Image } from '../lib/storage';
 import { generateAndUploadPWAIcons } from '../lib/pwaIconGenerator';
-import { CompanySettings, HRSettings, FinancialSettings, ProjectSettings, NotificationSettings, TeamMember, RolePermission, SystemSettings } from '../types';
+import { CompanySettings, HRSettings, FinancialSettings, ProjectSettings, NotificationSettings, TeamMember, RolePermission, SystemSettings, PushAutomationConfig, PushCampaign, PushLogEntry } from '../types';
 import { useAppData } from '../hooks/useAppData';
 import { saveAppSettings, saveRolePermissions } from '../lib/dataService';
 import { usePasswordConfirm } from '../components/PasswordConfirmModal';
 import { useToast } from '../components/Toast';
+import { PushPanel } from '../components/PushPanel';
 import {
   MOCK_COMPANY_SETTINGS, MOCK_HR_SETTINGS, MOCK_FINANCIAL_SETTINGS,
   MOCK_PROJECT_SETTINGS, MOCK_NOTIFICATION_SETTINGS
@@ -812,6 +813,9 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
           ))}
         </div>
       </div>
+
+      {/* ═══ Push Notifications Panel ═══ */}
+      <PushPanel isDarkMode={isDarkMode} textMain={textMain} textSub={textSub} bgInput={bgInput} borderCol={borderCol} />
     </div>
   );
 

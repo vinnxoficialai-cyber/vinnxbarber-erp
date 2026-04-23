@@ -52,7 +52,9 @@ export interface Client {
   referralsMade?: number; // Number of successful referrals
   redeemedGoals?: string[]; // IDs of referral goals already redeemed
   profilePic?: string; // Profile picture URL
-  notificationPreferences?: { email?: boolean; whatsapp?: boolean };
+  notificationPreferences?: { email?: boolean; whatsapp?: boolean; push?: boolean };
+  profileNudgeCount?: number;
+  lastProfileNudge?: string;
 }
 
 export interface TeamMember {
@@ -1227,5 +1229,52 @@ export interface Coupon {
   validFrom?: string;       // ISO timestamp
   validUntil?: string;      // ISO timestamp (null = no expiry)
   active: boolean;
+  createdAt?: string;
+}
+
+// ══════════════════════════════════════════════════
+// Push Notifications
+// ══════════════════════════════════════════════════
+
+export interface PushCampaign {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  imageUrl?: string;
+  targetUrl?: string;
+  segment?: string;
+  targetClientId?: string;
+  filterCriteria?: Record<string, unknown>;
+  schedule?: string;
+  recurrence?: string;
+  enabled: boolean;
+  status: 'draft' | 'scheduled' | 'recurring' | 'sent' | 'failed';
+  sentCount: number;
+  failedCount: number;
+  scheduledAt?: string;
+  sentAt?: string;
+  createdAt?: string;
+  createdBy?: string;
+}
+
+export interface PushAutomationConfig {
+  id: string; // 'reminder' | 'review' | 'incomplete' | 'birthday'
+  enabled: boolean;
+  config: Record<string, unknown>;
+  messageTemplate: string;
+  imageUrl?: string;
+  updatedAt?: string;
+}
+
+export interface PushLogEntry {
+  id: string;
+  campaignId?: string;
+  clientId?: string;
+  type: string;
+  title: string;
+  body?: string;
+  status: 'sent' | 'failed';
+  errorDetail?: string;
   createdAt?: string;
 }

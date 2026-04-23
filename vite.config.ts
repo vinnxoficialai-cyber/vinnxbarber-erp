@@ -13,8 +13,10 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       VitePWA({
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.ts',
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
         manifest: {
           name: 'VINNX ERP',
           short_name: 'VINNX',
@@ -67,33 +69,14 @@ export default defineConfig(({ mode }) => {
             }
           ]
         },
-        workbox: {
+        injectManifest: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-          navigateFallback: 'index.html',
-          runtimeCaching: [
-            {
-              // Never cache auth or REST API calls — always go to network
-              urlPattern: /^https:\/\/.*\.supabase\.co\/(auth|rest)\/.*/i,
-              handler: 'NetworkOnly',
-            },
-            {
-              // Cache storage assets (images, avatars) with NetworkFirst
-              urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/.*/i,
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'supabase-storage-cache',
-                expiration: {
-                  maxEntries: 50,
-                  maxAgeSeconds: 60 * 60 * 24 // 24 hours
-                }
-              }
-            }
-          ]
         },
         devOptions: {
           enabled: true,
-          type: 'module'
+          type: 'module',
+          navigateFallback: 'index.html'
         }
       })
     ],
