@@ -51,9 +51,11 @@ async function processReminders() {
 
   // Find events in the next N hours that haven't been reminded
   // date is TIMESTAMPTZ, startTime is TEXT like "08:30"
+  const todayISO = new Date().toISOString().split('T')[0] + 'T00:00:00';
   const events = await sbQuery(
     `calendar_events?select=id,"clientId","serviceName","startTime",date` +
     `&status=eq.confirmed&"reminderSent"=eq.false` +
+    `&date=gte.${todayISO}` +
     `&order=date.asc&limit=50`
   );
 
@@ -193,9 +195,11 @@ async function processBirthdays() {
     `&birthday=not.is.null&"authUserId"=not.is.null&limit=500`
   );
 
+  // Use BRT (UTC-3) for date comparison since cron runs in UTC
   const now = new Date();
-  const todayMonth = now.getMonth() + 1;
-  const todayDay = now.getDate();
+  const brt = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+  const todayMonth = brt.getUTCMonth() + 1;
+  const todayDay = brt.getUTCDate();
 
   let sent = 0;
   for (const client of clients) {
