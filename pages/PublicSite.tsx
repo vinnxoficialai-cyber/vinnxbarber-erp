@@ -1715,62 +1715,95 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
               <div className="pt-1">
 
           {isIOS && !deferredPrompt ? (
-            isIOSSafari ? (
-              /* Safari on iOS — show step-by-step instructions */
-              <div className="space-y-1.5">
-                {[
-                  { step: 1, verb: "Toque em", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>, label: "Menu" },
-                  { step: 2, verb: "Escolha", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>, label: "Compartilhar" },
-                  { step: 3, verb: "Toque em", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>, label: "Ver Mais" },
-                  { step: 4, verb: "Escolha", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: "Adicionar à Tela de Início" },
-                ].map(({ step, verb, icon, label }) => (
-                  <div key={step}
-                    className="flex items-center gap-2.5 py-2 px-3 rounded-lg"
-                    style={{
-                      background: "rgba(255,255,255,0.05)",
-                      opacity: installStepsExpanded ? 1 : 0,
-                      transform: installStepsExpanded ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
-                      transition: `opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s`,
-                    }}>
-                    <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: `${primary}25`, color: primary }}>{step}</span>
-                    <span className="text-[12px] text-gray-300">{verb}</span>
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
-                      {icon}
-                      {label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              /* Chrome/Firefox on iOS — share button is in the address bar */
-              <div className="space-y-1.5"
+            <>
+              {/* Benefits section — iOS only */}
+              <div className="space-y-1.5 mb-3"
                 style={{
                   opacity: installStepsExpanded ? 1 : 0,
-                  transform: installStepsExpanded ? "translateY(0)" : "translateY(10px)",
-                  transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.3s, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.3s",
+                  transform: installStepsExpanded ? "translateY(0)" : "translateY(8px)",
+                  transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.2s, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.2s",
                 }}>
+                <p className="text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5">Por que instalar?</p>
                 {[
-                  { step: 1, verb: "Toque em", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>, label: "Compartilhar (na barra de endereço)" },
-                  { step: 2, verb: "Escolha", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: "Adicionar à Tela de Início" },
-                ].map(({ step, verb, icon, label }) => (
-                  <div key={step}
-                    className="flex items-center gap-2.5 py-2 px-3 rounded-lg"
-                    style={{
-                      background: "rgba(255,255,255,0.05)",
-                      opacity: installStepsExpanded ? 1 : 0,
-                      transform: installStepsExpanded ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
-                      transition: `opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + step * 0.3}s`,
-                    }}>
-                    <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: `${primary}25`, color: primary }}>{step}</span>
-                    <span className="text-[12px] text-gray-300">{verb}</span>
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
-                      {icon}
-                      {label}
-                    </span>
+                  { icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>, label: "Receba notificações de agendamentos", highlight: true },
+                  { icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>, label: "Acesso rápido pela tela inicial" },
+                  { icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>, label: "Promoções e surpresas exclusivas" },
+                ].map(({ icon, label, highlight }, i) => (
+                  <div key={i} className="flex items-center gap-2.5 py-1.5 px-3 rounded-lg" style={{
+                    background: highlight ? `${primary}15` : "rgba(255,255,255,0.03)",
+                    border: highlight ? `1px solid ${primary}30` : "1px solid transparent",
+                  }}>
+                    <span className="flex-shrink-0" style={{ color: highlight ? primary : "rgba(255,255,255,0.5)" }}>{icon}</span>
+                    <span className={`text-[11px] ${highlight ? "font-semibold text-white" : "text-gray-400"}`}>{label}</span>
                   </div>
                 ))}
               </div>
-            )
+
+              {/* Divider */}
+              <div className="h-px mb-3" style={{
+                background: "rgba(255,255,255,0.08)",
+                opacity: installStepsExpanded ? 1 : 0,
+                transition: "opacity 0.5s ease 0.5s",
+              }} />
+
+              {/* Steps label */}
+              <p className="text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5" style={{
+                opacity: installStepsExpanded ? 1 : 0,
+                transition: "opacity 0.5s ease 0.6s",
+              }}>Como instalar</p>
+
+              {isIOSSafari ? (
+                /* Safari on iOS — show step-by-step instructions */
+                <div className="space-y-1.5">
+                  {[
+                    { step: 1, verb: "Toque em", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>, label: "Compartilhar" },
+                    { step: 2, verb: "Toque em", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>, label: "Ver Mais" },
+                    { step: 3, verb: "Escolha", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: "Adicionar à Tela de Início" },
+                  ].map(({ step, verb, icon, label }) => (
+                    <div key={step}
+                      className="flex items-center gap-2.5 py-2 px-3 rounded-lg"
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        opacity: installStepsExpanded ? 1 : 0,
+                        transform: installStepsExpanded ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
+                        transition: `opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.6 + step * 0.25}s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.6 + step * 0.25}s`,
+                      }}>
+                      <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: `${primary}25`, color: primary }}>{step}</span>
+                      <span className="text-[12px] text-gray-300">{verb}</span>
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
+                        {icon}
+                        {label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* Chrome/Firefox on iOS — share button is in the address bar */
+                <div className="space-y-1.5">
+                  {[
+                    { step: 1, verb: "Toque em", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>, label: "Compartilhar (na barra de endereço)" },
+                    { step: 2, verb: "Toque em", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>, label: "Ver Mais" },
+                    { step: 3, verb: "Escolha", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: "Adicionar à Tela de Início" },
+                  ].map(({ step, verb, icon, label }) => (
+                    <div key={step}
+                      className="flex items-center gap-2.5 py-2 px-3 rounded-lg"
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        opacity: installStepsExpanded ? 1 : 0,
+                        transform: installStepsExpanded ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
+                        transition: `opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.6 + step * 0.25}s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${0.6 + step * 0.25}s`,
+                      }}>
+                      <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: `${primary}25`, color: primary }}>{step}</span>
+                      <span className="text-[12px] text-gray-300">{verb}</span>
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
+                        {icon}
+                        {label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           ) : (
             <div className="flex gap-2"
               style={{
