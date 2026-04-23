@@ -726,27 +726,7 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
       return;
     }
 
-    // ── PUSH NOTIFICATION: notify client about status change ──
-    if (event.clientId && (newStatus === 'cancelled' || newStatus === 'confirmed')) {
-      const statusMessages: Record<string, string> = {
-        cancelled: '❌ Seu agendamento foi cancelado',
-        confirmed: '✅ Seu agendamento foi confirmado',
-      };
-      supabase.auth.getSession().then(({ data: { session: sess } }) => {
-        if (sess?.access_token) {
-          fetch('/api/push-send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess.access_token}` },
-            body: JSON.stringify({
-              clientId: event.clientId,
-              title: statusMessages[newStatus] || 'Atualização',
-              body: `${event.serviceName || event.title} — ${event.startTime}`,
-              tag: `status-${event.id}`,
-            }),
-          }).catch(() => {});
-        }
-      });
-    }
+    // Push notification is handled by DB trigger (trg_push_on_calendar_event)
 
     // ── AUTO-COMANDA: create comanda when entering "in_service" ──
     if (newStatus === 'in_service') {

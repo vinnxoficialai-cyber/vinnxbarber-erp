@@ -1241,12 +1241,7 @@ function PublicSiteApp() {
           showToast(`Erro ao agendar: ${error.message}`, "error");
           return;
         }
-        // Fire-and-forget: send booking confirmation push
-        fetch('/api/push-booking-confirm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ eventId: newEvent.id }),
-        }).catch(() => {});
+        // Push notification is handled by DB trigger (trg_push_on_calendar_event)
         // Deduct referral credits after successful booking
         if (selection.isFromCreditRedemption && clientProfile) {
           const minRedemption = parseInt(g("referral.min_redemption", "50"), 10) || 50;

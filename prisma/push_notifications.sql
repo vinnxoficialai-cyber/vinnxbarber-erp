@@ -167,14 +167,9 @@ $$;
 -- ══════════════════════════════════════════════════
 -- 7. TRIGGER: notify_push_on_event_change
 -- ══════════════════════════════════════════════════
--- ⚠️ ATENÇÃO: Este trigger envia push automaticamente via pg_net.
--- Se ativado, NÃO use também o /api/push-booking-confirm no frontend
--- e remova o push do handleStatusChange na Agenda.tsx para evitar
--- notificações duplicadas. Escolha UMA abordagem:
---   A) Trigger (este) — automático, funciona de qualquer fonte
---   B) Endpoints de API — mais controle, mais flexível
--- Atualmente os endpoints estão ativos. Para usar o trigger,
--- descomente o CREATE TRIGGER abaixo e remova os endpoints.
+-- Envia push automaticamente via pg_net quando eventos são
+-- criados (confirmação), cancelados, ou reagendados.
+-- O frontend NÃO envia push manualmente — o trigger cuida de tudo.
 CREATE OR REPLACE FUNCTION notify_push_on_event_change()
 RETURNS TRIGGER AS $$
 DECLARE
