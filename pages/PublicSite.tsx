@@ -379,8 +379,6 @@ function PublicSiteApp() {
   useEffect(() => {
     if (isStandalone) return;
     if (g("pwa.install_prompt_enabled", "true") === "false") return;
-    const dismissed = localStorage.getItem("vinnx_install_dismissed");
-    if (dismissed && Date.now() - parseInt(dismissed) < 7 * 24 * 60 * 60 * 1000) return;
 
     // Pick up prompt captured at module level (before React mounted)
     if (_deferredInstallPrompt) {
@@ -392,14 +390,14 @@ function PublicSiteApp() {
     const handler = (e: Event) => { e.preventDefault(); setDeferredPrompt(e); };
     window.addEventListener("beforeinstallprompt", handler);
 
-    // Show after 10s (non-intrusive)
+    // Show after 10s on every page load for non-standalone users
     const timer = setTimeout(() => setShowInstallBanner(true), 10000);
     return () => { window.removeEventListener("beforeinstallprompt", handler); clearTimeout(timer); };
   }, [isStandalone]);
 
   const dismissInstallBanner = useCallback(() => {
     setInstallBannerExiting(true);
-    setTimeout(() => { setShowInstallBanner(false); localStorage.setItem("vinnx_install_dismissed", String(Date.now())); }, 350);
+    setTimeout(() => { setShowInstallBanner(false); }, 350);
   }, []);
 
   const handleInstallClick = useCallback(async () => {
@@ -434,14 +432,20 @@ function PublicSiteApp() {
   }, []);
 
   // Sync subscription on app-load — save to DB via API (bypasses RLS)
+  // IMPORTANT: We immediately set pushSubscribed=true when a local subscription
+  // exists to prevent the banner from flashing before the async API call completes.
   useEffect(() => {
     if (!pushSupported) return;
-    setPushPermission(Notification.permission);
+    const currentPermission = Notification.permission;
+    setPushPermission(currentPermission);
     
     navigator.serviceWorker.ready.then(async (reg) => {
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
-        // Save via API route (service_role, bypasses RLS)
+        // Immediately mark as subscribed to prevent banner from showing
+        setPushSubscribed(true);
+
+        // Then sync to DB in the background (service_role, bypasses RLS)
         const j = sub.toJSON();
         try {
           const res = await fetch('/api/push-subscribe', {
@@ -455,14 +459,17 @@ function PublicSiteApp() {
               userAgent: navigator.userAgent,
             }),
           });
-          if (res.ok) {
-            setPushSubscribed(true);
-          } else {
+          if (!res.ok) {
             console.warn('[Push] Sync failed:', await res.text());
           }
         } catch (err) {
           console.warn('[Push] Sync error:', err);
         }
+      } else if (currentPermission === 'granted') {
+        // Permission granted but no subscription object — user may have cleared
+        // site data or the subscription expired. Don't show banner; they already
+        // consented. Silently re-subscribe in the background.
+        setPushSubscribed(true);
       }
     }).catch(() => {});
   }, [pushSupported, authUser, clientProfile]);
@@ -541,12 +548,14 @@ function PublicSiteApp() {
     }
   }, [showToast]);
 
-  // Show push banner for ALL visitors on EVERY page load until they subscribe
+  // Show push banner only for users who haven't subscribed and haven't granted permission
   useEffect(() => {
     if (!pushSupported || pushSubscribed) return;
     if (Notification.permission === 'denied') return;
-    // Show banner after 1.5s — no cooldown, no dismiss memory
-    // If permission is already 'granted' but not subscribed in DB, still show
+    // If permission is already 'granted', the sync effect above handles it —
+    // don't show the banner since the user already consented.
+    if (Notification.permission === 'granted') return;
+    // Only show banner for users with 'default' permission (never asked)
     const timer = setTimeout(() => setShowPushBanner(true), 1500);
     return () => clearTimeout(timer);
   }, [pushSupported, pushSubscribed]);
@@ -1905,12 +1914,11 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
               border: "1.5px solid rgba(255,255,255,0.15)",
             }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 18h.01"/><path d="M7.9 17.39A8 8 0 0 1 12 4a8 8 0 0 1 4.1 13.39"/><path d="M15 17h.01"/><path d="M9 17h.01"/>
-                <rect x="2" y="20" width="20" height="2" rx="1"/>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-bold text-sm text-white">📲 Instale o app</p>
+              <p className="font-bold text-sm text-white">Instale o app</p>
               <p className="text-[11px] text-gray-400">Para receber notificações no iPhone</p>
             </div>
             <button onClick={onIOSPushGuideDismiss} className="flex-shrink-0 p-1 rounded-lg transition-colors hover:bg-white/10" style={{ color: "rgba(255,255,255,0.5)" }}>
@@ -1918,18 +1926,22 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
             </button>
           </div>
           <div className="space-y-1.5 mb-3">
-            <div className="flex items-center gap-2.5 py-2 px-3 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
-              <span className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 text-[11px] font-bold" style={{ background: `${primary}25`, color: primary }}>1</span>
-              <span className="text-[12px] text-gray-300">Toque em <span className="inline-block" style={{ fontSize: 16 }}>⬆️</span> <strong>Compartilhar</strong></span>
-            </div>
-            <div className="flex items-center gap-2.5 py-2 px-3 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
-              <span className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 text-[11px] font-bold" style={{ background: `${primary}25`, color: primary }}>2</span>
-              <span className="text-[12px] text-gray-300">Toque em <strong>Adicionar à Tela de Início</strong></span>
-            </div>
-            <div className="flex items-center gap-2.5 py-2 px-3 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
-              <span className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 text-[11px] font-bold" style={{ background: `${primary}25`, color: primary }}>3</span>
-              <span className="text-[12px] text-gray-300">Abra o app e ative as notificações</span>
-            </div>
+            {[
+              { step: 1, verb: "Toque em", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>, label: "Compartilhar" },
+              { step: 2, verb: "Escolha", icon: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, label: "Adicionar à Tela de Início" },
+              { step: 3, verb: "", icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>, label: "Abra o app e ative as notificações" },
+            ].map(({ step, verb, icon, label }) => (
+              <div key={step}
+                className="flex items-center gap-2.5 py-2 px-3 rounded-lg"
+                style={{ background: "rgba(255,255,255,0.05)" }}>
+                <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: `${primary}25`, color: primary }}>{step}</span>
+                {verb && <span className="text-[12px] text-gray-300">{verb}</span>}
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
+                  {icon}
+                  {label}
+                </span>
+              </div>
+            ))}
           </div>
           <p className="text-[10px] text-gray-500 mb-2">No iPhone, notificações só funcionam com o app instalado.</p>
           <button onClick={onIOSPushGuideDismiss} className="px-3 py-2 rounded-lg text-[12px] text-gray-400 transition-colors hover:bg-white/5">Agora não</button>
