@@ -18,7 +18,7 @@ import {
     saveSubscription, deleteSubscription, getSubscriptions,
     getBillingConfig, saveBillingConfig
 } from '../lib/dataService';
-import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription, tokenizeCreditCard, updateAsaasSubscription } from '../lib/asaasService';
+import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription, tokenizeCreditCard, updateAsaasSubscription, cancelAsaasSubscription, configureAsaasWebhook, getAsaasWebhookStatus } from '../lib/asaasService';
 import type { BillingGatewayConfig } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
@@ -236,7 +236,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                 const affectedSubs = subscriptions.filter(s => 
                     s.planId === editingPlanId && 
                     (s.status === 'active' || s.status === 'pending_payment') &&
-                    (s as any).gatewaySubscriptionId
+                    s.gatewaySubscriptionId
                 );
                 if (affectedSubs.length > 0) {
                     toast.info('Atualizando ASAAS...', `Sincronizando novo valor (R$ ${plan.price.toFixed(2)}) em ${affectedSubs.length} assinatura(s)...`);
@@ -244,7 +244,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     for (const sub of affectedSubs) {
                         try {
                             await updateAsaasSubscription({
-                                gatewaySubscriptionId: (sub as any).gatewaySubscriptionId,
+                                gatewaySubscriptionId: sub.gatewaySubscriptionId!,
                                 value: plan.price,
                                 description: `Plano ${plan.name}`,
                             });
@@ -386,9 +386,9 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             planId: subForm.planId, clientId: subForm.clientId,
             clientName: client?.name || subForm.clientName,
             // New subs with ASAAS start as pending_payment; without ASAAS or editing, use form value
-            status: (!editingSubId && integrationConfig.apiKey) ? 'pending_payment' as any : subForm.status,
+            status: (!editingSubId && integrationConfig.apiKey) ? 'pending_payment' : subForm.status,
             startDate: subForm.startDate, paymentDay: subForm.paymentDay,
-            usesThisMonth: 0,
+            usesThisMonth: editingSubId ? (subscriptions.find(s => s.id === editingSubId)?.usesThisMonth ?? 0) : 0,
             paymentMethod: (subForm.paymentMethod || undefined) as Subscription['paymentMethod'],
             cardBrand: subForm.cardBrand || undefined, cardLast4: subForm.cardLast4 || undefined,
             billingEmail: subForm.billingEmail || undefined,
@@ -402,6 +402,43 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         };
         const r = await saveSubscription(sub);
         if (!r.success) { toast.error('Erro', r.error || ''); return; }
+
+        // ═══ SYNC CANCELLATION WITH ASAAS (when editing status to cancelled) ═══
+        if (editingSubId && subForm.status === 'cancelled' && integrationConfig.apiKey) {
+            const existingSub = subscriptions.find(s => s.id === editingSubId);
+            if (existingSub?.gatewaySubscriptionId && existingSub.status !== 'cancelled') {
+                try {
+                    toast.info('Cancelando no ASAAS...', 'Cancelando cobrança recorrente...');
+                    await cancelAsaasSubscription({ gatewaySubscriptionId: existingSub.gatewaySubscriptionId, subscriptionId: editingSubId });
+                    toast.success('ASAAS atualizado', 'Cobrança recorrente cancelada no gateway.');
+                } catch (err: any) {
+                    console.error('ASAAS cancel sync error:', err);
+                    toast.warning('Aviso ASAAS', `Cancelamento local OK, mas ASAAS: ${err.message}`);
+                }
+            }
+        }
+
+        // ═══ SYNC PLAN CHANGE WITH ASAAS (when editing and plan changed) ═══
+        if (editingSubId && integrationConfig.apiKey && subForm.status !== 'cancelled') {
+            const existingSub = subscriptions.find(s => s.id === editingSubId);
+            if (existingSub?.gatewaySubscriptionId && existingSub.planId !== subForm.planId) {
+                const newPlan = plans.find(p => p.id === subForm.planId);
+                if (newPlan) {
+                    try {
+                        toast.info('Atualizando ASAAS...', `Sincronizando novo plano (${newPlan.name} - R$ ${newPlan.price.toFixed(2)})...`);
+                        await updateAsaasSubscription({
+                            gatewaySubscriptionId: existingSub.gatewaySubscriptionId,
+                            value: newPlan.price,
+                            description: `Plano ${newPlan.name}`,
+                        });
+                        toast.success('ASAAS atualizado', `Plano alterado para ${newPlan.name}.`);
+                    } catch (err: any) {
+                        console.error('ASAAS plan change sync error:', err);
+                        toast.warning('Aviso ASAAS', `Plano atualizado localmente, mas ASAAS: ${err.message}`);
+                    }
+                }
+            }
+        }
 
         // ═══ SAVE CPF TO CLIENT IF PROVIDED ═══
         const cpfValue = subForm.cpfCnpj?.replace(/\D/g, '');
@@ -552,10 +589,24 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         setIsSubModalOpen(false);
     };
     const handleDeleteSub = async (id: string) => {
-        if (!await confirm({ title: 'Excluir Assinatura', message: 'Deseja excluir esta assinatura?', variant: 'danger', confirmLabel: 'Excluir', cancelLabel: 'Cancelar' })) return;
+        if (!await confirm({ title: 'Excluir Assinatura', message: 'Deseja excluir esta assinatura? Isso também cancelará a cobrança no gateway de pagamento.', variant: 'danger', confirmLabel: 'Excluir', cancelLabel: 'Cancelar' })) return;
+        
+        // Cancel in ASAAS first if has gateway subscription
+        const sub = subscriptions.find(s => s.id === id);
+        if (sub?.gatewaySubscriptionId && integrationConfig.apiKey) {
+            try {
+                toast.info('Cancelando...', 'Cancelando cobrança no ASAAS...');
+                await cancelAsaasSubscription({ gatewaySubscriptionId: sub.gatewaySubscriptionId, subscriptionId: sub.id });
+            } catch (err: any) {
+                console.error('ASAAS cancel error:', err);
+                toast.warning('Aviso', `Cobrança ASAAS não cancelada: ${err.message}. A assinatura local será excluída.`);
+            }
+        }
+        
         const r = await deleteSubscription(id);
         if (!r.success) { toast.error('Erro', r.error || ''); return; }
-        setSubscriptions(p => p.filter(s => s.id !== id)); toast.success('Assinatura excluída');
+        setSubscriptions(p => p.filter(s => s.id !== id));
+        toast.success('Assinatura excluída', sub?.gatewaySubscriptionId ? 'Cobrança cancelada no ASAAS e assinatura removida.' : 'Assinatura removida.');
     };
 
     const PLAN_SECTIONS = ['Detalhes', 'Pagamento', 'Benefícios', 'Serviços', 'Produtos', 'Restrições'];
@@ -874,7 +925,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                     <div><label className={labelCls}><DollarSign size={12} /> Dia Pgto</label>
                                         <input type="number" value={subForm.paymentDay} onChange={e => setSubForm(p => ({ ...p, paymentDay: parseInt(e.target.value) || 5 }))} className={inputCls} min="1" max="28" /></div>
                                     <div><label className={labelCls}>Status</label>
-                                        <CustomDropdown value={subForm.status} onChange={v => setSubForm(p => ({ ...p, status: v as any }))} options={[{ value: 'active', label: 'Ativo' }, { value: 'paused', label: 'Pausado' }, { value: 'cancelled', label: 'Cancelado' }, { value: 'overdue', label: 'Inadimplente' }]} isDarkMode={isDarkMode} /></div>
+                                        <CustomDropdown value={subForm.status} onChange={v => setSubForm(p => ({ ...p, status: v as any }))} options={[{ value: 'active', label: 'Ativo' }, { value: 'pending_payment', label: 'Aguardando Pgto' }, { value: 'paused', label: 'Pausado' }, { value: 'cancelled', label: 'Cancelado' }, { value: 'overdue', label: 'Inadimplente' }]} isDarkMode={isDarkMode} /></div>
                                 </div>
                             </>)}
                             {/* Section 1: Pagamento */}
@@ -1636,7 +1687,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                 <div className="flex flex-wrap gap-2 mb-4">
                     <div className="flex items-center gap-1.5">
                         <Filter size={14} className={textSub} />
-                        <CustomDropdown value={historyStatusFilter} onChange={v => setHistoryStatusFilter(v)} options={[{ value: 'all', label: 'Todos status' }, { value: 'active', label: 'Ativo' }, { value: 'paused', label: 'Pausado' }, { value: 'cancelled', label: 'Cancelado' }, { value: 'overdue', label: 'Inadimplente' }]} isDarkMode={isDarkMode} />
+                        <CustomDropdown value={historyStatusFilter} onChange={v => setHistoryStatusFilter(v)} options={[{ value: 'all', label: 'Todos status' }, { value: 'active', label: 'Ativo' }, { value: 'pending_payment', label: 'Aguardando Pgto' }, { value: 'paused', label: 'Pausado' }, { value: 'cancelled', label: 'Cancelado' }, { value: 'overdue', label: 'Inadimplente' }]} isDarkMode={isDarkMode} />
                     </div>
                     <CustomDropdown value={historyPlanFilter} onChange={v => setHistoryPlanFilter(v)} options={[{ value: 'all', label: 'Todos planos' }, ...plans.map(p => ({ value: p.id, label: p.name }))]} isDarkMode={isDarkMode} />
                     <CustomDropdown value={historyMethodFilter} onChange={v => setHistoryMethodFilter(v)} options={[{ value: 'all', label: 'Todas formas' }, { value: 'credit', label: 'Cartão' }, { value: 'boleto', label: 'Boleto' }, { value: 'pix', label: 'Pix' }]} isDarkMode={isDarkMode} />
@@ -1872,9 +1923,36 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                     disabled={!integrationConfig?.apiKey}
                                     onClick={async () => {
                                         if (!integrationConfig) return;
+                                        // 1. Save config locally
                                         const r = await saveBillingConfig(integrationConfig);
-                                        if (r.success) toast.success('Configuração salva!');
-                                        else toast.error('Erro', r.error || '');
+                                        if (!r.success) { toast.error('Erro', r.error || ''); return; }
+                                        
+                                        // 2. Auto-configure webhook in ASAAS
+                                        if (integrationConfig.apiKey) {
+                                            try {
+                                                toast.info('Configurando webhook...', 'Registrando webhook automaticamente no ASAAS...');
+                                                const appUrl = window.location.origin;
+                                                if (appUrl.includes('localhost') || appUrl.includes('127.0.0.1')) {
+                                                    toast.success('Configuração salva!');
+                                                    toast.warning('Webhook não registrado', 'Webhooks só funcionam em produção (URL pública). Em ambiente local, o ASAAS não consegue enviar notificações.');
+                                                } else {
+                                                const wh = await configureAsaasWebhook({ appUrl });
+                                                if (wh.success && wh.webhookSecret) {
+                                                    // Update local config with webhook data
+                                                    const updatedConfig = { ...integrationConfig, webhookSecret: wh.webhookSecret, webhookUrl: wh.webhookUrl };
+                                                    setIntegrationConfig(updatedConfig as any);
+                                                    toast.success('Configuração salva!', `Webhook configurado: ${wh.webhookUrl}`);
+                                                } else {
+                                                    toast.success('Configuração salva!', 'Webhook não pôde ser configurado automaticamente.');
+                                                }
+                                                }
+                                            } catch (whErr: any) {
+                                                console.error('Webhook config error:', whErr);
+                                                toast.success('Configuração salva!', `Webhook: ${whErr.message}. Configure manualmente no painel ASAAS.`);
+                                            }
+                                        } else {
+                                            toast.success('Configuração salva!');
+                                        }
                                     }}>
                                     Salvar Configuração
                                 </button>
@@ -1883,12 +1961,13 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     </div>
 
                     {/* Section 3: Integration Status */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                         {[
                             { label: 'Gateway', value: integrationConfig.apiKey ? 'Asaas' : 'Não configurado', icon: Link, color: integrationConfig.apiKey ? 'text-emerald-500' : 'text-slate-400', bg: integrationConfig.apiKey ? (isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50') : (isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50') },
                             { label: 'Cobranças Auto', value: integrationConfig.autoCharge ? 'Ativado' : 'Desativado', icon: Repeat, color: integrationConfig.autoCharge ? 'text-blue-500' : 'text-slate-400', bg: integrationConfig.autoCharge ? (isDarkMode ? 'bg-blue-500/10' : 'bg-blue-50') : (isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50') },
                             { label: 'Ambiente', value: integrationConfig.environment === 'production' ? 'Produção' : 'Sandbox', icon: Shield, color: integrationConfig.environment === 'production' ? 'text-red-500' : 'text-amber-500', bg: integrationConfig.environment === 'production' ? (isDarkMode ? 'bg-red-500/10' : 'bg-red-50') : (isDarkMode ? 'bg-amber-500/10' : 'bg-amber-50') },
                             { label: 'Notificações', value: integrationConfig.sendNotifications ? 'Ativado' : 'Desativado', icon: Zap, color: integrationConfig.sendNotifications ? 'text-emerald-500' : 'text-slate-400', bg: integrationConfig.sendNotifications ? (isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50') : (isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50') },
+                            { label: 'Webhook', value: (integrationConfig as any).webhookSecret ? 'Configurado' : 'Não configurado', icon: Activity, color: (integrationConfig as any).webhookSecret ? 'text-emerald-500' : 'text-red-500', bg: (integrationConfig as any).webhookSecret ? (isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50') : (isDarkMode ? 'bg-red-500/10' : 'bg-red-50') },
                         ].map((s, i) => (
                             <div key={i} className={`${bgCard} border ${borderCol} rounded-xl p-4 ${shadowClass} flex items-center gap-3`}>
                                 <div className={`p-2 rounded-lg ${s.bg}`}><s.icon size={18} className={s.color} /></div>
@@ -1896,6 +1975,29 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             </div>
                         ))}
                     </div>
+
+                    {/* Section 4: Configuration Checklist */}
+                    {integrationConfig.apiKey && (
+                        <div className={`${bgCard} border ${borderCol} rounded-xl p-5 ${shadowClass}`}>
+                            <p className={`text-sm font-bold ${textMain} mb-3 flex items-center gap-2`}><CheckCircle size={16} className="text-primary" /> Checklist de Configuração</p>
+                            <div className="space-y-2">
+                                {[
+                                    { ok: !!integrationConfig.apiKey, label: 'API Key configurada', detail: integrationConfig.environment === 'production' ? 'Produção' : 'Sandbox' },
+                                    { ok: !!(integrationConfig as any).webhookSecret, label: 'Webhook registrado', detail: (integrationConfig as any).webhookUrl || 'Clique em "Salvar Configuração" para registrar automaticamente' },
+                                    { ok: integrationConfig.autoCharge, label: 'Cobrança automática ativa', detail: 'Cobranças serão geradas automaticamente ao criar assinaturas' },
+                                    { ok: integrationConfig.sendNotifications, label: 'Notificações do ASAAS ativas', detail: 'Clientes receberão emails/SMS de cobrança do ASAAS' },
+                                ].map((item, i) => (
+                                    <div key={i} className={`flex items-start gap-3 p-3 rounded-lg ${item.ok ? (isDarkMode ? 'bg-emerald-500/5' : 'bg-emerald-50/50') : (isDarkMode ? 'bg-red-500/5' : 'bg-red-50/50')}`}>
+                                        {item.ok ? <CheckCircle size={16} className="text-emerald-500 mt-0.5 shrink-0" /> : <AlertCircle size={16} className="text-red-500 mt-0.5 shrink-0" />}
+                                        <div>
+                                            <p className={`text-sm font-medium ${textMain}`}>{item.label}</p>
+                                            <p className={`text-xs ${textSub}`}>{item.detail}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

@@ -218,6 +218,7 @@ export default async function handler(req, res) {
           externalReference: subscriptionId,
           fine: { value: config.finePercent || 0 },
           interest: { value: config.interestPercent || 0 },
+          notifyPaymentCreatedImmediately: true,
         };
 
         // Use token if available, otherwise raw card data
@@ -276,6 +277,7 @@ export default async function handler(req, res) {
         const updatePayload = {};
         if (value !== undefined) updatePayload.value = value;
         if (description) updatePayload.description = description;
+        updatePayload.updatePendingPayments = true;
         
         const updated = await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'PUT', updatePayload);
         return res.status(200).json({ success: true, value: updated.value });
@@ -320,6 +322,116 @@ export default async function handler(req, res) {
         
         const result = await asaasRequest(config, path);
         return res.status(200).json({ success: true, payments: result.data || [] });
+      }
+
+      // ═══ Configure Webhook in ASAAS ═══
+      case 'configureWebhook': {
+        const config = await getConfig();
+        if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
+        
+        const { appUrl } = data;
+        if (!appUrl) return res.status(400).json({ error: 'appUrl obrigatório' });
+        
+        const webhookUrl = `${appUrl}/api/asaas-webhook`;
+        const events = [
+          'PAYMENT_CREATED', 'PAYMENT_UPDATED', 'PAYMENT_CONFIRMED',
+          'PAYMENT_RECEIVED', 'PAYMENT_OVERDUE', 'PAYMENT_REFUNDED',
+          'PAYMENT_DELETED',
+        ];
+        
+        // Generate secure authToken (ASAAS rules: 32-255 chars, no 4+ repeated, no numeric sequences, no spaces)
+        const crypto = await import('crypto');
+        function generateAsaasToken() {
+          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+          const bytes = crypto.randomBytes(48);
+          let token = '';
+          for (let i = 0; i < 48; i++) token += chars[bytes[i] % chars.length];
+          // Validate: no 4+ repeated chars
+          if (/(.)\1{3,}/.test(token)) return generateAsaasToken();
+          // Validate: no numeric sequences like 12345
+          if (/01234|12345|23456|34567|45678|56789/.test(token)) return generateAsaasToken();
+          return token;
+        }
+        const authToken = generateAsaasToken();
+        
+        // Check if webhook already exists (avoid duplicates)
+        let existingWebhook = null;
+        try {
+          const existing = await asaasRequest(config, '/webhooks', 'GET');
+          if (existing?.data?.length > 0) {
+            existingWebhook = existing.data.find(w => w.url === webhookUrl);
+          }
+        } catch (e) {
+          console.log('[asaas-ops] No existing webhooks found');
+        }
+        
+        let webhook;
+        if (existingWebhook) {
+          // Update existing webhook
+          webhook = await asaasRequest(config, `/webhooks/${existingWebhook.id}`, 'PUT', {
+            url: webhookUrl,
+            email: data.email || undefined,
+            enabled: true,
+            interrupted: false,
+            authToken,
+            events,
+          });
+          console.log(`[asaas-ops] Webhook updated: ${existingWebhook.id}`);
+        } else {
+          // Create new webhook
+          webhook = await asaasRequest(config, '/webhooks', 'POST', {
+            name: 'VINNX ERP Webhook',
+            url: webhookUrl,
+            email: data.email || undefined,
+            enabled: true,
+            authToken,
+            events,
+          });
+          console.log(`[asaas-ops] Webhook created: ${webhook.id}`);
+        }
+        
+        // Save webhookSecret and webhookUrl to billing_gateway_config
+        await sbQuery(`billing_gateway_config?id=eq.${config.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            webhookSecret: authToken,
+            webhookUrl: webhookUrl,
+            updatedAt: new Date().toISOString(),
+          }),
+          prefer: 'return=minimal',
+        });
+        
+        return res.status(200).json({
+          success: true,
+          webhookSecret: authToken,
+          webhookUrl: webhookUrl,
+          webhookId: webhook.id,
+        });
+      }
+
+      // ═══ Get Webhook Status from ASAAS ═══
+      case 'getWebhookStatus': {
+        const config = await getConfig();
+        if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
+        
+        try {
+          const result = await asaasRequest(config, '/webhooks', 'GET');
+          const webhooks = result?.data || [];
+          const ours = webhooks.find(w => w.url?.includes('/api/asaas-webhook'));
+          
+          if (ours) {
+            return res.status(200).json({
+              configured: true,
+              url: ours.url,
+              enabled: ours.enabled,
+              interrupted: ours.interrupted || false,
+              webhookId: ours.id,
+            });
+          }
+          return res.status(200).json({ configured: false });
+        } catch (e) {
+          return res.status(200).json({ configured: false, error: e.message });
+        }
       }
 
       default:

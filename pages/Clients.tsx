@@ -617,7 +617,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                               <div className={`my-2 border-t ${isDarkMode ? 'border-dark-border' : 'border-slate-200'}`} />
                               <div className="flex justify-between text-sm"><span className={textSub}>Plano</span><span className="font-semibold text-primary">{plan.name}</span></div>
                               <div className="flex justify-between text-sm"><span className={textSub}>Valor</span><span className={`font-semibold ${textMain}`}>{formatCurrency(plan.price)}/mes</span></div>
-                              <div className="flex justify-between text-sm"><span className={textSub}>Status</span><span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase ${sub.status === 'active' ? 'bg-primary/10 text-primary' : sub.status === 'overdue' ? 'bg-red-500/10 text-red-500' : sub.status === 'paused' ? 'bg-yellow-500/10 text-yellow-500' : 'bg-slate-500/10 text-slate-500'}`}>{sub.status === 'active' ? 'Ativo' : sub.status === 'overdue' ? 'Inadimplente' : sub.status === 'paused' ? 'Pausado' : 'Cancelado'}</span></div>
+                              <div className="flex justify-between text-sm"><span className={textSub}>Status</span><span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase ${sub.status === 'active' ? 'bg-primary/10 text-primary' : sub.status === 'pending_payment' ? 'bg-blue-500/10 text-blue-500' : sub.status === 'overdue' ? 'bg-red-500/10 text-red-500' : sub.status === 'paused' ? 'bg-yellow-500/10 text-yellow-500' : 'bg-slate-500/10 text-slate-500'}`}>{sub.status === 'active' ? 'Ativo' : sub.status === 'pending_payment' ? 'Aguardando Pgto' : sub.status === 'overdue' ? 'Inadimplente' : sub.status === 'paused' ? 'Pausado' : 'Cancelado'}</span></div>
                               {sub.cardBrand && <div className="flex justify-between text-sm"><span className={textSub}>Cartao</span><span className={`font-semibold ${textMain}`}>{sub.cardBrand.toUpperCase()} *{sub.cardLast4}</span></div>}
                               <div className="flex justify-between text-sm"><span className={textSub}>Usos no mes</span><span className={`font-semibold ${textMain}`}>{sub.usesThisMonth}{plan.maxUsesPerMonth ? `/${plan.maxUsesPerMonth}` : ''}</span></div>
                             </>
@@ -738,7 +738,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
           {filteredClients.map((client) => {
             const salesExec = members.find(m => m.id === client.salesExecutiveId);
-            const clientSub = subscriptions.find(s => s.clientId === client.id && s.status === 'active');
+            const clientSub = subscriptions.find(s => s.clientId === client.id && (s.status === 'active' || s.status === 'pending_payment'));
             const clientPlan = clientSub ? subscriptionPlans.find(p => p.id === clientSub.planId) : null;
             const clientContracts = contracts.filter(c => c.clientId === client.id && c.status === 'Active');
             const totalLTV = clientContracts.reduce((acc, curr) => acc + (curr.monthlyValue * curr.contractDuration) + curr.setupValue, 0);
@@ -1017,6 +1017,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
       {/* TAB: Indicadores */}
       {activeTab === 'indicators' && (() => {
         const activeSubs = unitSubscriptions.filter(s => s.status === 'active');
+        const pendingSubs = unitSubscriptions.filter(s => s.status === 'pending_payment');
         const pausedSubs = unitSubscriptions.filter(s => s.status === 'paused');
         const cancelledSubs = unitSubscriptions.filter(s => s.status === 'cancelled');
         const overdueSubs = unitSubscriptions.filter(s => s.status === 'overdue');
@@ -1058,7 +1059,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
         const maxOrigin = origins[0]?.[1] || 1;
 
         const maxGender = Math.max(genderM, genderF, genderO, genderNone, 1);
-        const maxSubStatus = Math.max(activeSubs.length, pausedSubs.length, cancelledSubs.length, overdueSubs.length, 1);
+        const maxSubStatus = Math.max(activeSubs.length, pendingSubs.length, pausedSubs.length, cancelledSubs.length, overdueSubs.length, 1);
 
         // ===== Client Status Classification (based on last closed comanda) =====
         const now = new Date();
@@ -1378,6 +1379,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                   <div className="space-y-3">
                     {([
                       { label: 'Ativas', value: activeSubs.length, color: 'bg-emerald-500', icon: '●', textColor: 'text-emerald-500' },
+                      { label: 'Aguardando Pgto', value: pendingSubs.length, color: 'bg-blue-500', icon: '●', textColor: 'text-blue-500' },
                       { label: 'Pausadas', value: pausedSubs.length, color: 'bg-yellow-500', icon: '●', textColor: 'text-yellow-500' },
                       { label: 'Canceladas', value: cancelledSubs.length, color: 'bg-red-500', icon: '●', textColor: 'text-red-500' },
                       { label: 'Inadimplentes', value: overdueSubs.length, color: 'bg-orange-500', icon: '●', textColor: 'text-orange-500' },

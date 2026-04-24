@@ -55,7 +55,7 @@ const IndicatorsTab: React.FC<{
 
     // Planos vendidos
     const soldPlans = (subscriptions || []).filter((s: any) => s.soldBy === memberId);
-    const activePlans = soldPlans.filter((s: any) => s.status === 'active' || s.status === 'ACTIVE');
+    const activePlans = soldPlans.filter((s: any) => s.status === 'active' || s.status === 'ACTIVE' || s.status === 'pending_payment');
 
     // Taxa retenção
     const clientsWithComandas = new Set(closedComandas.map((cm: any) => cm.clientId).filter(Boolean));
@@ -84,7 +84,7 @@ const IndicatorsTab: React.FC<{
     const monthTotal = monthComandas.reduce((sum: number, cm: any) => sum + Number(cm.total || 0), 0);
 
     // Assinantes vs Avulsos (entre clientes da cadeira)
-    const subscriberIds = new Set((subscriptions || []).filter((s: any) => s.status === 'active' || s.status === 'ACTIVE').map((s: any) => s.clientId));
+    const subscriberIds = new Set((subscriptions || []).filter((s: any) => s.status === 'active' || s.status === 'ACTIVE' || s.status === 'pending_payment').map((s: any) => s.clientId));
     const chairSubscribers = chairClients.filter(c => subscriberIds.has(c.id)).length;
     const chairNonSubscribers = chairClients.length - chairSubscribers;
 

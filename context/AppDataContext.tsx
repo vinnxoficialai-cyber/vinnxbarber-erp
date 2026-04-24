@@ -782,6 +782,13 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 cancellationReason: s.cancellationReason || undefined,
                 notes: s.notes || undefined,
                 unitId: s.unitId || undefined,
+                currentInvoiceUrl: s.currentInvoiceUrl || undefined,
+                currentBankSlipUrl: s.currentBankSlipUrl || undefined,
+                currentPixQrCode: s.currentPixQrCode || undefined,
+                lastWebhookAt: s.lastWebhookAt || undefined,
+                failedAttempts: s.failedAttempts || 0,
+                pausedAt: s.pausedAt || undefined,
+                cancelledAt: s.cancelledAt || undefined,
                 createdAt: s.createdAt,
                 updatedAt: s.updatedAt,
                 plan: s.subscription_plans ? {

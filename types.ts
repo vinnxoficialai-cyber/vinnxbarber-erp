@@ -932,7 +932,7 @@ export interface Subscription {
   planId: string;
   clientId: string;
   clientName?: string;
-  status: 'active' | 'paused' | 'cancelled' | 'overdue';
+  status: 'active' | 'paused' | 'cancelled' | 'overdue' | 'pending_payment';
   startDate: string;
   endDate?: string;
   usesThisMonth: number;

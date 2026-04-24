@@ -843,7 +843,7 @@ function PublicSiteApp() {
         .from("subscriptions")
         .select("*, subscription_plans(*)")
         .eq("clientId", data.id)
-        .eq("status", "active")
+        .in("status", ["active", "pending_payment"])
         .limit(1);
       if (subs && subs.length > 0) {
         const s = subs[0];
@@ -3029,7 +3029,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
           <div className="p-5 rounded-2xl border border-gray-800" style={{ backgroundColor: "#1e1e1e" }}>
             <div className="flex justify-between items-center mb-5">
               <h3 className="font-bold text-white text-lg">{subscription.plan.name}</h3>
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ backgroundColor: "#22c55e33", color: "#4ade80" }}>Ativo</span>
+              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full`} style={{ backgroundColor: subscription.status === 'active' ? '#22c55e33' : '#3b82f633', color: subscription.status === 'active' ? '#4ade80' : '#60a5fa' }}>{subscription.status === 'active' ? 'Ativo' : 'Aguardando Pagamento'}</span>
             </div>
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-3">

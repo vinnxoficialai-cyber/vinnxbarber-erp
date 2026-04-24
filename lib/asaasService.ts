@@ -116,3 +116,20 @@ export async function getAsaasPayments(data?: {
 }): Promise<{ success: boolean; payments: any[] }> {
     return callApi('getPayments', data);
 }
+
+export async function configureAsaasWebhook(data: {
+    appUrl: string;
+    email?: string;
+}): Promise<{ success: boolean; webhookSecret?: string; webhookUrl?: string; webhookId?: string }> {
+    return callApi('configureWebhook', data);
+}
+
+export async function getAsaasWebhookStatus(): Promise<{
+    configured: boolean;
+    url?: string;
+    enabled?: boolean;
+    interrupted?: boolean;
+    webhookId?: string;
+}> {
+    return callApi('getWebhookStatus');
+}

@@ -150,6 +150,11 @@ export default async function handler(req, res) {
           if (payment.dueDate) updates.nextPaymentDate = payment.dueDate;
           break;
 
+        case 'PAYMENT_RECEIVED_IN_CASH_UNDONE':
+          updates.status = 'overdue';
+          updates.failedAttempts = (subscription.failedAttempts || 0) + 1;
+          break;
+
         default:
           console.log(`[asaas-webhook] Unhandled event: ${event}`);
       }
