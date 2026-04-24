@@ -29,6 +29,7 @@ type PageTab = 'plans' | 'subscribers' | 'dashboard' | 'history' | 'integration'
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; darkColor: string; icon: React.ElementType }> = {
     active: { label: 'Ativo', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20', darkColor: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20', icon: CheckCircle },
+    pending_payment: { label: 'Aguardando Pgto', color: 'bg-blue-500/10 text-blue-600 border-blue-500/20', darkColor: 'bg-blue-500/10 text-blue-400 border-blue-500/20', icon: Clock },
     paused: { label: 'Pausado', color: 'bg-amber-500/10 text-amber-600 border-amber-500/20', darkColor: 'bg-amber-500/10 text-amber-400 border-amber-500/20', icon: Pause },
     cancelled: { label: 'Cancelado', color: 'bg-red-500/10 text-red-600 border-red-500/20', darkColor: 'bg-red-500/10 text-red-400 border-red-500/20', icon: XCircle },
     overdue: { label: 'Inadimplente', color: 'bg-red-500/10 text-red-600 border-red-500/20', darkColor: 'bg-red-500/10 text-red-400 border-red-500/20', icon: AlertCircle },
@@ -289,7 +290,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             const targetUnit = selectedUnitId !== 'all' ? selectedUnitId : undefined;
             const existing = subscriptions.find(s =>
                 s.clientId === subForm.clientId &&
-                s.status === 'active' &&
+                (s.status === 'active' || s.status === 'pending_payment') &&
                 s.unitId === targetUnit
             );
             if (existing) {
@@ -298,12 +299,52 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             }
         }
 
+        // ═══ PAYMENT VALIDATION (when ASAAS is configured) ═══
+        if (!editingSubId && integrationConfig.apiKey) {
+            if (!subForm.paymentMethod) {
+                toast.error('Forma de pagamento obrigatória', 'Selecione uma forma de pagamento na aba "Pagamento".');
+                setSubModalSection(1);
+                return;
+            }
+
+            // CPF validation
+            const clientForValidation = clients.find(c => c.id === subForm.clientId);
+            const hasCpf = (clientForValidation as any)?.cpf || (clientForValidation as any)?.cpfCnpj || subForm.cpfCnpj?.replace(/\D/g, '');
+            if (!hasCpf) {
+                toast.error('CPF obrigatório', 'Informe o CPF/CNPJ do cliente para cobrança automática.');
+                setSubModalSection(0);
+                return;
+            }
+
+            // Credit card fields validation
+            if (subForm.paymentMethod === 'credit') {
+                const missing: string[] = [];
+                if (!subForm.cardNumber || subForm.cardNumber.replace(/\s/g, '').length < 13) missing.push('Número do cartão');
+                if (!subForm.cardHolderName) missing.push('Nome no cartão');
+                if (!subForm.cardExpiryMonth) missing.push('Mês de validade');
+                if (!subForm.cardExpiryYear) missing.push('Ano de validade');
+                if (!subForm.cardCvv || subForm.cardCvv.length < 3) missing.push('CVV');
+                if (!subForm.holderCpf || subForm.holderCpf.replace(/\D/g, '').length < 11) missing.push('CPF do titular');
+                if (!subForm.holderPostalCode || subForm.holderPostalCode.replace(/\D/g, '').length < 8) missing.push('CEP');
+                if (!subForm.holderAddressNumber) missing.push('Nº Endereço');
+                if (!subForm.holderPhone || subForm.holderPhone.replace(/\D/g, '').length < 10) missing.push('Telefone do titular');
+
+                if (missing.length > 0) {
+                    toast.error('Dados do cartão incompletos', `Preencha: ${missing.join(', ')}`);
+                    setSubModalSection(1);
+                    return;
+                }
+            }
+        }
+
         const client = clients.find(c => c.id === subForm.clientId);
         const sub: Subscription = {
             id: editingSubId || crypto.randomUUID(),
             planId: subForm.planId, clientId: subForm.clientId,
             clientName: client?.name || subForm.clientName,
-            status: subForm.status, startDate: subForm.startDate, paymentDay: subForm.paymentDay,
+            // New subs with ASAAS start as pending_payment; without ASAAS or editing, use form value
+            status: (!editingSubId && integrationConfig.apiKey) ? 'pending_payment' as any : subForm.status,
+            startDate: subForm.startDate, paymentDay: subForm.paymentDay,
             usesThisMonth: 0,
             paymentMethod: (subForm.paymentMethod || undefined) as Subscription['paymentMethod'],
             cardBrand: subForm.cardBrand || undefined, cardLast4: subForm.cardLast4 || undefined,
@@ -359,7 +400,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     // Charge TODAY for immediate validation
                     const today = new Date().toISOString().split('T')[0];
 
-                    toast.info('Processando pagamento...', 'Cobrando cartão...');
+                    toast.info('Processando pagamento...', sub.paymentMethod === 'credit' ? 'Cobrando cartão...' : 'Gerando cobrança...');
 
                     const asaasResult = await createAsaasSubscription({
                         customerId: asaasCustomerId,
@@ -389,31 +430,39 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         } : {}),
                     });
 
-                    // 3. Check first payment status (for credit card)
+                    // 3. Check first payment status and update subscription accordingly
+                    const { supabase: sb } = await import('../lib/supabase');
                     if (sub.paymentMethod === 'credit' && asaasResult.firstPaymentStatus) {
                         const payStatus = asaasResult.firstPaymentStatus;
                         if (payStatus === 'CONFIRMED' || payStatus === 'RECEIVED') {
-                            toast.success('Pagamento confirmado!', `R$ ${plan.price.toFixed(2)} cobrado com sucesso. Assinatura ativa.`);
+                            // ✅ Payment confirmed — ACTIVATE subscription
+                            await sb.from('subscriptions').update({ status: 'active' }).eq('id', sub.id);
+                            toast.success('Pagamento confirmado!', `R$ ${plan.price.toFixed(2)} cobrado com sucesso. Assinatura ativa!`);
                         } else if (payStatus === 'PENDING') {
-                            // Payment pending — keep subscription but warn
-                            toast.warning('Pagamento pendente', 'A cobrança foi enviada ao cartão e está aguardando confirmação da operadora.');
+                            // ⏳ Payment pending — keep as pending_payment
+                            toast.warning('Pagamento pendente', 'Cobrança enviada ao cartão, aguardando confirmação. A assinatura será ativada após a confirmação.');
                         } else if (payStatus === 'REFUSED' || payStatus === 'OVERDUE') {
-                            // Payment refused — deactivate subscription
-                            toast.error('Pagamento recusado!', 'O cartão foi recusado. A assinatura ficará inativa até o pagamento ser confirmado.');
-                            const { supabase: sb } = await import('../lib/supabase');
+                            // ❌ Payment refused — mark as overdue
                             await sb.from('subscriptions').update({ status: 'overdue' }).eq('id', sub.id);
+                            toast.error('Pagamento recusado!', 'O cartão foi recusado. A assinatura NÃO foi ativada.');
                         } else {
-                            toast.success('ASAAS sincronizado!', `Assinatura criada. Status do pagamento: ${payStatus}`);
+                            toast.info('ASAAS sincronizado', `Assinatura criada. Status: ${payStatus}. Aguardando confirmação.`);
                         }
                     } else {
-                        toast.success('ASAAS sincronizado!', `Assinatura ${asaasResult.asaasSubscriptionId} criada no gateway.`);
+                        // Non-credit (boleto/pix) — stays as pending_payment until webhook confirms
+                        toast.info('Cobrança gerada!', `Aguardando pagamento via ${sub.paymentMethod === 'boleto' ? 'boleto' : 'Pix'}. A assinatura será ativada após confirmação.`);
                     }
                 } else if (!asaasCustomerId) {
                     toast.warning('ASAAS parcial', 'Cliente sem CPF — assinatura criada localmente, mas não sincronizada com o gateway.');
                 }
             } catch (err: any) {
                 console.error('ASAAS sync error:', err);
-                toast.warning('Assinatura criada', `Salva localmente, mas falha ao sincronizar com ASAAS: ${err.message}`);
+                // Mark subscription as overdue since payment couldn't be processed
+                try {
+                    const { supabase: sb2 } = await import('../lib/supabase');
+                    await sb2.from('subscriptions').update({ status: 'overdue' }).eq('id', sub.id);
+                } catch (_) {}
+                toast.error('Falha na cobrança', `Erro ao processar pagamento: ${err.message}. A assinatura NÃO foi ativada.`);
             }
         }
 
