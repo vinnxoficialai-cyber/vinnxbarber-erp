@@ -18,7 +18,7 @@ interface ToastContextType {
     removeToast: (id: string) => void;
     success: (title: string, message?: string) => void;
     error: (title: string, message?: string) => void;
-    warning: (title: string, message?: string) => void;
+    warning: (title: string, message?: string, persistent?: boolean) => void;
     info: (title: string, message?: string) => void;
 }
 
@@ -41,6 +41,7 @@ const ToastItem: React.FC<{ toast: Toast; onClose: () => void }> = ({ toast, onC
     };
 
     React.useEffect(() => {
+        if (toast.duration === 0) return; // persistent toast — only closes on X click
         const timer = setTimeout(onClose, toast.duration || 4000);
         return () => clearTimeout(timer);
     }, [toast.duration, onClose]);
@@ -109,8 +110,8 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         addToast({ type: 'error', title, message });
     }, [addToast]);
 
-    const warning = useCallback((title: string, message?: string) => {
-        addToast({ type: 'warning', title, message });
+    const warning = useCallback((title: string, message?: string, persistent?: boolean) => {
+        addToast({ type: 'warning', title, message, duration: persistent ? 0 : undefined });
     }, [addToast]);
 
     const info = useCallback((title: string, message?: string) => {

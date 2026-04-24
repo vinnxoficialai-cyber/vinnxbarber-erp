@@ -260,7 +260,8 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     } else if (failedSubs.length > 0) {
                         toast.warning(
                             'Ação necessária no ASAAS',
-                            `Plano local atualizado ✓\n${updated > 0 ? `${updated} assinatura(s) sincronizada(s) ✓\n` : ''}${failedSubs.length} assinatura(s) precisam de ajuste manual no painel ASAAS (cartão de crédito com faturas pagas não permite alteração automática de valor).`
+                            `Plano local atualizado ✓\n${updated > 0 ? `${updated} assinatura(s) sincronizada(s) ✓\n` : ''}${failedSubs.length} assinatura(s) precisam de ajuste manual no painel ASAAS (cartão de crédito com faturas pagas não permite alteração automática de valor).`,
+                            true
                         );
                     }
                 }
@@ -439,7 +440,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         toast.success('ASAAS atualizado', `Plano alterado para ${newPlan.name}.`);
                     } catch (err: any) {
                         console.error('ASAAS plan change sync error:', err);
-                        toast.warning('Ação necessária no ASAAS', `Plano atualizado localmente ✓ Atualize o valor manualmente no painel ASAAS para esta assinatura (cartão de crédito com faturas pagas não permite alteração automática).`);
+                        toast.warning('Ação necessária no ASAAS', `Plano atualizado localmente ✓ Atualize o valor manualmente no painel ASAAS para esta assinatura (cartão de crédito com faturas pagas não permite alteração automática).`, true);
                     }
                 }
             }
