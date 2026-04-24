@@ -86,8 +86,9 @@ export default async function handler(req, res) {
       subscription = subs?.[0] || null;
     }
     if (!subscription && payment.customer) {
+      // Search for any non-cancelled subscription for this customer (not just active)
       const subRes = await sbQuery(
-        `subscriptions?gatewayCustomerId=eq.${payment.customer}&status=eq.active&select=*&limit=1`,
+        `subscriptions?gatewayCustomerId=eq.${payment.customer}&status=neq.cancelled&select=*&order=createdAt.desc&limit=1`,
         { headers: { Prefer: 'return=representation' } }
       );
       const subs = await subRes.json();
