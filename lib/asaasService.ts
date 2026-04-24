@@ -110,6 +110,15 @@ export async function cancelAsaasSubscription(data: {
     return callApi('cancelSubscription', data);
 }
 
+export async function recreateAsaasSubscription(data: {
+    gatewaySubscriptionId: string;
+    subscriptionId?: string;
+    newValue: number;
+    description?: string;
+}): Promise<{ success: boolean; newSubscriptionId?: string; value?: number }> {
+    return callApi('recreateSubscription', data);
+}
+
 export async function getAsaasPayments(data?: {
     customerId?: string;
     limit?: number;

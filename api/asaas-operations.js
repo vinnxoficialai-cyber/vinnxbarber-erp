@@ -277,7 +277,10 @@ export default async function handler(req, res) {
         const updatePayload = {};
         if (value !== undefined) updatePayload.value = value;
         if (description) updatePayload.description = description;
-        updatePayload.updatePendingPayments = true;
+        
+        // Don't update pending payments — only change value for FUTURE invoices
+        // This avoids ASAAS rejecting changes on credit card subs with paid invoices
+        updatePayload.updatePendingPayments = false;
         
         const updated = await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'PUT', updatePayload);
         return res.status(200).json({ success: true, value: updated.value });
@@ -308,6 +311,59 @@ export default async function handler(req, res) {
         }
         
         return res.status(200).json({ success: true });
+      }
+
+      // ═══ Recreate Subscription (cancel old + create new with updated value) ═══
+      case 'recreateSubscription': {
+        const config = await getConfig();
+        if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
+        
+        const { gatewaySubscriptionId, subscriptionId, newValue, description } = data;
+        if (!gatewaySubscriptionId || !newValue) {
+          return res.status(400).json({ error: 'gatewaySubscriptionId e newValue obrigatórios' });
+        }
+        
+        // 1. Get current subscription details from ASAAS
+        const oldSub = await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'GET');
+        
+        // 2. Cancel old subscription
+        await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'DELETE');
+        
+        // 3. Create new subscription with updated value
+        const newPayload = {
+          customer: oldSub.customer,
+          billingType: oldSub.billingType,
+          value: newValue,
+          nextDueDate: oldSub.nextDueDate || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+          cycle: oldSub.cycle || 'MONTHLY',
+          description: description || oldSub.description,
+          externalReference: subscriptionId || oldSub.externalReference,
+          fine: oldSub.fine || { value: 0 },
+          interest: oldSub.interest || { value: 0 },
+        };
+        
+        // If credit card, reuse token
+        if (oldSub.creditCardToken) {
+          newPayload.creditCardToken = oldSub.creditCardToken;
+          newPayload.remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || '127.0.0.1';
+        }
+        
+        const newSub = await asaasRequest(config, '/subscriptions', 'POST', newPayload);
+        
+        // 4. Update local subscription with new gateway ID
+        if (subscriptionId) {
+          await sbQuery(`subscriptions?id=eq.${subscriptionId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              gatewaySubscriptionId: newSub.id,
+              updatedAt: new Date().toISOString(),
+            }),
+            prefer: 'return=minimal',
+          });
+        }
+        
+        console.log(`[asaas-ops] Subscription recreated: ${gatewaySubscriptionId} -> ${newSub.id} (R$ ${newValue})`);
+        return res.status(200).json({ success: true, newSubscriptionId: newSub.id, value: newValue });
       }
 
       // ═══ Get Payment History ═══
