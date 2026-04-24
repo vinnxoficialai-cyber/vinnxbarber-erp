@@ -371,6 +371,7 @@ export default async function handler(req, res) {
           webhook = await asaasRequest(config, `/webhooks/${existingWebhook.id}`, 'PUT', {
             url: webhookUrl,
             email: data.email || undefined,
+            sendType: 'SEQUENTIALLY',
             enabled: true,
             interrupted: false,
             authToken,
@@ -383,6 +384,7 @@ export default async function handler(req, res) {
             name: 'VINNX ERP Webhook',
             url: webhookUrl,
             email: data.email || undefined,
+            sendType: 'SEQUENTIALLY',
             enabled: true,
             authToken,
             events,
