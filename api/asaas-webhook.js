@@ -160,7 +160,7 @@ export default async function handler(req, res) {
           console.log(`[asaas-webhook] Unhandled event: ${event}`);
       }
 
-      if (Object.keys(updates).length > 1) {
+      if (Object.keys(updates).length > 0) {
         updates.updatedAt = new Date().toISOString();
         await sbQuery(`subscriptions?id=eq.${subscription.id}`, {
           method: 'PATCH',

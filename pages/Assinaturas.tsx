@@ -246,6 +246,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         try {
                             await updateAsaasSubscription({
                                 gatewaySubscriptionId: sub.gatewaySubscriptionId!,
+                                subscriptionId: sub.id,
                                 value: plan.price,
                                 description: `Plano ${plan.name}`,
                             });
@@ -432,6 +433,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         toast.info('Atualizando ASAAS...', `Sincronizando novo plano (${newPlan.name} - R$ ${newPlan.price.toFixed(2)})...`);
                         await updateAsaasSubscription({
                             gatewaySubscriptionId: existingSub.gatewaySubscriptionId,
+                            subscriptionId: existingSub.id,
                             value: newPlan.price,
                             description: `Plano ${newPlan.name}`,
                         });

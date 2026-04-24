@@ -97,9 +97,10 @@ export async function createAsaasSubscription(data: {
 
 export async function updateAsaasSubscription(data: {
     gatewaySubscriptionId: string;
+    subscriptionId?: string;
     value?: number;
     description?: string;
-}): Promise<{ success: boolean; value?: number }> {
+}): Promise<{ success: boolean; value?: number; recreated?: boolean }> {
     return callApi('updateSubscription', data);
 }
 
