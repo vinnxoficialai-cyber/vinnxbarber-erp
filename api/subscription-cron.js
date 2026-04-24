@@ -1,7 +1,7 @@
 // Vercel Serverless Function — Subscription Monthly Reset Cron
 // Resets usesThisMonth to 0 for all active/pending subscriptions
 // Should be called on the 1st of each month via Vercel Cron or external scheduler
-// Auth: x-push-secret header (same as push notifications)
+// Auth: Vercel CRON_SECRET (Authorization: Bearer) or x-push-secret header
 
 const SUPABASE_URL = 'https://enjyflztvyomrlzddavk.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -12,13 +12,17 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  if (req.method !== 'POST') {
+  if (req.method !== 'POST' && req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Auth check
-  const secret = req.headers['x-push-secret'] || req.headers['authorization']?.replace('Bearer ', '');
-  if (!secret || secret !== process.env.PUSH_SECRET) {
+  // Auth check — accepts Vercel CRON_SECRET or PUSH_SECRET
+  const bearerToken = req.headers['authorization']?.replace('Bearer ', '');
+  const pushSecret = req.headers['x-push-secret'];
+  const validSecret = bearerToken === process.env.CRON_SECRET
+    || bearerToken === process.env.PUSH_SECRET
+    || pushSecret === process.env.PUSH_SECRET;
+  if (!validSecret) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
