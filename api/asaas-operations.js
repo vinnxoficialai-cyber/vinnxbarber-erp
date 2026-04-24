@@ -163,12 +163,47 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, customerId: customer.id });
       }
 
+      // ═══ Tokenize Credit Card (validate before subscription) ═══
+      case 'tokenizeCreditCard': {
+        const config = await getConfig();
+        if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
+        
+        const { customerId, creditCard: cc, creditCardHolderInfo: hi } = data;
+        if (!customerId || !cc?.number) {
+          return res.status(400).json({ error: 'customerId e dados do cartão são obrigatórios' });
+        }
+        
+        const remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || '127.0.0.1';
+        
+        try {
+          const token = await asaasRequest(config, '/creditCard/tokenize', 'POST', {
+            customer: customerId,
+            creditCard: cc,
+            creditCardHolderInfo: hi || {},
+            remoteIp,
+          });
+          return res.status(200).json({ 
+            success: true, 
+            creditCardToken: token.creditCardToken,
+            creditCardNumber: token.creditCardNumber,
+            creditCardBrand: token.creditCardBrand,
+          });
+        } catch (e) {
+          // Return specific error for card issues
+          return res.status(400).json({ 
+            success: false, 
+            error: e.message,
+            errorCode: 'CARD_VALIDATION_FAILED',
+          });
+        }
+      }
+
       // ═══ Create Subscription in ASAAS ═══
       case 'createSubscription': {
         const config = await getConfig();
         if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
         
-        const { customerId, subscriptionId, value, billingType, nextDueDate, description, cycle, creditCard, creditCardHolderInfo } = data;
+        const { customerId, subscriptionId, value, billingType, nextDueDate, description, cycle, creditCard, creditCardHolderInfo, creditCardToken } = data;
         if (!customerId || !value) {
           return res.status(400).json({ error: 'customerId e value são obrigatórios' });
         }
@@ -185,8 +220,11 @@ export default async function handler(req, res) {
           interest: { value: config.interestPercent || 0 },
         };
 
-        // Add credit card data if provided
-        if (creditCard && creditCard.number) {
+        // Use token if available, otherwise raw card data
+        if (creditCardToken) {
+          payload.creditCardToken = creditCardToken;
+          payload.remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || '127.0.0.1';
+        } else if (creditCard && creditCard.number) {
           payload.creditCard = creditCard;
           payload.creditCardHolderInfo = creditCardHolderInfo || {};
           payload.remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || '127.0.0.1';

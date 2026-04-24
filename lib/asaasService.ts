@@ -46,6 +46,27 @@ export async function createAsaasCustomer(data: {
     return callApi('createCustomer', data);
 }
 
+export async function tokenizeCreditCard(data: {
+    customerId: string;
+    creditCard: {
+        holderName: string;
+        number: string;
+        expiryMonth: string;
+        expiryYear: string;
+        ccv: string;
+    };
+    creditCardHolderInfo: {
+        name?: string;
+        email?: string;
+        cpfCnpj?: string;
+        postalCode?: string;
+        addressNumber?: string;
+        phone?: string;
+    };
+}): Promise<{ success: boolean; creditCardToken: string; creditCardNumber: string; creditCardBrand: string }> {
+    return callApi('tokenizeCreditCard', data);
+}
+
 export async function createAsaasSubscription(data: {
     customerId: string;
     subscriptionId: string;
@@ -54,6 +75,7 @@ export async function createAsaasSubscription(data: {
     nextDueDate?: string;
     description?: string;
     cycle?: string;
+    creditCardToken?: string;
     creditCard?: {
         holderName: string;
         number: string;

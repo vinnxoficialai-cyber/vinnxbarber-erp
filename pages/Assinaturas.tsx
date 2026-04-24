@@ -18,7 +18,7 @@ import {
     saveSubscription, deleteSubscription, getSubscriptions,
     getBillingConfig, saveBillingConfig
 } from '../lib/dataService';
-import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription } from '../lib/asaasService';
+import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription, tokenizeCreditCard } from '../lib/asaasService';
 import type { BillingGatewayConfig } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
@@ -286,6 +286,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         }
 
         // Decisão #4: Bloquear múltiplas ativas na mesma unidade
+        let reuseSubId: string | undefined;
         if (!editingSubId) {
             const targetUnit = selectedUnitId !== 'all' ? selectedUnitId : undefined;
             const existing = subscriptions.find(s =>
@@ -297,6 +298,13 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                 toast.error('Assinatura existente', 'Este cliente já possui uma assinatura ativa nesta unidade.');
                 return;
             }
+            // If there's an overdue sub for this client (e.g. card was refused), reuse its ID
+            const overdueExisting = subscriptions.find(s =>
+                s.clientId === subForm.clientId &&
+                s.status === 'overdue' &&
+                s.unitId === targetUnit
+            );
+            reuseSubId = overdueExisting?.id;
         }
 
         // ═══ PAYMENT VALIDATION (when ASAAS is configured) ═══
@@ -339,7 +347,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
 
         const client = clients.find(c => c.id === subForm.clientId);
         const sub: Subscription = {
-            id: editingSubId || crypto.randomUUID(),
+            id: editingSubId || reuseSubId || crypto.randomUUID(),
             planId: subForm.planId, clientId: subForm.clientId,
             clientName: client?.name || subForm.clientName,
             // New subs with ASAAS start as pending_payment; without ASAAS or editing, use form value
@@ -388,7 +396,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     asaasCustomerId = custResult.customerId;
                 }
 
-                // 2. Create subscription in ASAAS with IMMEDIATE charge
+                // 2. Tokenize credit card FIRST (validate before creating subscription)
                 if (asaasCustomerId && plan) {
                     const recurrenceMap: Record<string, string> = {
                         monthly: 'MONTHLY', quarterly: 'QUARTERLY',
@@ -397,9 +405,52 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     const billingTypeMap: Record<string, string> = {
                         credit: 'CREDIT_CARD', boleto: 'BOLETO', pix: 'PIX',
                     };
-                    // Charge TODAY for immediate validation
                     const today = new Date().toISOString().split('T')[0];
 
+                    let creditCardToken: string | undefined;
+
+                    // Step 2a: Tokenize card if credit card payment
+                    if (sub.paymentMethod === 'credit' && subForm.cardNumber) {
+                        toast.info('Validando cartão...', 'Verificando dados do cartão de crédito...');
+                        
+                        const cardData = {
+                            holderName: subForm.cardHolderName,
+                            number: subForm.cardNumber.replace(/\s/g, ''),
+                            expiryMonth: subForm.cardExpiryMonth,
+                            expiryYear: subForm.cardExpiryYear,
+                            ccv: subForm.cardCvv,
+                        };
+                        const holderData = {
+                            name: subForm.cardHolderName || client?.name,
+                            email: subForm.billingEmail || client?.email,
+                            cpfCnpj: (subForm.holderCpf || subForm.cpfCnpj || '').replace(/\D/g, ''),
+                            postalCode: subForm.holderPostalCode?.replace(/\D/g, ''),
+                            addressNumber: subForm.holderAddressNumber,
+                            phone: (subForm.holderPhone || client?.phone || '').replace(/\D/g, ''),
+                        };
+
+                        try {
+                            const tokenResult = await tokenizeCreditCard({
+                                customerId: asaasCustomerId,
+                                creditCard: cardData,
+                                creditCardHolderInfo: holderData,
+                            });
+                            creditCardToken = tokenResult.creditCardToken;
+                            toast.success('Cartão validado!', `${tokenResult.creditCardBrand} ****${tokenResult.creditCardNumber}`);
+                        } catch (tokenErr: any) {
+                            // Card validation failed — DON'T create subscription
+                            toast.error('Cartão recusado!', tokenErr.message || 'Verifique os dados do cartão e tente novamente. Você pode corrigir os dados e tentar de novo.');
+                            // Revert subscription to overdue
+                            const { supabase: sbRevert } = await import('../lib/supabase');
+                            await sbRevert.from('subscriptions').update({ status: 'overdue' }).eq('id', sub.id);
+                            setSubscriptions(await getSubscriptions());
+                            // Keep modal open so user can fix card data and retry
+                            setSubModalSection(1); // Switch to payment tab
+                            return;
+                        }
+                    }
+
+                    // Step 2b: Create subscription with token or other billing type
                     toast.info('Processando pagamento...', sub.paymentMethod === 'credit' ? 'Cobrando cartão...' : 'Gerando cobrança...');
 
                     const asaasResult = await createAsaasSubscription({
@@ -410,24 +461,8 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         nextDueDate: today,
                         description: `Plano ${plan.name}`,
                         cycle: recurrenceMap[plan.recurrence] || 'MONTHLY',
-                        // Credit card data (if provided)
-                        ...(sub.paymentMethod === 'credit' && subForm.cardNumber ? {
-                            creditCard: {
-                                holderName: subForm.cardHolderName,
-                                number: subForm.cardNumber.replace(/\s/g, ''),
-                                expiryMonth: subForm.cardExpiryMonth,
-                                expiryYear: subForm.cardExpiryYear,
-                                ccv: subForm.cardCvv,
-                            },
-                            creditCardHolderInfo: {
-                                name: subForm.cardHolderName || client?.name,
-                                email: subForm.billingEmail || client?.email,
-                                cpfCnpj: (subForm.holderCpf || subForm.cpfCnpj || '').replace(/\D/g, ''),
-                                postalCode: subForm.holderPostalCode?.replace(/\D/g, ''),
-                                addressNumber: subForm.holderAddressNumber,
-                                phone: (subForm.holderPhone || client?.phone || '').replace(/\D/g, ''),
-                            },
-                        } : {}),
+                        // Use token if available (credit card)
+                        ...(creditCardToken ? { creditCardToken } : {}),
                     });
 
                     // 3. Check first payment status and update subscription accordingly
