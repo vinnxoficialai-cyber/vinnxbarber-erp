@@ -18,7 +18,7 @@ import {
     saveSubscription, deleteSubscription, getSubscriptions,
     getBillingConfig, saveBillingConfig
 } from '../lib/dataService';
-import { testAsaasConnection } from '../lib/asaasService';
+import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription } from '../lib/asaasService';
 import type { BillingGatewayConfig } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
@@ -315,6 +315,60 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         };
         const r = await saveSubscription(sub);
         if (!r.success) { toast.error('Erro', r.error || ''); return; }
+
+        // ═══ AUTO-SYNC WITH ASAAS (only for new subscriptions) ═══
+        if (!editingSubId && integrationConfig.apiKey) {
+            const plan = plans.find(p => p.id === sub.planId);
+            try {
+                // 1. Ensure client has ASAAS customer ID
+                let asaasCustomerId = (client as any)?.asaasCustomerId;
+                if (!asaasCustomerId && client) {
+                    const cpf = client.cpf || (client as any).cpfCnpj;
+                    if (cpf) {
+                        toast.info('Sincronizando...', 'Criando cliente no ASAAS...');
+                        const custResult = await createAsaasCustomer({
+                            clientId: client.id,
+                            name: client.name,
+                            cpfCnpj: cpf,
+                            email: client.email || undefined,
+                            phone: client.phone || undefined,
+                        });
+                        asaasCustomerId = custResult.customerId;
+                    }
+                }
+
+                // 2. Create subscription in ASAAS
+                if (asaasCustomerId && plan) {
+                    const recurrenceMap: Record<string, string> = {
+                        monthly: 'MONTHLY', quarterly: 'QUARTERLY',
+                        semiannual: 'SEMIANNUALLY', annual: 'YEARLY',
+                    };
+                    const billingTypeMap: Record<string, string> = {
+                        credit: 'CREDIT_CARD', boleto: 'BOLETO', pix: 'PIX',
+                    };
+                    const nextDue = new Date();
+                    nextDue.setDate(nextDue.getDate() + 1);
+
+                    const asaasResult = await createAsaasSubscription({
+                        customerId: asaasCustomerId,
+                        subscriptionId: sub.id,
+                        value: plan.price,
+                        billingType: billingTypeMap[sub.paymentMethod || ''] || 'UNDEFINED',
+                        nextDueDate: nextDue.toISOString().split('T')[0],
+                        description: `Plano ${plan.name}`,
+                        cycle: recurrenceMap[plan.recurrence] || 'MONTHLY',
+                    });
+
+                    toast.success('ASAAS sincronizado!', `Assinatura ${asaasResult.asaasSubscriptionId} criada no gateway.`);
+                } else if (!asaasCustomerId) {
+                    toast.warning('ASAAS parcial', 'Cliente sem CPF — assinatura criada localmente, mas não sincronizada com o gateway.');
+                }
+            } catch (err: any) {
+                console.error('ASAAS sync error:', err);
+                toast.warning('Assinatura criada', `Salva localmente, mas falha ao sincronizar com ASAAS: ${err.message}`);
+            }
+        }
+
         setSubscriptions(await getSubscriptions());
         toast.success(editingSubId ? 'Assinatura atualizada' : 'Assinatura criada'); setIsSubModalOpen(false);
     };
