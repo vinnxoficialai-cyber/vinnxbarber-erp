@@ -69,7 +69,7 @@ export async function createAsaasSubscription(data: {
         addressNumber?: string;
         phone?: string;
     };
-}): Promise<{ success: boolean; asaasSubscriptionId: string }> {
+}): Promise<{ success: boolean; asaasSubscriptionId: string; firstPaymentStatus?: string }> {
     return callApi('createSubscription', data);
 }
 

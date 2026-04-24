@@ -347,7 +347,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     asaasCustomerId = custResult.customerId;
                 }
 
-                // 2. Create subscription in ASAAS
+                // 2. Create subscription in ASAAS with IMMEDIATE charge
                 if (asaasCustomerId && plan) {
                     const recurrenceMap: Record<string, string> = {
                         monthly: 'MONTHLY', quarterly: 'QUARTERLY',
@@ -356,14 +356,17 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     const billingTypeMap: Record<string, string> = {
                         credit: 'CREDIT_CARD', boleto: 'BOLETO', pix: 'PIX',
                     };
-                    const nextDueDate = sub.startDate || new Date().toISOString().split('T')[0];
+                    // Charge TODAY for immediate validation
+                    const today = new Date().toISOString().split('T')[0];
+
+                    toast.info('Processando pagamento...', 'Cobrando cartão...');
 
                     const asaasResult = await createAsaasSubscription({
                         customerId: asaasCustomerId,
                         subscriptionId: sub.id,
                         value: plan.price,
                         billingType: billingTypeMap[sub.paymentMethod || ''] || 'UNDEFINED',
-                        nextDueDate,
+                        nextDueDate: today,
                         description: `Plano ${plan.name}`,
                         cycle: recurrenceMap[plan.recurrence] || 'MONTHLY',
                         // Credit card data (if provided)
@@ -386,7 +389,25 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         } : {}),
                     });
 
-                    toast.success('ASAAS sincronizado!', `Assinatura ${asaasResult.asaasSubscriptionId} criada no gateway.`);
+                    // 3. Check first payment status (for credit card)
+                    if (sub.paymentMethod === 'credit' && asaasResult.firstPaymentStatus) {
+                        const payStatus = asaasResult.firstPaymentStatus;
+                        if (payStatus === 'CONFIRMED' || payStatus === 'RECEIVED') {
+                            toast.success('Pagamento confirmado!', `R$ ${plan.price.toFixed(2)} cobrado com sucesso. Assinatura ativa.`);
+                        } else if (payStatus === 'PENDING') {
+                            // Payment pending — keep subscription but warn
+                            toast.warning('Pagamento pendente', 'A cobrança foi enviada ao cartão e está aguardando confirmação da operadora.');
+                        } else if (payStatus === 'REFUSED' || payStatus === 'OVERDUE') {
+                            // Payment refused — deactivate subscription
+                            toast.error('Pagamento recusado!', 'O cartão foi recusado. A assinatura ficará inativa até o pagamento ser confirmado.');
+                            const { supabase: sb } = await import('../lib/supabase');
+                            await sb.from('subscriptions').update({ status: 'overdue' }).eq('id', sub.id);
+                        } else {
+                            toast.success('ASAAS sincronizado!', `Assinatura criada. Status do pagamento: ${payStatus}`);
+                        }
+                    } else {
+                        toast.success('ASAAS sincronizado!', `Assinatura ${asaasResult.asaasSubscriptionId} criada no gateway.`);
+                    }
                 } else if (!asaasCustomerId) {
                     toast.warning('ASAAS parcial', 'Cliente sem CPF — assinatura criada localmente, mas não sincronizada com o gateway.');
                 }

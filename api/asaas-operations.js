@@ -189,7 +189,22 @@ export default async function handler(req, res) {
           });
         }
         
-        return res.status(200).json({ success: true, asaasSubscriptionId: asaasSub.id });
+        // Check first payment status (for immediate charge validation)
+        let firstPaymentStatus = null;
+        try {
+          const payments = await asaasRequest(config, `/subscriptions/${asaasSub.id}/payments?limit=1`, 'GET');
+          if (payments?.data?.length > 0) {
+            firstPaymentStatus = payments.data[0].status;
+          }
+        } catch (e) {
+          console.log('[asaas-ops] Could not fetch first payment status:', e.message);
+        }
+        
+        return res.status(200).json({ 
+          success: true, 
+          asaasSubscriptionId: asaasSub.id,
+          firstPaymentStatus,
+        });
       }
 
       // ═══ Cancel Subscription in ASAAS ═══
