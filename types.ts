@@ -55,6 +55,9 @@ export interface Client {
   notificationPreferences?: { email?: boolean; whatsapp?: boolean; push?: boolean };
   profileNudgeCount?: number;
   lastProfileNudge?: string;
+
+  // ASAAS Integration
+  asaasCustomerId?: string;  // ID do cliente no gateway ASAAS
 }
 
 export interface TeamMember {
@@ -842,6 +845,10 @@ export interface ComandaItem {
   unitPrice: number;
   totalPrice: number;
   createdAt?: string;
+
+  // Subscription discount tracking
+  subscriptionDiscount?: number;  // % desconto aplicado pelo plano
+  originalPrice?: number;          // preço original antes do desconto
 }
 
 // Purchase Orders (Compras de Produtos)
@@ -953,6 +960,18 @@ export interface Subscription {
   autoRenew?: boolean;
   cancellationReason?: string;
   notes?: string;               // observações internas
+
+  // Unit binding (Decisão #8)
+  unitId?: string;              // Unidade onde a assinatura é válida
+
+  // Billing lifecycle
+  currentInvoiceUrl?: string;
+  currentBankSlipUrl?: string;
+  currentPixQrCode?: string;
+  lastWebhookAt?: string;
+  failedAttempts?: number;
+  pausedAt?: string;
+  cancelledAt?: string;
 
   createdAt?: string;
   updatedAt?: string;
@@ -1276,5 +1295,65 @@ export interface PushLogEntry {
   body?: string;
   status: 'sent' | 'failed';
   errorDetail?: string;
+  createdAt?: string;
+}
+
+// ============================================
+// Billing Gateway Types (ASAAS Integration)
+// ============================================
+
+export interface BillingGatewayConfig {
+  id: string;
+  provider: string;
+  environment: 'sandbox' | 'production';
+  apiKey: string;
+  webhookSecret?: string;
+  webhookUrl?: string;
+  active: boolean;
+  autoCreateCustomer: boolean;
+  autoCharge: boolean;
+  sendNotifications: boolean;
+  daysBeforeDue: number;
+  maxRetries: number;
+  finePercent: number;
+  interestPercent: number;
+  enableCredit: boolean;
+  enableBoleto: boolean;
+  enablePix: boolean;
+  unitId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BillingEvent {
+  id: string;
+  subscriptionId?: string;
+  clientId?: string;
+  asaasPaymentId?: string;
+  event: string;
+  status: string;
+  amount?: number;
+  billingType?: string;
+  dueDate?: string;
+  paymentDate?: string;
+  invoiceUrl?: string;
+  bankSlipUrl?: string;
+  pixQrCode?: string;
+  raw?: Record<string, unknown>;
+  processedAt?: string;
+  createdAt?: string;
+}
+
+export interface SubscriptionUsageLog {
+  id: string;
+  subscriptionId: string;
+  comandaId?: string;
+  comandaItemId?: string;
+  itemId: string;
+  type: 'service' | 'product';
+  discountApplied: number;
+  originalPrice?: number;
+  finalPrice?: number;
+  usedAt?: string;
   createdAt?: string;
 }

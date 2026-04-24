@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import { Client, Contract, TeamMember, Transaction, PaymentRecord } from '../types';
 import { ProfessionalFiscalData, InvoiceEmitter, Invoice, FiscalSettings } from '../types';
+import { BillingGatewayConfig, BillingEvent, SubscriptionUsageLog } from '../types';
+import { SubscriptionPlan, Subscription } from '../types';
 
 // ============================================
 // TEAM MEMBERS (Users/Colaboradores)
@@ -269,6 +271,7 @@ interface SupabaseClient {
     totalVisits?: number;
     lastVisit?: string;
     unitId?: string;
+    asaasCustomerId?: string;
 }
 
 function clientToSupabase(client: Client): Partial<SupabaseClient> {
@@ -297,6 +300,7 @@ function clientToSupabase(client: Client): Partial<SupabaseClient> {
         totalVisits: client.totalVisits || 0,
         lastVisit: client.lastVisit || null,
         unitId: client.unitId || null,
+        asaasCustomerId: (client as any).asaasCustomerId || null,
     };
 }
 
@@ -1749,6 +1753,8 @@ export async function saveComandaItem(item: ComandaItem): Promise<{ success: boo
             quantity: item.quantity || 1,
             unitPrice: item.unitPrice,
             totalPrice: item.totalPrice,
+            subscriptionDiscount: item.subscriptionDiscount ?? null,
+            originalPrice: item.originalPrice ?? null,
         };
 
         const { data: existing } = await supabase
@@ -2188,7 +2194,6 @@ export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
 // SUBSCRIPTION PLANS
 // ============================================
 
-import { SubscriptionPlan, Subscription } from '../types';
 
 export async function saveSubscriptionPlan(plan: SubscriptionPlan): Promise<{ success: boolean; error?: string }> {
     try {
@@ -2213,6 +2218,8 @@ export async function saveSubscriptionPlan(plan: SubscriptionPlan): Promise<{ su
             planProducts: JSON.stringify(plan.planProducts || []),
             disabledDays: plan.disabledDays || [],
             excludedProfessionals: plan.excludedProfessionals || [],
+            unitScope: plan.unitScope || 'all',
+            allowedUnitIds: plan.allowedUnitIds || [],
             updatedAt: now,
         };
         const { error } = await supabase
@@ -2302,6 +2309,14 @@ export async function saveSubscription(sub: Subscription): Promise<{ success: bo
             autoRenew: sub.autoRenew ?? true,
             cancellationReason: sub.cancellationReason || null,
             notes: sub.notes || null,
+            unitId: sub.unitId || null,
+            currentInvoiceUrl: sub.currentInvoiceUrl || null,
+            currentBankSlipUrl: sub.currentBankSlipUrl || null,
+            currentPixQrCode: sub.currentPixQrCode || null,
+            lastWebhookAt: sub.lastWebhookAt || null,
+            failedAttempts: sub.failedAttempts ?? 0,
+            pausedAt: sub.pausedAt || null,
+            cancelledAt: sub.cancelledAt || null,
             updatedAt: now,
         };
         const { error } = await supabase
@@ -2359,6 +2374,11 @@ export async function getSubscriptions(): Promise<Subscription[]> {
                 price: Number(s.subscription_plans.price) || 0,
                 servicesIncluded: s.subscription_plans.servicesIncluded || [],
                 durationDays: Number(s.subscription_plans.durationDays) || 30,
+                planServices: s.subscription_plans.planServices || [],
+                planProducts: s.subscription_plans.planProducts || [],
+                benefits: s.subscription_plans.benefits || [],
+                unitScope: s.subscription_plans.unitScope || 'all',
+                allowedUnitIds: s.subscription_plans.allowedUnitIds || [],
             } : undefined,
         })) as Subscription[];
     } catch (err) {
@@ -2988,4 +3008,187 @@ export async function saveFiscalSettings(
 }
 
 // SITE SETTINGS removed — migrated to store_settings table + useStoreCustomization hook
+
+// ============================================
+// BILLING GATEWAY CONFIG (ASAAS Integration)
+// ============================================
+
+
+export async function getBillingConfig(): Promise<BillingGatewayConfig | null> {
+    try {
+        const { data, error } = await supabase
+            .from('billing_gateway_config')
+            .select('*')
+            .eq('active', true)
+            .limit(1)
+            .single();
+        if (error && error.code !== 'PGRST116') throw error;
+        return data || null;
+    } catch (err) {
+        console.error('Error fetching billing config:', err);
+        return null;
+    }
+}
+
+export async function saveBillingConfig(config: BillingGatewayConfig): Promise<{ success: boolean; error?: string }> {
+    try {
+        const now = new Date().toISOString();
+        const dbData = {
+            id: config.id,
+            provider: config.provider || 'asaas',
+            environment: config.environment || 'sandbox',
+            apiKey: config.apiKey,
+            webhookSecret: config.webhookSecret || null,
+            webhookUrl: config.webhookUrl || null,
+            active: config.active ?? true,
+            autoCreateCustomer: config.autoCreateCustomer ?? true,
+            autoCharge: config.autoCharge ?? true,
+            sendNotifications: config.sendNotifications ?? true,
+            daysBeforeDue: config.daysBeforeDue ?? 5,
+            maxRetries: config.maxRetries ?? 3,
+            finePercent: config.finePercent ?? 2.00,
+            interestPercent: config.interestPercent ?? 1.00,
+            enableCredit: config.enableCredit ?? true,
+            enableBoleto: config.enableBoleto ?? true,
+            enablePix: config.enablePix ?? true,
+            unitId: config.unitId || null,
+            updatedAt: now,
+        };
+        const { error } = await supabase
+            .from('billing_gateway_config')
+            .upsert(dbData, { onConflict: 'id' });
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error saving billing config:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+// ============================================
+// BILLING EVENTS (Webhook Log)
+// ============================================
+
+export async function saveBillingEvent(event: BillingEvent): Promise<{ success: boolean; error?: string }> {
+    try {
+        const { error } = await supabase
+            .from('billing_events')
+            .insert({
+                id: event.id,
+                subscriptionId: event.subscriptionId || null,
+                clientId: event.clientId || null,
+                asaasPaymentId: event.asaasPaymentId || null,
+                event: event.event,
+                status: event.status,
+                amount: event.amount ?? null,
+                billingType: event.billingType || null,
+                dueDate: event.dueDate || null,
+                paymentDate: event.paymentDate || null,
+                invoiceUrl: event.invoiceUrl || null,
+                bankSlipUrl: event.bankSlipUrl || null,
+                pixQrCode: event.pixQrCode || null,
+                raw: event.raw || null,
+                processedAt: new Date().toISOString(),
+            });
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error saving billing event:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+export async function getBillingEvents(subscriptionId?: string): Promise<BillingEvent[]> {
+    try {
+        let query = supabase
+            .from('billing_events')
+            .select('*')
+            .order('createdAt', { ascending: false })
+            .limit(100);
+        if (subscriptionId) query = query.eq('subscriptionId', subscriptionId);
+        const { data, error } = await query;
+        if (error) throw error;
+        return data || [];
+    } catch (err) {
+        console.error('Error fetching billing events:', err);
+        return [];
+    }
+}
+
+// ============================================
+// SUBSCRIPTION USAGE LOG (Decisões #1, #2, #6)
+// ============================================
+
+export async function saveSubscriptionUsageLog(log: SubscriptionUsageLog): Promise<{ success: boolean; error?: string }> {
+    try {
+        const { error } = await supabase
+            .from('subscription_usage_log')
+            .insert({
+                id: log.id,
+                subscriptionId: log.subscriptionId,
+                comandaId: log.comandaId || null,
+                comandaItemId: log.comandaItemId || null,
+                itemId: log.itemId,
+                type: log.type,
+                discountApplied: log.discountApplied,
+                originalPrice: log.originalPrice ?? null,
+                finalPrice: log.finalPrice ?? null,
+                usedAt: log.usedAt || new Date().toISOString(),
+            });
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error saving usage log:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+// Decisão #2: Reverter usage log ao remover item da comanda
+export async function deleteSubscriptionUsageLogByItem(comandaItemId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+        const { error } = await supabase
+            .from('subscription_usage_log')
+            .delete()
+            .eq('comandaItemId', comandaItemId);
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error deleting usage log:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+// Conta usos de um item específico no mês (para verificar monthlyLimit)
+export async function getServiceUsageCount(
+    subscriptionId: string,
+    itemId: string,
+    monthStart: string
+): Promise<number> {
+    try {
+        const { count, error } = await supabase
+            .from('subscription_usage_log')
+            .select('id', { count: 'exact', head: true })
+            .eq('subscriptionId', subscriptionId)
+            .eq('itemId', itemId)
+            .gte('usedAt', monthStart);
+        if (error) throw error;
+        return count || 0;
+    } catch (err) {
+        console.error('Error counting usage:', err);
+        return 0;
+    }
+}
+
+// Errata E1: Incremento atômico via RPC (evita race condition)
+export async function incrementSubscriptionUses(subscriptionId: string, delta: number): Promise<void> {
+    try {
+        const { error } = await supabase.rpc('increment_subscription_uses', {
+            sub_id: subscriptionId,
+            delta: delta,
+        });
+        if (error) throw error;
+    } catch (err) {
+        console.error('Error incrementing subscription uses:', err);
+    }
+}
 

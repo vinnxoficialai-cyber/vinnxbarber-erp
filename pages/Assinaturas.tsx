@@ -1,11 +1,11 @@
-﻿import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
     CreditCard, Plus, Pencil, Trash2, X, Search, DollarSign,
     Users, Calendar, Crown, TrendingUp, TrendingDown, Pause,
     XCircle, CheckCircle, AlertCircle, Loader2,
     Hash, Infinity, Percent, Star, Package, BarChart3,
     History, CalendarOff, Gift, UserPlus,
-    EyeOff, Receipt, Repeat, UserX, Scissors,
+    EyeOff, Receipt, Repeat, UserX, Scissors, Eye,
     Link, Zap, Globe, ExternalLink, Landmark, Shield, Wallet, ArrowRight, Info, Filter,
     Target, Clock, Activity, ShoppingBag, UserCheck, Award, LayoutDashboard, CalendarDays
 } from 'lucide-react';
@@ -15,8 +15,11 @@ import { useToast } from '../components/Toast';
 import { CustomDropdown } from '../components/CustomDropdown';
 import {
     saveSubscriptionPlan, deleteSubscriptionPlan, getSubscriptionPlans,
-    saveSubscription, deleteSubscription, getSubscriptions
+    saveSubscription, deleteSubscription, getSubscriptions,
+    getBillingConfig, saveBillingConfig
 } from '../lib/dataService';
+import { testAsaasConnection } from '../lib/asaasService';
+import type { BillingGatewayConfig } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
 import { useFilteredData } from '../hooks/useFilteredData';
@@ -101,15 +104,24 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
     const [historyMethodFilter, setHistoryMethodFilter] = useState<string>('all');
     // Dashboard date filter
     const [dashPeriod, setDashPeriod] = useState<'month' | '7d' | '30d' | '90d' | 'all'>('month');
+    // Integration tab state
+    const defaultBillingConfig: BillingGatewayConfig = {
+        id: crypto.randomUUID(), provider: 'asaas', environment: 'sandbox',
+        apiKey: '', active: false, autoCreateCustomer: true, autoCharge: true,
+        sendNotifications: true, daysBeforeDue: 5, maxRetries: 3, finePercent: 2,
+        interestPercent: 1, enableCredit: true, enableBoleto: true, enablePix: true,
+    };
+    const [integrationConfig, setIntegrationConfig] = useState<BillingGatewayConfig>(defaultBillingConfig);
+    const [integrationTesting, setIntegrationTesting] = useState(false);
+    const [showApiKey, setShowApiKey] = useState(false);
 
-    useEffect(() => { (async () => { setLoading(true); try { const [p, s] = await Promise.all([getSubscriptionPlans(), getSubscriptions()]); setPlans(p); setSubscriptions(s); } finally { setLoading(false); } })(); }, []);
+    useEffect(() => { (async () => { setLoading(true); try { const [p, s, bc] = await Promise.all([getSubscriptionPlans(), getSubscriptions(), getBillingConfig()]); setPlans(p); setSubscriptions(s); if (bc) setIntegrationConfig(bc); } finally { setLoading(false); } })(); }, []);
     const formatCurrency = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-    // Unit-filtered subscriptions
-    const unitClientIds = useMemo(() => new Set(clients.map(c => c.id)), [clients]);
+    // Unit-filtered subscriptions (Decisão #8: filtro direto por unitId)
     const unitSubscriptions = useMemo(() =>
-        isUnitFiltering ? subscriptions.filter(s => unitClientIds.has(s.clientId)) : subscriptions,
-        [subscriptions, unitClientIds, isUnitFiltering]);
+        isUnitFiltering ? subscriptions.filter(s => s.unitId === selectedUnitId || !s.unitId) : subscriptions,
+        [subscriptions, selectedUnitId, isUnitFiltering]);
 
     // KPIs
     const kpis = useMemo(() => {
@@ -262,6 +274,27 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
     };
     const handleSaveSub = async (e?: React.FormEvent) => {
         e?.preventDefault();
+
+        // Errata E3: Validar unidade selecionada
+        if (!editingSubId && (!selectedUnitId || selectedUnitId === 'all')) {
+            toast.error('Selecione uma unidade', 'É necessário selecionar uma unidade específica para criar uma assinatura.');
+            return;
+        }
+
+        // Decisão #4: Bloquear múltiplas ativas na mesma unidade
+        if (!editingSubId) {
+            const targetUnit = selectedUnitId !== 'all' ? selectedUnitId : undefined;
+            const existing = subscriptions.find(s =>
+                s.clientId === subForm.clientId &&
+                s.status === 'active' &&
+                s.unitId === targetUnit
+            );
+            if (existing) {
+                toast.error('Assinatura existente', 'Este cliente já possui uma assinatura ativa nesta unidade.');
+                return;
+            }
+        }
+
         const client = clients.find(c => c.id === subForm.clientId);
         const sub: Subscription = {
             id: editingSubId || crypto.randomUUID(),
@@ -278,6 +311,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             saleCommissionType: (subForm.saleCommissionType || undefined) as Subscription['saleCommissionType'],
             autoRenew: subForm.autoRenew, cancellationReason: subForm.cancellationReason || undefined,
             notes: subForm.notes || undefined,
+            unitId: selectedUnitId !== 'all' ? selectedUnitId : undefined,
         };
         const r = await saveSubscription(sub);
         if (!r.success) { toast.error('Erro', r.error || ''); return; }
@@ -1342,7 +1376,8 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                 </div>
                             </div>
                             {/* Stripe */}
-                            <div className={`${bgCard} border ${borderCol} rounded-xl overflow-hidden ${shadowClass}`}>
+                            <div className={`${bgCard} border ${borderCol} rounded-xl overflow-hidden ${shadowClass} relative opacity-60`}>
+                                <div className="absolute top-3 right-3"><span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 rounded-full text-[10px] font-bold border border-amber-500/20">Em Breve</span></div>
                                 <div className="p-5">
                                     <div className="flex items-center gap-2 mb-3"><div className="w-10 h-10 rounded-lg bg-violet-600 flex items-center justify-center"><Globe size={20} className="text-white" /></div>
                                         <div><h4 className={`font-bold ${textMain}`}>Stripe</h4><p className={`text-[10px] ${textSub}`}>Global · SaaS &amp; Startups</p></div></div>
@@ -1361,7 +1396,8 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                 </div>
                             </div>
                             {/* PagSeguro */}
-                            <div className={`${bgCard} border ${borderCol} rounded-xl overflow-hidden ${shadowClass}`}>
+                            <div className={`${bgCard} border ${borderCol} rounded-xl overflow-hidden ${shadowClass} relative opacity-60`}>
+                                <div className="absolute top-3 right-3"><span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 rounded-full text-[10px] font-bold border border-amber-500/20">Em Breve</span></div>
                                 <div className="p-5">
                                     <div className="flex items-center gap-2 mb-3"><div className="w-10 h-10 rounded-lg bg-emerald-600 flex items-center justify-center"><Wallet size={20} className="text-white" /></div>
                                         <div><h4 className={`font-bold ${textMain}`}>PagSeguro</h4><p className={`text-[10px] ${textSub}`}>PagBank · Varejo BR</p></div></div>
@@ -1387,56 +1423,145 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         <div className={`p-4 border-b ${borderCol} flex items-center justify-between`}>
                             <div>
                                 <h3 className={`font-semibold ${textMain} flex items-center gap-2`}><Zap size={16} className="text-amber-500" /> Configuração do Gateway</h3>
-                                <p className={`text-xs ${textSub}`}>Configure a integração com o gateway de pagamento escolhido.</p>
+                                <p className={`text-xs ${textSub}`}>Configure a integração com o gateway de pagamento.</p>
                             </div>
-                            <span className="px-2 py-1 bg-amber-500/10 text-amber-500 rounded-full text-[10px] font-bold border border-amber-500/20">Em Breve</span>
+                            {integrationConfig?.active && <span className="px-2 py-1 bg-emerald-500/10 text-emerald-500 rounded-full text-[10px] font-bold border border-emerald-500/20">Conectado</span>}
                         </div>
-                        <div className="p-5 space-y-4 opacity-50 pointer-events-none">
+                        <div className="p-5 space-y-4">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div><label className={labelCls}><Landmark size={12} /> Gateway</label>
-                                    <select className={inputCls} disabled><option>Selecionar gateway...</option><option>Asaas</option><option>Stripe</option><option>PagSeguro</option></select></div>
+                                    <select className={inputCls} value="asaas"
+                                        onChange={() => toast.info('Gateway fixo', 'Atualmente apenas o Asaas está disponível.')}>
+                                        <option value="asaas">Asaas</option>
+                                        <option value="stripe" disabled>Stripe — Em Breve</option>
+                                        <option value="pagseguro" disabled>PagSeguro — Em Breve</option>
+                                    </select>
+                                </div>
                                 <div><label className={labelCls}><Shield size={12} /> Ambiente</label>
-                                    <select className={inputCls} disabled><option>Sandbox (Testes)</option><option>Produção</option></select></div>
+                                    <select className={inputCls} value={integrationConfig.environment}
+                                        onChange={e => setIntegrationConfig(prev => ({...prev, environment: e.target.value as any}))}>
+                                        <option value="sandbox">Sandbox (Testes)</option>
+                                        <option value="production">Produção</option>
+                                    </select>
+                                </div>
                             </div>
                             <div><label className={labelCls}><CreditCard size={12} /> API Key</label>
-                                <input type="password" className={inputCls} placeholder="$aact_xxxxxxxxxx..." disabled /></div>
+                                <div className="flex gap-2">
+                                    <input type={showApiKey ? 'text' : 'password'} className={`flex-1 ${inputCls}`}
+                                        placeholder="$aact_xxxxxxxxxx..."
+                                        value={integrationConfig.apiKey || ''}
+                                        onChange={e => setIntegrationConfig(prev => ({...prev, apiKey: e.target.value}))} />
+                                    <button className={`px-3 py-2 rounded-lg border ${borderCol} ${textSub} hover:opacity-80 transition`}
+                                        onClick={() => setShowApiKey(!showApiKey)}>
+                                        {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                                    </button>
+                                </div>
+                            </div>
                             <div><label className={labelCls}><Link size={12} /> Webhook URL</label>
-                                <div className="flex gap-2"><input type="text" className={`flex-1 ${inputCls}`} value="https://seudominio.com/api/webhook/asaas" readOnly disabled />
-                                    <button className={`px-3 py-2 rounded-lg border ${borderCol} ${textSub}`} disabled>Copiar</button></div></div>
-                            <button className="w-full py-3 bg-primary text-white font-bold rounded-lg opacity-50 cursor-not-allowed" disabled>
-                                <Zap size={14} className="inline mr-2" />Testar Conexão</button>
+                                <div className="flex gap-2">
+                                    <input type="text" className={`flex-1 ${inputCls}`}
+                                        value={`${window.location.origin}/api/asaas-webhook`} readOnly />
+                                    <button className={`px-3 py-2 rounded-lg border ${borderCol} ${textSub} hover:opacity-80 transition`}
+                                        onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/api/asaas-webhook`); toast.success('Copiado!'); }}>
+                                        Copiar
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-4">
+                                {[{ key: 'enableCredit', label: 'Crédito' }, { key: 'enableBoleto', label: 'Boleto' }, { key: 'enablePix', label: 'PIX' }].map(m => (
+                                    <label key={m.key} className={`flex items-center gap-2 p-3 rounded-lg border ${borderCol} cursor-pointer`}>
+                                        <input type="checkbox" checked={integrationConfig[m.key as keyof BillingGatewayConfig] as boolean}
+                                            onChange={e => setIntegrationConfig(prev => ({...prev, [m.key]: e.target.checked}))}
+                                            className="accent-primary" />
+                                        <span className={`text-sm ${textMain}`}>{m.label}</span>
+                                    </label>
+                                ))}
+                            </div>
+                            {/* Advanced Config */}
+                            <div className={`p-4 rounded-xl border ${borderCol} space-y-3`}>
+                                <p className={`text-xs font-bold ${textMain} flex items-center gap-1.5`}><Zap size={12} className="text-primary" /> Configuração Avançada</p>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                    {[
+                                        { key: 'autoCharge', label: 'Cobrança Automática' },
+                                        { key: 'autoCreateCustomer', label: 'Criar Cliente no Gateway' },
+                                        { key: 'sendNotifications', label: 'Enviar Notificações' },
+                                    ].map(t => (
+                                        <label key={t.key} className={`flex items-center gap-2 p-2.5 rounded-lg border ${borderCol} cursor-pointer text-xs`}>
+                                            <input type="checkbox" checked={integrationConfig[t.key as keyof BillingGatewayConfig] as boolean}
+                                                onChange={e => setIntegrationConfig(prev => ({...prev, [t.key]: e.target.checked}))}
+                                                className="accent-primary" />
+                                            <span className={textMain}>{t.label}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    <div>
+                                        <label className={`text-[10px] font-medium ${textSub} mb-1 block`}>Dias antes venc.</label>
+                                        <input type="number" min={1} max={30} className={inputCls}
+                                            value={integrationConfig.daysBeforeDue}
+                                            onChange={e => setIntegrationConfig(prev => ({...prev, daysBeforeDue: +e.target.value}))} />
+                                    </div>
+                                    <div>
+                                        <label className={`text-[10px] font-medium ${textSub} mb-1 block`}>Multa (%)</label>
+                                        <input type="number" min={0} max={20} step={0.5} className={inputCls}
+                                            value={integrationConfig.finePercent}
+                                            onChange={e => setIntegrationConfig(prev => ({...prev, finePercent: +e.target.value}))} />
+                                    </div>
+                                    <div>
+                                        <label className={`text-[10px] font-medium ${textSub} mb-1 block`}>Juros mensal (%)</label>
+                                        <input type="number" min={0} max={10} step={0.5} className={inputCls}
+                                            value={integrationConfig.interestPercent}
+                                            onChange={e => setIntegrationConfig(prev => ({...prev, interestPercent: +e.target.value}))} />
+                                    </div>
+                                    <div>
+                                        <label className={`text-[10px] font-medium ${textSub} mb-1 block`}>Tentativas máx.</label>
+                                        <input type="number" min={1} max={10} className={inputCls}
+                                            value={integrationConfig.maxRetries}
+                                            onChange={e => setIntegrationConfig(prev => ({...prev, maxRetries: +e.target.value}))} />
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex gap-3">
+                                <button className={`flex-1 py-3 rounded-lg font-bold text-sm transition border ${borderCol} ${textMain} hover:opacity-80`}
+                                    disabled={integrationTesting || !integrationConfig?.apiKey}
+                                    onClick={async () => {
+                                        setIntegrationTesting(true);
+                                        try {
+                                            const r = await testAsaasConnection(integrationConfig?.apiKey, integrationConfig?.environment);
+                                            toast.success('Conexão OK!', `Saldo: R$ ${r.balance?.toFixed(2) || '0.00'} (${r.environment})`);
+                                        } catch (err: any) { toast.error('Erro', err.message); }
+                                        finally { setIntegrationTesting(false); }
+                                    }}>
+                                    {integrationTesting ? <Loader2 size={14} className="inline animate-spin mr-2" /> : <Zap size={14} className="inline mr-2" />}
+                                    Testar Conexão
+                                </button>
+                                <button className="flex-1 py-3 bg-primary text-white font-bold rounded-lg text-sm hover:opacity-90 transition"
+                                    disabled={!integrationConfig?.apiKey}
+                                    onClick={async () => {
+                                        if (!integrationConfig) return;
+                                        const r = await saveBillingConfig(integrationConfig);
+                                        if (r.success) toast.success('Configuração salva!');
+                                        else toast.error('Erro', r.error || '');
+                                    }}>
+                                    Salvar Configuração
+                                </button>
+                            </div>
                         </div>
                     </div>
 
                     {/* Section 3: Integration Status */}
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         {[
-                            { label: 'Gateway Conectado', value: 'Não configurado', icon: Link, color: 'text-slate-400', bg: isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50' },
-                            { label: 'Cobranças Automáticas', value: 'Desativado', icon: Repeat, color: 'text-slate-400', bg: isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50' },
-                            { label: 'NF Automática', value: 'Desativado', icon: Receipt, color: 'text-slate-400', bg: isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50' },
-                            { label: 'Notificações', value: 'Desativado', icon: Zap, color: 'text-slate-400', bg: isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50' },
+                            { label: 'Gateway', value: integrationConfig.apiKey ? 'Asaas' : 'Não configurado', icon: Link, color: integrationConfig.apiKey ? 'text-emerald-500' : 'text-slate-400', bg: integrationConfig.apiKey ? (isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50') : (isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50') },
+                            { label: 'Cobranças Auto', value: integrationConfig.autoCharge ? 'Ativado' : 'Desativado', icon: Repeat, color: integrationConfig.autoCharge ? 'text-blue-500' : 'text-slate-400', bg: integrationConfig.autoCharge ? (isDarkMode ? 'bg-blue-500/10' : 'bg-blue-50') : (isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50') },
+                            { label: 'Ambiente', value: integrationConfig.environment === 'production' ? 'Produção' : 'Sandbox', icon: Shield, color: integrationConfig.environment === 'production' ? 'text-red-500' : 'text-amber-500', bg: integrationConfig.environment === 'production' ? (isDarkMode ? 'bg-red-500/10' : 'bg-red-50') : (isDarkMode ? 'bg-amber-500/10' : 'bg-amber-50') },
+                            { label: 'Notificações', value: integrationConfig.sendNotifications ? 'Ativado' : 'Desativado', icon: Zap, color: integrationConfig.sendNotifications ? 'text-emerald-500' : 'text-slate-400', bg: integrationConfig.sendNotifications ? (isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50') : (isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50') },
                         ].map((s, i) => (
                             <div key={i} className={`${bgCard} border ${borderCol} rounded-xl p-4 ${shadowClass} flex items-center gap-3`}>
                                 <div className={`p-2 rounded-lg ${s.bg}`}><s.icon size={18} className={s.color} /></div>
                                 <div><p className={`text-xs ${textSub}`}>{s.label}</p><p className={`text-sm font-bold ${s.color}`}>{s.value}</p></div>
                             </div>
                         ))}
-                    </div>
-
-                    {/* Roadmap note */}
-                    <div className={`p-4 rounded-xl border ${isDarkMode ? 'border-primary/20 bg-primary/5' : 'border-primary/20 bg-primary/5'}`}>
-                        <p className={`text-sm font-bold ${textMain} flex items-center gap-2 mb-2`}><ArrowRight size={14} className="text-primary" /> Próximas Etapas</p>
-                        <div className="space-y-1.5">
-                            {[
-                                'Escolher e configurar gateway de pagamento (Asaas recomendado)',
-                                'Implementar Edge Function para processar cobranças automáticas',
-                                'Configurar webhooks para atualizar status de pagamento',
-                                'Ativar notificações de cobrança por WhatsApp/Email',
-                                'Habilitar emissão automática de NF-e',
-                            ].map((step, i) => (
-                                <p key={i} className={`text-xs ${textSub} flex items-center gap-2`}><span className={`w-5 h-5 rounded-full border ${borderCol} flex items-center justify-center text-[10px] font-bold ${textSub}`}>{i + 1}</span>{step}</p>
-                            ))}
-                        </div>
                     </div>
                 </div>
             )}

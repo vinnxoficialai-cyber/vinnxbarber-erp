@@ -270,6 +270,16 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
 
     // Save subscription if section is open and planId is selected
     if (subSectionOpen && subFormData.planId) {
+      // CPF validation for subscriptions
+      if (!formData.cpfCnpj?.trim()) {
+        toast.error('CPF obrigatório', 'Para ativar um plano de assinatura, o CPF/CNPJ é obrigatório.');
+        return;
+      }
+      // Errata E3: Unit validation
+      if (!selectedUnitId || selectedUnitId === 'all') {
+        toast.error('Selecione uma unidade', 'É necessário selecionar uma unidade específica para criar uma assinatura.');
+        return;
+      }
       const existingSub = subscriptions.find(s => s.clientId === clientData.id);
       const subData: Subscription = {
         id: existingSub?.id || crypto.randomUUID(),
@@ -285,6 +295,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
         cardLast4: subFormData.cardLast4 || undefined,
         billingEmail: subFormData.billingEmail || undefined,
         autoRenew: subFormData.autoRenew,
+        unitId: selectedUnitId !== 'all' ? selectedUnitId : clientData.unitId,
       };
       await saveSubscription(subData);
     }

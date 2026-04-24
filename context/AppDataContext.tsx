@@ -235,6 +235,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 gender: c.gender || undefined,
                 cpfCnpj: c.cpfCnpj || undefined,
                 unitId: c.unitId || undefined,
+                asaasCustomerId: c.asaasCustomerId || undefined,
             }));
 
             const contracts: Contract[] = (contractsRes.data || []).map(c => ({
@@ -780,6 +781,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 autoRenew: s.autoRenew ?? true,
                 cancellationReason: s.cancellationReason || undefined,
                 notes: s.notes || undefined,
+                unitId: s.unitId || undefined,
                 createdAt: s.createdAt,
                 updatedAt: s.updatedAt,
                 plan: s.subscription_plans ? {
@@ -787,6 +789,11 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                     price: Number(s.subscription_plans.price) || 0,
                     servicesIncluded: s.subscription_plans.servicesIncluded || [],
                     durationDays: Number(s.subscription_plans.durationDays) || 30,
+                    planServices: s.subscription_plans.planServices || [],
+                    planProducts: s.subscription_plans.planProducts || [],
+                    benefits: s.subscription_plans.benefits || [],
+                    unitScope: s.subscription_plans.unitScope || 'all',
+                    allowedUnitIds: s.subscription_plans.allowedUnitIds || [],
                 } as SubscriptionPlan : undefined,
             }));
 

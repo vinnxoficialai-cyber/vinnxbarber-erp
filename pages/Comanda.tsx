@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
     ClipboardList, Plus, Trash2, X, Search, User, DollarSign,
     Scissors, Package, ShoppingCart, CheckCircle, Receipt,
@@ -12,7 +12,7 @@ import { useConfirm } from '../components/ConfirmModal';
 import { usePasswordConfirm } from '../components/PasswordConfirmModal';
 import { authService } from '../lib/auth';
 import { useToast } from '../components/Toast';
-import { saveComanda, deleteComanda, saveComandaItem, deleteComandaItem, closeComanda, reopenComanda, saveCalendarEvent, createComandaFromAppointment } from '../lib/dataService';
+import { saveComanda, deleteComanda, saveComandaItem, deleteComandaItem, closeComanda, reopenComanda, saveCalendarEvent, createComandaFromAppointment, saveSubscriptionUsageLog, deleteSubscriptionUsageLogByItem, getServiceUsageCount, incrementSubscriptionUses } from '../lib/dataService';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
 import { useFilteredData } from '../hooks/useFilteredData';
@@ -412,7 +412,12 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
     const getClientSubscription = (clientId?: string) => {
         if (!clientId) return null;
-        return subscriptions.find(s => s.clientId === clientId && s.status === 'active') || null;
+        const unitId = selectedUnitId !== 'all' ? selectedUnitId : undefined;
+        return subscriptions.find(s =>
+            s.clientId === clientId &&
+            s.status === 'active' &&
+            (!s.unitId || !unitId || s.unitId === unitId)
+        ) || null;
     };
 
     // Discount calculation
@@ -462,8 +467,61 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
             unitPrice: itemType === 'service' ? (item as Service).price : (item as Product).sellPrice,
             totalPrice: itemType === 'service' ? (item as Service).price : (item as Product).sellPrice,
         };
+
+        // ═══ SUBSCRIPTION DISCOUNT LOGIC (Decisões #1, #5, #6, #8) ═══
+        const sub = getClientSubscription(comanda.clientId);
+        if (sub?.status === 'active' && sub.plan) {
+            const planAllowed = sub.plan.unitScope === 'all' ||
+                sub.plan.allowedUnitIds?.includes(selectedUnitId !== 'all' ? selectedUnitId : '');
+
+            if (planAllowed) {
+                const rules = itemType === 'service' ? sub.plan.planServices : sub.plan.planProducts;
+                const rule = rules?.find((r: any) =>
+                    itemType === 'service' ? r.serviceId === item.id : r.productId === item.id
+                );
+
+                if (rule && rule.discount > 0) {
+                    let shouldApplyDiscount = false;
+                    if (!rule.monthlyLimit) {
+                        shouldApplyDiscount = true;
+                    } else {
+                        const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+                        const usageCount = await getServiceUsageCount(sub.id, item.id, monthStart);
+                        if (usageCount < rule.monthlyLimit) {
+                            shouldApplyDiscount = true;
+                        } else {
+                            toast.info('Limite atingido', `Uso ${usageCount}/${rule.monthlyLimit} neste mês. Cobrado preço integral.`);
+                        }
+                    }
+                    if (shouldApplyDiscount) {
+                        newItem.originalPrice = newItem.unitPrice;
+                        newItem.unitPrice = +(newItem.unitPrice * (1 - rule.discount / 100)).toFixed(2);
+                        newItem.totalPrice = newItem.unitPrice * newItem.quantity;
+                        newItem.subscriptionDiscount = rule.discount;
+                    }
+                }
+            }
+        }
+
         const result = await saveComandaItem(newItem);
         if (!result.success) { toast.error('Erro ao adicionar item', result.error || 'Erro desconhecido'); return; }
+
+        // Register usage log + increment cache (Decisões #1, #6)
+        if (newItem.subscriptionDiscount && sub) {
+            await saveSubscriptionUsageLog({
+                id: crypto.randomUUID(),
+                subscriptionId: sub.id,
+                comandaId: comanda.id,
+                comandaItemId: newItem.id,
+                itemId: item.id,
+                type: itemType,
+                discountApplied: newItem.subscriptionDiscount,
+                originalPrice: newItem.originalPrice,
+                finalPrice: newItem.unitPrice,
+            });
+            await incrementSubscriptionUses(sub.id, 1);
+        }
+
         setComandas(prev => prev.map(c => {
             if (c.id === comanda.id) {
                 const items = [...(c.items || []), newItem];
@@ -472,15 +530,24 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
             }
             return c;
         }));
-        toast.success(`${item.name} adicionado!`);
+        toast.success(`${item.name} adicionado!${newItem.subscriptionDiscount ? ` (${newItem.subscriptionDiscount}% desc. plano)` : ''}`);
     };
 
     const handleRemoveItem = async (comanda: Comanda, itemId: string) => {
-        const itemName = (comanda.items || []).find(i => i.id === itemId)?.name || 'este item';
+        const removedItem = (comanda.items || []).find(i => i.id === itemId);
+        const itemName = removedItem?.name || 'este item';
         const ok = await confirm({ title: 'Remover Item', message: `Deseja remover "${itemName}" da comanda?`, variant: 'danger', confirmLabel: 'Remover', cancelLabel: 'Cancelar' });
         if (!ok) return;
         const result = await deleteComandaItem(itemId);
         if (!result.success) { toast.error('Erro ao remover item', result.error || ''); return; }
+
+        // Decisão #2: Reverter usage log ao remover item com desconto
+        if (removedItem?.subscriptionDiscount) {
+            await deleteSubscriptionUsageLogByItem(removedItem.id);
+            const sub = getClientSubscription(comanda.clientId);
+            if (sub) await incrementSubscriptionUses(sub.id, -1);
+        }
+
         setComandas(prev => prev.map(c => {
             if (c.id === comanda.id) {
                 const items = (c.items || []).filter(i => i.id !== itemId);

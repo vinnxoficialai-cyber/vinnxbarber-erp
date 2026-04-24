@@ -3,7 +3,7 @@ import { useAppData } from '../context/AppDataContext';
 import { useSelectedUnit } from '../context/UnitContext';
 import {
     Client, TeamMember, Service, CalendarEvent, Comanda,
-    Product, Transaction
+    Product, Transaction, Subscription
 } from '../types';
 
 /**
@@ -15,7 +15,7 @@ import {
 export function useFilteredData() {
     const {
         clients, members, services, calendarEvents,
-        comandas, products, transactions, unitMembers,
+        comandas, products, transactions, unitMembers, subscriptions,
     } = useAppData();
 
     const { selectedUnitId, isFiltering } = useSelectedUnit();
@@ -72,6 +72,12 @@ export function useFilteredData() {
         return transactions.filter(t => t.unitId === selectedUnitId || !t.unitId);
     }, [transactions, selectedUnitId, isFiltering]);
 
+    // Subscriptions: filtered by unitId field (Decisão #8)
+    const filteredSubscriptions = useMemo<Subscription[]>(() => {
+        if (!isFiltering) return subscriptions;
+        return subscriptions.filter(s => s.unitId === selectedUnitId || !s.unitId);
+    }, [subscriptions, selectedUnitId, isFiltering]);
+
     return {
         filteredMembers,
         filteredClients,
@@ -80,6 +86,7 @@ export function useFilteredData() {
         filteredComandas,
         filteredProducts,
         filteredTransactions,
+        filteredSubscriptions,
         selectedUnitId,
         isFiltering,
     };
