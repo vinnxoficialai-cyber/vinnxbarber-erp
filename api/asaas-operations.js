@@ -370,10 +370,11 @@ export default async function handler(req, res) {
           // Update existing webhook
           webhook = await asaasRequest(config, `/webhooks/${existingWebhook.id}`, 'PUT', {
             url: webhookUrl,
-            email: data.email || undefined,
+            email: data.email || 'vinnxoficialai@gmail.com',
             sendType: 'SEQUENTIALLY',
             enabled: true,
             interrupted: false,
+            apiVersion: 3,
             authToken,
             events,
           });
@@ -383,7 +384,7 @@ export default async function handler(req, res) {
           webhook = await asaasRequest(config, '/webhooks', 'POST', {
             name: 'VINNX ERP Webhook',
             url: webhookUrl,
-            email: data.email || undefined,
+            email: data.email || 'vinnxoficialai@gmail.com',
             sendType: 'SEQUENTIALLY',
             enabled: true,
             interrupted: false,
