@@ -408,19 +408,19 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     const today = new Date().toISOString().split('T')[0];
 
                     let creditCardToken: string | undefined;
+                    let cardData: any = null;
+                    let holderData: any = null;
 
-                    // Step 2a: Tokenize card if credit card payment
+                    // Step 2a: Prepare card data if credit card payment
                     if (sub.paymentMethod === 'credit' && subForm.cardNumber) {
-                        toast.info('Validando cartão...', 'Verificando dados do cartão de crédito...');
-                        
-                        const cardData = {
+                        cardData = {
                             holderName: subForm.cardHolderName,
                             number: subForm.cardNumber.replace(/\s/g, ''),
                             expiryMonth: subForm.cardExpiryMonth,
                             expiryYear: subForm.cardExpiryYear,
                             ccv: subForm.cardCvv,
                         };
-                        const holderData = {
+                        holderData = {
                             name: subForm.cardHolderName || client?.name,
                             email: subForm.billingEmail || client?.email,
                             cpfCnpj: (subForm.holderCpf || subForm.cpfCnpj || '').replace(/\D/g, ''),
@@ -429,7 +429,9 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             phone: (subForm.holderPhone || client?.phone || '').replace(/\D/g, ''),
                         };
 
+                        // Try tokenization (optional — some accounts don't have permission)
                         try {
+                            toast.info('Validando cartão...', 'Verificando dados do cartão de crédito...');
                             const tokenResult = await tokenizeCreditCard({
                                 customerId: asaasCustomerId,
                                 creditCard: cardData,
@@ -438,19 +440,24 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             creditCardToken = tokenResult.creditCardToken;
                             toast.success('Cartão validado!', `${tokenResult.creditCardBrand} ****${tokenResult.creditCardNumber}`);
                         } catch (tokenErr: any) {
-                            // Card validation failed — DON'T create subscription
-                            toast.error('Cartão recusado!', tokenErr.message || 'Verifique os dados do cartão e tente novamente. Você pode corrigir os dados e tentar de novo.');
-                            // Revert subscription to overdue
-                            const { supabase: sbRevert } = await import('../lib/supabase');
-                            await sbRevert.from('subscriptions').update({ status: 'overdue' }).eq('id', sub.id);
-                            setSubscriptions(await getSubscriptions());
-                            // Keep modal open so user can fix card data and retry
-                            setSubModalSection(1); // Switch to payment tab
-                            return;
+                            // Check if it's a permission error (account doesn't support tokenization)
+                            const isPermissionError = tokenErr.message?.includes('permissão') || tokenErr.message?.includes('permission');
+                            if (isPermissionError) {
+                                // Tokenization not available — proceed with raw card data
+                                console.log('[ASAAS] Tokenization not available, using raw card data');
+                            } else {
+                                // Actual card error — block subscription
+                                toast.error('Cartão recusado!', tokenErr.message || 'Verifique os dados do cartão e tente novamente.');
+                                const { supabase: sbRevert } = await import('../lib/supabase');
+                                await sbRevert.from('subscriptions').update({ status: 'overdue' }).eq('id', sub.id);
+                                setSubscriptions(await getSubscriptions());
+                                setSubModalSection(1);
+                                return;
+                            }
                         }
                     }
 
-                    // Step 2b: Create subscription with token or other billing type
+                    // Step 2b: Create subscription with token or raw card data
                     toast.info('Processando pagamento...', sub.paymentMethod === 'credit' ? 'Cobrando cartão...' : 'Gerando cobrança...');
 
                     const asaasResult = await createAsaasSubscription({
@@ -461,8 +468,11 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         nextDueDate: today,
                         description: `Plano ${plan.name}`,
                         cycle: recurrenceMap[plan.recurrence] || 'MONTHLY',
-                        // Use token if available (credit card)
-                        ...(creditCardToken ? { creditCardToken } : {}),
+                        // Use token if available, otherwise raw card data
+                        ...(creditCardToken 
+                            ? { creditCardToken } 
+                            : (cardData ? { creditCard: cardData, creditCardHolderInfo: holderData } : {})
+                        ),
                     });
 
                     // 3. Check first payment status and update subscription accordingly

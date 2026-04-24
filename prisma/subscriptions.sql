@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     "planId" UUID NOT NULL REFERENCES subscription_plans(id) ON DELETE CASCADE,
     "clientId" TEXT NOT NULL,
     "clientName" TEXT,
-    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'cancelled', 'overdue')),
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'cancelled', 'overdue', 'pending_payment')),
     "startDate" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "endDate" TIMESTAMPTZ,
     "usesThisMonth" INT DEFAULT 0,
