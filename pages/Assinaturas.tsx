@@ -107,7 +107,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
     // Integration tab state
     const defaultBillingConfig: BillingGatewayConfig = {
         id: crypto.randomUUID(), provider: 'asaas', environment: 'sandbox',
-        apiKey: '', active: false, autoCreateCustomer: true, autoCharge: true,
+        apiKey: '', active: true, autoCreateCustomer: true, autoCharge: true,
         sendNotifications: true, daysBeforeDue: 5, maxRetries: 3, finePercent: 2,
         interestPercent: 1, enableCredit: true, enableBoleto: true, enablePix: true,
     };
