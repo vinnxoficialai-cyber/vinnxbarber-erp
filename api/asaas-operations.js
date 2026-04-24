@@ -386,6 +386,8 @@ export default async function handler(req, res) {
             email: data.email || undefined,
             sendType: 'SEQUENTIALLY',
             enabled: true,
+            interrupted: false,
+            apiVersion: 3,
             authToken,
             events,
           });
