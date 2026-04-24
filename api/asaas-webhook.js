@@ -51,8 +51,9 @@ export default async function handler(req, res) {
     // Verify webhook secret
     const isValid = await verifyWebhookSecret(req);
     if (!isValid) {
-      console.warn('[asaas-webhook] Invalid webhook secret');
-      return res.status(401).json({ error: 'Invalid webhook secret' });
+      console.warn('[asaas-webhook] Invalid webhook secret — event ignored');
+      // Return 200 to avoid ASAAS pausing the webhook queue (they count non-200 as failures)
+      return res.status(200).json({ status: 'ignored', reason: 'invalid_secret' });
     }
 
     const payload = req.body;
@@ -174,6 +175,8 @@ export default async function handler(req, res) {
     return res.status(200).json({ status: 'processed', eventId });
   } catch (error) {
     console.error('[asaas-webhook] Error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    // CRITICAL: Always return 200 to ASAAS even on internal errors
+    // ASAAS pauses the webhook queue after 15 consecutive non-200 responses
+    return res.status(200).json({ status: 'error', error: error.message || 'Internal server error' });
   }
 }
