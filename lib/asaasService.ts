@@ -54,6 +54,21 @@ export async function createAsaasSubscription(data: {
     nextDueDate?: string;
     description?: string;
     cycle?: string;
+    creditCard?: {
+        holderName: string;
+        number: string;
+        expiryMonth: string;
+        expiryYear: string;
+        ccv: string;
+    };
+    creditCardHolderInfo?: {
+        name?: string;
+        email?: string;
+        cpfCnpj?: string;
+        postalCode?: string;
+        addressNumber?: string;
+        phone?: string;
+    };
 }): Promise<{ success: boolean; asaasSubscriptionId: string }> {
     return callApi('createSubscription', data);
 }

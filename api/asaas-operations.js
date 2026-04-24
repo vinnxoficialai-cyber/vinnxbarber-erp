@@ -150,12 +150,12 @@ export default async function handler(req, res) {
         const config = await getConfig();
         if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
         
-        const { customerId, subscriptionId, value, billingType, nextDueDate, description, cycle } = data;
+        const { customerId, subscriptionId, value, billingType, nextDueDate, description, cycle, creditCard, creditCardHolderInfo } = data;
         if (!customerId || !value) {
           return res.status(400).json({ error: 'customerId e value são obrigatórios' });
         }
         
-        const asaasSub = await asaasRequest(config, '/subscriptions', 'POST', {
+        const payload = {
           customer: customerId,
           billingType: billingType || 'CREDIT_CARD',
           value,
@@ -165,7 +165,16 @@ export default async function handler(req, res) {
           externalReference: subscriptionId,
           fine: { value: config.finePercent || 0 },
           interest: { value: config.interestPercent || 0 },
-        });
+        };
+
+        // Add credit card data if provided
+        if (creditCard && creditCard.number) {
+          payload.creditCard = creditCard;
+          payload.creditCardHolderInfo = creditCardHolderInfo || {};
+          payload.remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || '127.0.0.1';
+        }
+
+        const asaasSub = await asaasRequest(config, '/subscriptions', 'POST', payload);
         
         // Update local subscription with gateway IDs
         if (subscriptionId) {

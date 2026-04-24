@@ -84,6 +84,9 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         planId: '', clientId: '', clientName: '', cpfCnpj: '', status: 'active' as Subscription['status'],
         startDate: new Date().toISOString().split('T')[0], paymentDay: 5,
         paymentMethod: '' as string, cardBrand: '', cardLast4: '', billingEmail: '',
+        // Full card fields for ASAAS
+        cardNumber: '', cardHolderName: '', cardExpiryMonth: '', cardExpiryYear: '', cardCvv: '',
+        holderCpf: '', holderPostalCode: '', holderAddressNumber: '', holderPhone: '',
         soldBy: '', soldByName: '', saleChannel: '', saleCommission: 0, saleCommissionType: 'percentage' as string,
         autoRenew: true, cancellationReason: '', notes: '',
     };
@@ -364,6 +367,24 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         nextDueDate: nextDue.toISOString().split('T')[0],
                         description: `Plano ${plan.name}`,
                         cycle: recurrenceMap[plan.recurrence] || 'MONTHLY',
+                        // Credit card data (if provided)
+                        ...(sub.paymentMethod === 'credit' && subForm.cardNumber ? {
+                            creditCard: {
+                                holderName: subForm.cardHolderName,
+                                number: subForm.cardNumber.replace(/\s/g, ''),
+                                expiryMonth: subForm.cardExpiryMonth,
+                                expiryYear: subForm.cardExpiryYear,
+                                ccv: subForm.cardCvv,
+                            },
+                            creditCardHolderInfo: {
+                                name: subForm.cardHolderName || client?.name,
+                                email: subForm.billingEmail || client?.email,
+                                cpfCnpj: (subForm.holderCpf || subForm.cpfCnpj || '').replace(/\D/g, ''),
+                                postalCode: subForm.holderPostalCode?.replace(/\D/g, ''),
+                                addressNumber: subForm.holderAddressNumber,
+                                phone: (subForm.holderPhone || client?.phone || '').replace(/\D/g, ''),
+                            },
+                        } : {}),
                     });
 
                     toast.success('ASAAS sincronizado!', `Assinatura ${asaasResult.asaasSubscriptionId} criada no gateway.`);
@@ -712,12 +733,83 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                 {subForm.paymentMethod === 'credit' && (
                                     <div className={`p-4 rounded-lg border ${borderCol} space-y-3`}>
                                         <p className={`text-xs font-bold ${textMain} flex items-center gap-1`}><CreditCard size={14} className="text-primary" /> Dados do Cartão</p>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div><label className={labelCls}>Bandeira</label>
-                                                <CustomDropdown value={subForm.cardBrand} onChange={v => setSubForm(p => ({ ...p, cardBrand: v }))} options={[{ value: '', label: 'Selecionar...' }, { value: 'visa', label: 'Visa' }, { value: 'mastercard', label: 'Mastercard' }, { value: 'elo', label: 'Elo' }, { value: 'amex', label: 'American Express' }, { value: 'hipercard', label: 'Hipercard' }]} isDarkMode={isDarkMode} /></div>
-                                            <div><label className={labelCls}>Últimos 4 dígitos</label>
-                                                <input type="text" value={subForm.cardLast4} onChange={e => setSubForm(p => ({ ...p, cardLast4: e.target.value.replace(/\D/g, '').slice(0, 4) }))} className={inputCls} placeholder="0000" maxLength={4} /></div>
+                                        <div>
+                                            <label className={labelCls}>Número do Cartão</label>
+                                            <input type="text" className={inputCls} placeholder="0000 0000 0000 0000"
+                                                value={subForm.cardNumber}
+                                                onChange={e => {
+                                                    let v = e.target.value.replace(/\D/g, '').slice(0, 16);
+                                                    v = v.replace(/(\d{4})(?=\d)/g, '$1 ');
+                                                    setSubForm(p => ({ ...p, cardNumber: v }));
+                                                }}
+                                                maxLength={19} />
                                         </div>
+                                        <div>
+                                            <label className={labelCls}>Nome no Cartão</label>
+                                            <input type="text" className={inputCls} placeholder="NOME COMO IMPRESSO NO CARTÃO"
+                                                value={subForm.cardHolderName}
+                                                onChange={e => setSubForm(p => ({ ...p, cardHolderName: e.target.value.toUpperCase() }))} />
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-3">
+                                            <div>
+                                                <label className={labelCls}>Mês</label>
+                                                <CustomDropdown value={subForm.cardExpiryMonth} onChange={v => setSubForm(p => ({ ...p, cardExpiryMonth: v }))} options={[{ value: '', label: 'MM' }, ...Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1).padStart(2, '0'), label: String(i + 1).padStart(2, '0') }))]} isDarkMode={isDarkMode} />
+                                            </div>
+                                            <div>
+                                                <label className={labelCls}>Ano</label>
+                                                <CustomDropdown value={subForm.cardExpiryYear} onChange={v => setSubForm(p => ({ ...p, cardExpiryYear: v }))} options={[{ value: '', label: 'AAAA' }, ...Array.from({ length: 10 }, (_, i) => { const y = new Date().getFullYear() + i; return { value: String(y), label: String(y) }; })]} isDarkMode={isDarkMode} />
+                                            </div>
+                                            <div>
+                                                <label className={labelCls}>CVV</label>
+                                                <input type="password" className={inputCls} placeholder="•••" maxLength={4}
+                                                    value={subForm.cardCvv}
+                                                    onChange={e => setSubForm(p => ({ ...p, cardCvv: e.target.value.replace(/\D/g, '').slice(0, 4) }))} />
+                                            </div>
+                                        </div>
+                                        <div className={`mt-2 p-3 rounded-lg border ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-200 bg-slate-50'}`}>
+                                            <p className={`text-[10px] font-bold ${textMain} mb-2`}>Dados do Titular</p>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className={`text-[10px] ${textSub} mb-0.5 block`}>CPF do Titular</label>
+                                                    <input type="text" className={inputCls} placeholder="000.000.000-00"
+                                                        value={subForm.holderCpf}
+                                                        onChange={e => {
+                                                            let v = e.target.value.replace(/\D/g, '').slice(0, 11);
+                                                            v = v.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
+                                                            setSubForm(p => ({ ...p, holderCpf: v }));
+                                                        }} maxLength={14} />
+                                                </div>
+                                                <div>
+                                                    <label className={`text-[10px] ${textSub} mb-0.5 block`}>Telefone</label>
+                                                    <input type="text" className={inputCls} placeholder="(00) 00000-0000"
+                                                        value={subForm.holderPhone}
+                                                        onChange={e => {
+                                                            let v = e.target.value.replace(/\D/g, '').slice(0, 11);
+                                                            v = v.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3');
+                                                            setSubForm(p => ({ ...p, holderPhone: v }));
+                                                        }} maxLength={15} />
+                                                </div>
+                                                <div>
+                                                    <label className={`text-[10px] ${textSub} mb-0.5 block`}>CEP</label>
+                                                    <input type="text" className={inputCls} placeholder="00000-000"
+                                                        value={subForm.holderPostalCode}
+                                                        onChange={e => {
+                                                            let v = e.target.value.replace(/\D/g, '').slice(0, 8);
+                                                            v = v.replace(/(\d{5})(\d{0,3})/, '$1-$2');
+                                                            setSubForm(p => ({ ...p, holderPostalCode: v }));
+                                                        }} maxLength={9} />
+                                                </div>
+                                                <div>
+                                                    <label className={`text-[10px] ${textSub} mb-0.5 block`}>Nº Endereço</label>
+                                                    <input type="text" className={inputCls} placeholder="123"
+                                                        value={subForm.holderAddressNumber}
+                                                        onChange={e => setSubForm(p => ({ ...p, holderAddressNumber: e.target.value }))} />
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <p className={`text-[10px] ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} flex items-center gap-1`}>
+                                            <Shield size={10} /> Dados transmitidos com segurança via HTTPS para o ASAAS.
+                                        </p>
                                     </div>
                                 )}
                                 <div><label className={labelCls}><Receipt size={12} /> Email de Cobrança</label>
