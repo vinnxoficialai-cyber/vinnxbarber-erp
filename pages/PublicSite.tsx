@@ -2243,37 +2243,56 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
 
   const isCreditRedemption = !!selection.isFromCreditRedemption;
 
-  // ── Subscription discount calculation ──
+  // ── Subscription discount calculation (defensive — JSONB may arrive as string) ──
   let subscriptionDiscount = 0; // 0-100 percentage
-  if (!isCreditRedemption && clientSubscription?.status === 'active' && clientSubscription?.plan) {
-    const plan = clientSubscription.plan;
-    // Check unit scope
-    const unitOk = plan.unitScope === 'all' || !plan.allowedUnitIds?.length ||
-      plan.allowedUnitIds.includes(selection.unit?.id);
-    // Check excluded professionals
-    const barberOk = !plan.excludedProfessionals?.length ||
-      !plan.excludedProfessionals.includes(selection.barber?.id);
-    // Check disabled days
-    const dayOk = !plan.disabledDays?.length ||
-      !plan.disabledDays.includes(selection.date?.getDay());
+  try {
+    if (!isCreditRedemption && clientSubscription?.status === 'active' && clientSubscription?.plan) {
+      const plan = clientSubscription.plan;
 
-    if (unitOk && barberOk && dayOk) {
-      const rule = (plan.planServices || []).find((r: any) => r.serviceId === selection.service?.id);
-      if (rule && rule.discount > 0) {
-        // Check monthly limit
-        if (!rule.monthlyLimit) {
-          subscriptionDiscount = rule.discount;
-        } else {
-          // Count this month's uses via usesThisMonth on the subscription
-          const usesThisMonth = clientSubscription.usesThisMonth || 0;
-          const maxUses = plan.maxUsesPerMonth || rule.monthlyLimit;
-          if (usesThisMonth < maxUses) {
-            subscriptionDiscount = rule.discount;
+      // Safely parse any JSONB field that might arrive as a JSON string
+      const safeParse = (val: any): any[] => {
+        if (Array.isArray(val)) return val;
+        if (typeof val === 'string') { try { const p = JSON.parse(val); return Array.isArray(p) ? p : []; } catch { return []; } }
+        return [];
+      };
+
+      const planServices = safeParse(plan.planServices);
+      const allowedUnitIds = safeParse(plan.allowedUnitIds);
+      const excludedProfessionals = safeParse(plan.excludedProfessionals);
+      const disabledDays = safeParse(plan.disabledDays);
+
+      // Check unit scope
+      const unitOk = plan.unitScope === 'all' || allowedUnitIds.length === 0 ||
+        allowedUnitIds.includes(selection.unit?.id);
+      // Check excluded professionals
+      const barberOk = excludedProfessionals.length === 0 ||
+        !excludedProfessionals.includes(selection.barber?.id);
+      // Check disabled days
+      const selDay = selection.date instanceof Date ? selection.date.getDay() : -1;
+      const dayOk = disabledDays.length === 0 || !disabledDays.includes(selDay);
+
+      if (unitOk && barberOk && dayOk) {
+        const rule = planServices.find((r: any) => r.serviceId === selection.service?.id);
+        if (rule && Number(rule.discount) > 0) {
+          const discount = Number(rule.discount);
+          if (!rule.monthlyLimit) {
+            subscriptionDiscount = discount;
+          } else {
+            const usesThisMonth = clientSubscription.usesThisMonth || 0;
+            const maxUses = plan.maxUsesPerMonth || rule.monthlyLimit;
+            if (usesThisMonth < maxUses) {
+              subscriptionDiscount = discount;
+            }
           }
         }
       }
     }
+  } catch (e) {
+    // Never let discount calc crash the booking flow
+    console.error('[ResumoModal] discount calc error:', e);
+    subscriptionDiscount = 0;
   }
+
 
   const isCovered = subscriptionDiscount === 100;
   const hasPartialDiscount = subscriptionDiscount > 0 && subscriptionDiscount < 100;
