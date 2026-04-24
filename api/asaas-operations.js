@@ -124,14 +124,32 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'Nome e CPF/CNPJ são obrigatórios' });
         }
         
-        const customer = await asaasRequest(config, '/customers', 'POST', {
-          name,
-          cpfCnpj: cpfCnpj.replace(/\D/g, ''),
-          email: email || undefined,
-          mobilePhone: phone?.replace(/\D/g, '') || undefined,
-          externalReference: clientId,
-          notificationDisabled: !config.sendNotifications,
-        });
+        const cleanCpf = cpfCnpj.replace(/\D/g, '');
+        
+        // First, try to find existing customer by CPF
+        let customer;
+        try {
+          const existing = await asaasRequest(config, `/customers?cpfCnpj=${cleanCpf}`, 'GET');
+          if (existing?.data?.length > 0) {
+            // Found existing — use it (pick the first non-deleted one)
+            customer = existing.data.find(c => !c.deleted) || existing.data[0];
+            console.log(`[asaas-ops] Reusing existing customer: ${customer.id}`);
+          }
+        } catch (e) {
+          console.log('[asaas-ops] Customer search failed, will create new:', e.message);
+        }
+
+        // If no existing customer found, create a new one
+        if (!customer) {
+          customer = await asaasRequest(config, '/customers', 'POST', {
+            name,
+            cpfCnpj: cleanCpf,
+            email: email || undefined,
+            mobilePhone: phone?.replace(/\D/g, '') || undefined,
+            externalReference: clientId,
+            notificationDisabled: !config.sendNotifications,
+          });
+        }
         
         // Update client with asaasCustomerId
         if (clientId) {

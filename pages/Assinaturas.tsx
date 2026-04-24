@@ -333,15 +333,15 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             const plan = plans.find(p => p.id === sub.planId);
             const clientCpf = cpfValue || (client as any)?.cpf?.replace(/\D/g, '') || (client as any)?.cpfCnpj?.replace(/\D/g, '');
             try {
-                // 1. Ensure client has ASAAS customer ID
-                let asaasCustomerId = (client as any)?.asaasCustomerId;
-                if (!asaasCustomerId && client && clientCpf) {
-                    toast.info('Sincronizando...', 'Criando cliente no ASAAS...');
+                // 1. Always create/refresh ASAAS customer (avoids stale/removed customer IDs)
+                let asaasCustomerId: string | null = null;
+                if (client && clientCpf) {
+                    toast.info('Sincronizando...', 'Registrando cliente no ASAAS...');
                     const custResult = await createAsaasCustomer({
                         clientId: client.id,
                         name: client.name,
                         cpfCnpj: clientCpf,
-                        email: client.email || undefined,
+                        email: client.email || subForm.billingEmail || undefined,
                         phone: client.phone || undefined,
                     });
                     asaasCustomerId = custResult.customerId;
