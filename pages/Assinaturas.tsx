@@ -240,28 +240,28 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                 );
                 if (affectedSubs.length > 0) {
                     toast.info('Atualizando ASAAS...', `Sincronizando novo valor (R$ ${plan.price.toFixed(2)}) em ${affectedSubs.length} assinatura(s)...`);
-                    let lastError = '';
                     let updated = 0;
+                    const failedSubs: string[] = [];
                     for (const sub of affectedSubs) {
                         try {
                             await updateAsaasSubscription({
                                 gatewaySubscriptionId: sub.gatewaySubscriptionId!,
-                                subscriptionId: sub.id,
                                 value: plan.price,
                                 description: `Plano ${plan.name}`,
                             });
                             updated++;
                         } catch (err: any) {
-                            lastError = err?.message || String(err);
-                            console.error(`[ASAAS] Failed to update sub ${sub.id}:`, lastError);
+                            failedSubs.push(sub.clientName || sub.id);
+                            console.error(`[ASAAS] Failed to update sub ${sub.id}:`, err?.message);
                         }
                     }
                     if (updated === affectedSubs.length) {
                         toast.success('ASAAS atualizado!', `${updated} assinatura(s) atualizada(s) para R$ ${plan.price.toFixed(2)}.`);
-                    } else if (lastError.includes('cartão de crédito')) {
-                        toast.warning('Limitação ASAAS', `${updated}/${affectedSubs.length} atualizadas. Assinaturas com cartão de crédito e faturas pagas precisam ser canceladas e recriadas no ASAAS para alterar o valor. O plano local foi atualizado.`);
-                    } else {
-                        toast.warning('ASAAS parcial', `${updated}/${affectedSubs.length} atualizadas. Erro: ${lastError}`);
+                    } else if (failedSubs.length > 0) {
+                        toast.warning(
+                            'Ação necessária no ASAAS',
+                            `Plano local atualizado ✓\n${updated > 0 ? `${updated} assinatura(s) sincronizada(s) ✓\n` : ''}${failedSubs.length} assinatura(s) precisam de ajuste manual no painel ASAAS (cartão de crédito com faturas pagas não permite alteração automática de valor).`
+                        );
                     }
                 }
             }
@@ -433,14 +433,13 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         toast.info('Atualizando ASAAS...', `Sincronizando novo plano (${newPlan.name} - R$ ${newPlan.price.toFixed(2)})...`);
                         await updateAsaasSubscription({
                             gatewaySubscriptionId: existingSub.gatewaySubscriptionId,
-                            subscriptionId: existingSub.id,
                             value: newPlan.price,
                             description: `Plano ${newPlan.name}`,
                         });
                         toast.success('ASAAS atualizado', `Plano alterado para ${newPlan.name}.`);
                     } catch (err: any) {
                         console.error('ASAAS plan change sync error:', err);
-                        toast.warning('Aviso ASAAS', `Plano atualizado localmente, mas ASAAS: ${err.message}`);
+                        toast.warning('Ação necessária no ASAAS', `Plano atualizado localmente ✓ Atualize o valor manualmente no painel ASAAS para esta assinatura (cartão de crédito com faturas pagas não permite alteração automática).`);
                     }
                 }
             }

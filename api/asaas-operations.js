@@ -269,7 +269,7 @@ export default async function handler(req, res) {
         const config = await getConfig();
         if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
         
-        const { gatewaySubscriptionId, subscriptionId, value, description } = data;
+        const { gatewaySubscriptionId, value, description } = data;
         if (!gatewaySubscriptionId) {
           return res.status(400).json({ error: 'gatewaySubscriptionId obrigatório' });
         }
@@ -279,63 +279,8 @@ export default async function handler(req, res) {
         if (description) updatePayload.description = description;
         updatePayload.updatePendingPayments = false;
         
-        try {
-          // Try direct update first
-          const updated = await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'PUT', updatePayload);
-          return res.status(200).json({ success: true, value: updated.value });
-        } catch (directErr) {
-          // If direct update fails (credit card limitation), fallback: cancel + recreate
-          console.log(`[asaas-ops] Direct update failed: ${directErr.message}. Falling back to cancel+recreate.`);
-          
-          // 1. GET old subscription details (preserving nextDueDate to avoid double billing)
-          const oldSub = await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'GET');
-          
-          // 2. Cancel old subscription
-          await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'DELETE');
-          
-          // 3. Create new subscription with updated value, preserving nextDueDate
-          const newPayload = {
-            customer: oldSub.customer,
-            billingType: oldSub.billingType,
-            value,
-            nextDueDate: oldSub.nextDueDate,  // CRITICAL: preserve to avoid double billing
-            cycle: oldSub.cycle || 'MONTHLY',
-            description: description || oldSub.description,
-            externalReference: subscriptionId || oldSub.externalReference,
-          };
-          
-          // Reuse credit card token if available
-          if (oldSub.creditCardToken) {
-            newPayload.creditCardToken = oldSub.creditCardToken;
-            newPayload.remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || '127.0.0.1';
-          }
-          
-          try {
-            const newSub = await asaasRequest(config, '/subscriptions', 'POST', newPayload);
-            
-            // 4. Update local subscription with new gateway ID
-            if (subscriptionId) {
-              await sbQuery(`subscriptions?id=eq.${subscriptionId}`, {
-                method: 'PATCH',
-                body: JSON.stringify({
-                  gatewaySubscriptionId: newSub.id,
-                  updatedAt: new Date().toISOString(),
-                }),
-                prefer: 'return=minimal',
-              });
-            }
-            
-            console.log(`[asaas-ops] Subscription recreated: ${gatewaySubscriptionId} -> ${newSub.id} (R$ ${value})`);
-            return res.status(200).json({ success: true, value, newSubscriptionId: newSub.id, recreated: true });
-          } catch (recreateErr) {
-            // Recreate failed — log for manual intervention (old sub is already cancelled)
-            console.error(`[asaas-ops] CRITICAL: Cancel succeeded but recreate failed. Old: ${gatewaySubscriptionId}. Error: ${recreateErr.message}`);
-            return res.status(500).json({ 
-              error: `Assinatura cancelada no ASAAS mas não recriada: ${recreateErr.message}. Recrie manualmente.`,
-              cancelledId: gatewaySubscriptionId,
-            });
-          }
-        }
+        const updated = await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'PUT', updatePayload);
+        return res.status(200).json({ success: true, value: updated.value });
       }
 
       // ═══ Cancel Subscription in ASAAS ═══
