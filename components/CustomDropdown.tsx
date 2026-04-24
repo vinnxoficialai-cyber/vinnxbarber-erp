@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronDown, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, CheckCircle2, Search } from 'lucide-react';
 
 export interface DropdownOption {
     value: string;
@@ -17,15 +17,18 @@ interface CustomDropdownProps {
     isDarkMode?: boolean;
     className?: string;
     disabled?: boolean;
+    searchable?: boolean;
 }
 
 export const CustomDropdown: React.FC<CustomDropdownProps> = ({
-    value, onChange, options, placeholder, icon, isDarkMode: isDarkModeProp, className = '', disabled = false
+    value, onChange, options, placeholder, icon, isDarkMode: isDarkModeProp, className = '', disabled = false, searchable = false
 }) => {
     const isDarkMode = isDarkModeProp ?? document.documentElement.classList.contains('dark');
     const [open, setOpen] = useState(false);
+    const [search, setSearch] = useState('');
     const triggerRef = useRef<HTMLButtonElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+    const searchRef = useRef<HTMLInputElement>(null);
     const selected = options.find(o => o.value === value);
     const [menuPos, setMenuPos] = useState({ top: 0, left: 0, width: 0 });
 
@@ -41,13 +44,21 @@ export const CustomDropdown: React.FC<CustomDropdownProps> = ({
         return () => document.removeEventListener('mousedown', handler);
     }, [open]);
 
+    // Focus search when opening
+    useEffect(() => {
+        if (open && searchable) {
+            setTimeout(() => searchRef.current?.focus(), 50);
+        }
+        if (!open) setSearch('');
+    }, [open, searchable]);
+
     // Calculate position when opening
     const handleToggle = () => {
         if (disabled) return;
         if (!open && triggerRef.current) {
             const rect = triggerRef.current.getBoundingClientRect();
             const spaceBelow = window.innerHeight - rect.bottom;
-            const menuHeight = Math.min(options.length * 36 + 12, 240);
+            const menuHeight = Math.min(options.length * 36 + 12 + (searchable ? 44 : 0), 280);
             const openAbove = spaceBelow < menuHeight + 8 && rect.top > menuHeight + 8;
             setMenuPos({
                 top: openAbove ? rect.top - menuHeight - 6 : rect.bottom + 6,
@@ -57,6 +68,10 @@ export const CustomDropdown: React.FC<CustomDropdownProps> = ({
         }
         setOpen(prev => !prev);
     };
+
+    const filteredOptions = searchable && search
+        ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()) || o.value === '')
+        : options;
 
     return (
         <div className={`relative ${className}`}>
@@ -83,26 +98,48 @@ export const CustomDropdown: React.FC<CustomDropdownProps> = ({
             {open && (
                 <div
                     ref={menuRef}
-                    className={`fixed z-[9999] rounded-xl border shadow-2xl py-1.5 max-h-[240px] overflow-y-auto custom-scrollbar
+                    className={`fixed z-[9999] rounded-xl border shadow-2xl py-1.5 max-h-[280px] overflow-hidden flex flex-col
             ${isDarkMode ? 'bg-dark-surface border-dark-border' : 'bg-white border-slate-200'}`}
                     style={{ top: `${menuPos.top}px`, left: `${menuPos.left}px`, width: `${menuPos.width}px` }}
                 >
-                    {options.map(opt => (
-                        <button
-                            key={opt.value}
-                            onClick={() => { onChange(opt.value); setOpen(false); }}
-                            className={`w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2.5 transition-colors
+                    {searchable && (
+                        <div className={`px-2 pb-1.5 pt-0.5 border-b ${isDarkMode ? 'border-dark-border' : 'border-slate-100'}`}>
+                            <div className="relative">
+                                <Search size={12} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                                <input
+                                    ref={searchRef}
+                                    type="text"
+                                    value={search}
+                                    onChange={e => setSearch(e.target.value)}
+                                    placeholder="Buscar..."
+                                    className={`w-full pl-7 pr-2 py-2 text-xs rounded-lg border outline-none
+                                        ${isDarkMode ? 'bg-dark border-dark-border text-slate-200 placeholder:text-slate-600 focus:border-primary/40' : 'bg-slate-50 border-slate-200 text-slate-700 placeholder:text-slate-400 focus:border-primary/40'}`}
+                                />
+                            </div>
+                        </div>
+                    )}
+                    <div className="overflow-y-auto custom-scrollbar flex-1">
+                        {filteredOptions.length === 0 ? (
+                            <div className={`px-3 py-3 text-xs text-center ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                                Nenhum resultado
+                            </div>
+                        ) : filteredOptions.map(opt => (
+                            <button
+                                key={opt.value}
+                                onClick={() => { onChange(opt.value); setOpen(false); }}
+                                className={`w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2.5 transition-colors
                 ${opt.value === value
-                                    ? (isDarkMode ? 'bg-primary/10 text-primary' : 'bg-primary/5 text-primary')
-                                    : (isDarkMode ? 'text-slate-300 hover:bg-dark hover:text-white' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900')
-                                }`}
-                        >
-                            {opt.dot && <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${opt.dot}`} />}
-                            {opt.icon && <span className="shrink-0">{opt.icon}</span>}
-                            <span className="flex-1 truncate">{opt.label}</span>
-                            {opt.value === value && <CheckCircle2 size={12} className="shrink-0 text-primary" />}
-                        </button>
-                    ))}
+                                        ? (isDarkMode ? 'bg-primary/10 text-primary' : 'bg-primary/5 text-primary')
+                                        : (isDarkMode ? 'text-slate-300 hover:bg-dark hover:text-white' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900')
+                                    }`}
+                            >
+                                {opt.dot && <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${opt.dot}`} />}
+                                {opt.icon && <span className="shrink-0">{opt.icon}</span>}
+                                <span className="flex-1 truncate">{opt.label}</span>
+                                {opt.value === value && <CheckCircle2 size={12} className="shrink-0 text-primary" />}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             )}
         </div>

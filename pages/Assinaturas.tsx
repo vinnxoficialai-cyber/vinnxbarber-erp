@@ -398,7 +398,9 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         }
 
         setSubscriptions(await getSubscriptions());
-        toast.success(editingSubId ? 'Assinatura atualizada' : 'Assinatura criada'); setIsSubModalOpen(false);
+        if (!editingSubId && integrationConfig.apiKey) { /* toast already shown by ASAAS sync */ }
+        else toast.success(editingSubId ? 'Assinatura atualizada' : 'Assinatura criada');
+        setIsSubModalOpen(false);
     };
     const handleDeleteSub = async (id: string) => {
         if (!await confirm({ title: 'Excluir Assinatura', message: 'Deseja excluir esta assinatura?', variant: 'danger', confirmLabel: 'Excluir', cancelLabel: 'Cancelar' })) return;
@@ -671,7 +673,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             {/* Section 0: Dados */}
                             {subModalSection === 0 && (<>
                                 <div><label className={labelCls}><Users size={12} /> Cliente</label>
-                                    <CustomDropdown value={subForm.clientId} onChange={v => { const c = clients.find(c => c.id === v); setSubForm(p => ({ ...p, clientId: v, clientName: c?.name || '', cpfCnpj: (c as any)?.cpf || (c as any)?.cpfCnpj || '' })); }} options={[{ value: '', label: 'Selecionar cliente...' }, ...clients.filter(c => c.status === 'Active').map(c => ({ value: c.id, label: c.name }))]} isDarkMode={isDarkMode} /></div>
+                                    <CustomDropdown searchable value={subForm.clientId} onChange={v => { const c = clients.find(c => c.id === v); setSubForm(p => ({ ...p, clientId: v, clientName: c?.name || '', cpfCnpj: (c as any)?.cpf || (c as any)?.cpfCnpj || '' })); }} options={[{ value: '', label: 'Selecionar cliente...' }, ...clients.filter(c => c.status === 'Active').map(c => ({ value: c.id, label: c.name }))]} isDarkMode={isDarkMode} /></div>
                                 {/* CPF/CNPJ — obrigatório para integração ASAAS */}
                                 {subForm.clientId && (() => {
                                     const selClient = clients.find(c => c.id === subForm.clientId);
