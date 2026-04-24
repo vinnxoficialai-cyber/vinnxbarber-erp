@@ -257,6 +257,8 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     }
                     if (updated === affectedSubs.length) {
                         toast.success('ASAAS atualizado!', `${updated} assinatura(s) atualizada(s) para R$ ${plan.price.toFixed(2)}.`);
+                    } else if (lastError.includes('cartão de crédito')) {
+                        toast.warning('Limitação ASAAS', `${updated}/${affectedSubs.length} atualizadas. Assinaturas com cartão de crédito e faturas pagas precisam ser canceladas e recriadas no ASAAS para alterar o valor. O plano local foi atualizado.`);
                     } else {
                         toast.warning('ASAAS parcial', `${updated}/${affectedSubs.length} atualizadas. Erro: ${lastError}`);
                     }
