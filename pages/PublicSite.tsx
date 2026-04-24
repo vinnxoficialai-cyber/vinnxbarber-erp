@@ -2327,9 +2327,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
           </span>
           <span className="text-green-400">- R$ {price.toFixed(2)}</span>
         </div>
-        <div className="p-3 rounded-r-lg text-sm mt-3 border-l-4" style={{ backgroundColor: `${primary}15`, borderColor: primary, color: primary }}>
-          <p className="font-bold">Este serviço será abatido do seu plano ✨</p>
-        </div>
+
       </>
     );
   } else if (hasPartialDiscount) {
