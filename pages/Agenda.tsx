@@ -623,6 +623,7 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
       year: dateObj.getFullYear(),
       color: '',
       client: formData.client,
+      clientId: clients.find(c => c.name === formData.client)?.id || (editingEventId ? events.find(ev => ev.id === editingEventId)?.clientId : undefined),
       observation: formData.observation,
       barberId: formData.barberId || undefined,
       barberName: barber?.name || undefined,

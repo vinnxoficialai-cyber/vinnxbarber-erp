@@ -55,6 +55,7 @@ async function processReminders() {
   const events = await sbQuery(
     `calendar_events?select=id,"clientId","serviceName","startTime",date` +
     `&status=eq.confirmed&"reminderSent"=eq.false` +
+    `&"clientId"=not.is.null` +
     `&date=gte.${todayISO}` +
     `&order=date.asc&limit=50`
   );
@@ -102,6 +103,7 @@ async function processReviews() {
   const events = await sbQuery(
     `calendar_events?select=id,"clientId","serviceName"` +
     `&status=eq.completed&rating=is.null&"ratingRequested"=eq.false` +
+    `&"clientId"=not.is.null` +
     `&"updatedAt"=lt.${cutoffISO}` +
     `&limit=50`
   );

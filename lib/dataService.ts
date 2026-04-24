@@ -576,6 +576,7 @@ export async function saveCalendarEvent(event: CalendarEvent): Promise<{ success
             serviceName: event.serviceName || null,
             duration: event.duration || 30,
             unitId: event.unitId || null,
+            clientId: event.clientId || null,
             source: event.source || 'manual',
             status: event.status || 'confirmed',
             serviceIds: event.serviceIds && event.serviceIds.length > 0 ? JSON.stringify(event.serviceIds) : '[]',

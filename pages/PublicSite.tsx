@@ -6,7 +6,7 @@ import {
   MapPin, Scissors, Store, Loader2, LogOut, Check, X, AlertTriangle,
   Gift, Share2, Bell, Edit3, Lock, Eye, EyeOff, Camera, CreditCard,
   Phone, Mail, Award, Heart, Settings, ChevronDown, ChevronUp,
-  MessageCircle, Copy, ExternalLink, Pause, XCircle, RefreshCw,
+  MessageCircle, Copy, ExternalLink, Pause, XCircle, RefreshCw, Crown,
 } from "lucide-react";
 import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscription } from "../types";
 import { usePlatform } from "../hooks/usePlatform";
@@ -1230,7 +1230,7 @@ function PublicSiteApp() {
     openModal(<ResumoModal
       selection={selection} primary={primary} bgColor={bgColor} cardBg={cardBg}
       clientSubscription={clientSubscription} onClose={closeModal}
-      onConfirm={async ({ couponCode: cpCode, couponDiscount: cpDisc, finalPrice: fp }: any) => {
+      onConfirm={async ({ couponCode: cpCode, couponDiscount: cpDisc, finalPrice: fp, subscriptionDiscount: subDisc }: any) => {
         const d = selection.date!;
         const now = new Date().toISOString();
         const isoDate = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
@@ -1255,6 +1255,7 @@ function PublicSiteApp() {
           finalPrice: fp ?? (selection.isFromCreditRedemption ? 0 : selection.service!.price),
           couponCode: cpCode || null,
           usedReferralCredit: !!selection.isFromCreditRedemption,
+          usedInPlan: (subDisc || 0) > 0,
           updatedAt: now,
         };
         const { error } = await supabase.from("calendar_events").insert(newEvent);
@@ -1483,6 +1484,7 @@ function PublicSiteApp() {
             authUser={authUser} clientProfile={clientProfile}
             onLogin={() => showLoginModal()} openModal={openModal} closeModal={closeModal}
             onRefresh={refreshEvents} setActiveView={setActiveView}
+            onSubscriptionChange={setClientSubscription}
           />}
           {activeView === "perfil" && <PerfilView
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
@@ -2240,8 +2242,43 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
   const dateStr = selection.date?.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" });
 
   const isCreditRedemption = !!selection.isFromCreditRedemption;
-  // TODO: Check subscription coverage when subscription system is fully wired
-  const isCovered = false;
+
+  // ── Subscription discount calculation ──
+  let subscriptionDiscount = 0; // 0-100 percentage
+  if (!isCreditRedemption && clientSubscription?.status === 'active' && clientSubscription?.plan) {
+    const plan = clientSubscription.plan;
+    // Check unit scope
+    const unitOk = plan.unitScope === 'all' || !plan.allowedUnitIds?.length ||
+      plan.allowedUnitIds.includes(selection.unit?.id);
+    // Check excluded professionals
+    const barberOk = !plan.excludedProfessionals?.length ||
+      !plan.excludedProfessionals.includes(selection.barber?.id);
+    // Check disabled days
+    const dayOk = !plan.disabledDays?.length ||
+      !plan.disabledDays.includes(selection.date?.getDay());
+
+    if (unitOk && barberOk && dayOk) {
+      const rule = (plan.planServices || []).find((r: any) => r.serviceId === selection.service?.id);
+      if (rule && rule.discount > 0) {
+        // Check monthly limit
+        if (!rule.monthlyLimit) {
+          subscriptionDiscount = rule.discount;
+        } else {
+          // Count this month's uses via usesThisMonth on the subscription
+          const usesThisMonth = clientSubscription.usesThisMonth || 0;
+          const maxUses = plan.maxUsesPerMonth || rule.monthlyLimit;
+          if (usesThisMonth < maxUses) {
+            subscriptionDiscount = rule.discount;
+          }
+        }
+      }
+    }
+  }
+
+  const isCovered = subscriptionDiscount === 100;
+  const hasPartialDiscount = subscriptionDiscount > 0 && subscriptionDiscount < 100;
+  const planDiscountAmount = +(price * subscriptionDiscount / 100).toFixed(2);
+  const priceAfterPlan = +(price - planDiscountAmount).toFixed(2);
 
   let finalPrice = price;
   let creditHtml = null;
@@ -2264,12 +2301,31 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
     finalPrice = 0;
     planHtml = (
       <>
-        <div className="flex justify-between text-green-400 text-sm">
-          <span>Incluso no seu plano</span>
-          <span>- R$ {price.toFixed(2)}</span>
+        <div className="flex justify-between text-sm">
+          <span className="flex items-center gap-2">
+            <Crown className="w-4 h-4" style={{ color: primary }} />
+            <span style={{ color: primary }}>Incluso no seu plano</span>
+          </span>
+          <span className="text-green-400">- R$ {price.toFixed(2)}</span>
         </div>
         <div className="p-3 rounded-r-lg text-sm mt-3 border-l-4" style={{ backgroundColor: `${primary}15`, borderColor: primary, color: primary }}>
-          <p className="font-bold">Este serviço será abatido do seu plano.</p>
+          <p className="font-bold">Este serviço será abatido do seu plano ✨</p>
+        </div>
+      </>
+    );
+  } else if (hasPartialDiscount) {
+    finalPrice = +(priceAfterPlan * (1 - couponDiscount)).toFixed(2);
+    planHtml = (
+      <>
+        <div className="flex justify-between text-sm">
+          <span className="flex items-center gap-2">
+            <Crown className="w-4 h-4" style={{ color: primary }} />
+            <span style={{ color: primary }}>Desc. do plano ({subscriptionDiscount}%)</span>
+          </span>
+          <span className="text-green-400">- R$ {planDiscountAmount.toFixed(2)}</span>
+        </div>
+        <div className="p-3 rounded-r-lg text-sm mt-2 border-l-4" style={{ backgroundColor: `${primary}15`, borderColor: primary, color: primary }}>
+          <p className="font-bold">Desconto exclusivo do seu plano de assinatura ✨</p>
         </div>
       </>
     );
@@ -2306,15 +2362,16 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
           setCouponLoading(false);
           return;
         }
-        // Validate min amount
-        if (c.min_amount && price < c.min_amount) {
+        // Validate min amount (against price after plan discount)
+        const baseForCoupon = hasPartialDiscount ? priceAfterPlan : price;
+        if (c.min_amount && baseForCoupon < c.min_amount) {
           setCouponDiscount(0);
           setCouponMsg({ text: `Valor mínimo: R$ ${Number(c.min_amount).toFixed(2)}`, ok: false });
           setCouponLoading(false);
           return;
         }
         const discVal = c.discount_value || 10;
-        const disc = (c.discount_type === 'fixed') ? discVal / price : discVal / 100;
+        const disc = (c.discount_type === 'fixed') ? discVal / baseForCoupon : discVal / 100;
         setCouponDiscount(disc);
         setCouponMsg({ text: c.discount_type === 'fixed' ? `Cupom de R$${discVal.toFixed(2)} aplicado!` : `Cupom de ${discVal}% aplicado!`, ok: true });
       } else {
@@ -2324,6 +2381,11 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
       setCouponLoading(false);
     }, 800);
   }
+
+  // Recalculate final when coupon changes for partial discount
+  const computedFinal = isCreditRedemption ? 0 : isCovered ? 0 : hasPartialDiscount
+    ? +(priceAfterPlan * (1 - couponDiscount)).toFixed(2)
+    : +(price * (1 - couponDiscount)).toFixed(2);
 
   return (
     <div className="p-6 booking-auth" style={{ borderRadius: "1rem" }}>
@@ -2336,7 +2398,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
       </div>
 
       <div className="border-t border-gray-700 pt-4">
-        {/* Coupon section - hidden if covered or credit redemption */}
+        {/* Coupon section - hidden if fully covered or credit redemption */}
         {!isCovered && !isCreditRedemption && (
           <div className="mb-4">
             <div className="flex items-center gap-2 mb-2">
@@ -2352,19 +2414,19 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-gray-400">Subtotal</span>
-            <span className="text-white">R$ {price.toFixed(2)}</span>
+            <span className={`text-white ${hasPartialDiscount || isCovered ? "line-through opacity-50" : ""}`}>R$ {price.toFixed(2)}</span>
           </div>
           {creditHtml}
           {planHtml}
           {couponDiscount > 0 && !isCovered && !isCreditRedemption && (
             <div className="flex justify-between text-green-400">
               <span>Desconto Cupom</span>
-              <span>- R$ {(price * couponDiscount).toFixed(2)}</span>
+              <span>- R$ {((hasPartialDiscount ? priceAfterPlan : price) * couponDiscount).toFixed(2)}</span>
             </div>
           )}
           <div className="flex justify-between font-bold text-lg border-t border-gray-700 pt-2 mt-2">
             <span className="text-white">Total</span>
-            <span style={{ color: primary }}>R$ {finalPrice.toFixed(2)}</span>
+            <span style={{ color: primary }}>R$ {computedFinal.toFixed(2)}</span>
           </div>
         </div>
       </div>
@@ -2374,7 +2436,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
         <button onClick={async () => {
           setLoading(true);
           try {
-            await onConfirm({ couponCode, couponDiscount, finalPrice });
+            await onConfirm({ couponCode, couponDiscount, finalPrice: computedFinal, subscriptionDiscount });
           } catch (e) {
             console.error("Booking error:", e);
           } finally {
@@ -2956,7 +3018,8 @@ function AvaliacaoModal({ ev, primary, bgColor, onClose, onSubmit, g }: any) {
 // ============================================================
 // PLANOS VIEW
 // ============================================================
-function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services, authUser, clientProfile, onLogin, openModal, closeModal, onRefresh, setActiveView }: any) {
+function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services, authUser, clientProfile, onLogin, openModal, closeModal, onRefresh, setActiveView, onSubscriptionChange }: any) {
+  const [interestLoading, setInterestLoading] = useState<string | null>(null);
 
   function showBeneficiosModal() {
     openModal(
@@ -2985,6 +3048,102 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     );
   }
 
+  function showPausarModal() {
+    openModal(
+      <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+        <Pause className="w-12 h-12 mx-auto mb-4 text-yellow-400" />
+        <h3 className="text-2xl font-bold mb-2 text-white">Pausar Assinatura?</h3>
+        <p className="text-gray-400 mb-6">Seu plano será pausado e os benefícios ficarão suspensos até que você reative. Você pode reativar a qualquer momento.</p>
+        <div className="p-4 rounded-lg mb-6 text-left" style={{ backgroundColor: "#2a2a2a" }}>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">Plano</span>
+            <span className="text-white font-semibold">{subscription?.plan?.name}</span>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => closeModal(() => showGerenciarModal())} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+          <button onClick={async () => {
+            await supabase.from("subscriptions").update({ status: 'paused', pausedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).eq("id", subscription.id);
+            if (onSubscriptionChange) onSubscriptionChange({ ...subscription, status: 'paused' });
+            closeModal();
+          }} className="py-3 font-bold rounded-lg" style={{ backgroundColor: "#eab308", color: "#000" }}>Confirmar Pausa</button>
+        </div>
+      </div>, "center"
+    );
+  }
+
+  function showCancelarModal() {
+    const CancelFlow = () => {
+      const [step, setStep] = useState(1);
+      const [cancelling, setCancelling] = useState(false);
+      return (
+        <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+          <XCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
+          <h3 className="text-2xl font-bold mb-2 text-white">{step === 1 ? "Cancelar Assinatura?" : "Tem certeza absoluta?"}</h3>
+          <p className="text-gray-400 mb-6">{step === 1
+            ? "Você perderá todos os benefícios do seu plano, incluindo descontos e prioridade no agendamento."
+            : "Esta ação pode levar até 24h para ser efetivada. Você precisará assinar novamente caso queira retornar."
+          }</p>
+          {step === 1 && (
+            <div className="p-4 rounded-lg mb-6 text-left" style={{ backgroundColor: "#2a2a2a" }}>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-gray-400">Plano</span>
+                <span className="text-white font-semibold">{subscription?.plan?.name}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-400">Valor</span>
+                <span className="text-white">R$ {Number(subscription?.plan?.price || 0).toFixed(2)}/mês</span>
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => { if (step === 1) closeModal(() => showGerenciarModal()); else setStep(1); }} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+            <button disabled={cancelling} onClick={async () => {
+              if (step === 1) { setStep(2); return; }
+              setCancelling(true);
+              await supabase.from("subscriptions").update({ status: 'cancelled', cancelledAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).eq("id", subscription.id);
+              if (onSubscriptionChange) onSubscriptionChange(null);
+              closeModal();
+            }} className="py-3 font-bold rounded-lg" style={{ backgroundColor: "#ef4444", color: "#fff" }}>
+              {cancelling ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : step === 1 ? "Continuar" : "Cancelar Assinatura"}
+            </button>
+          </div>
+        </div>
+      );
+    };
+    openModal(<CancelFlow />, "center");
+  }
+
+  function showInteresseModal(plan: SubscriptionPlan) {
+    const whatsapp = g("contact.whatsapp", "");
+    const msg = encodeURIComponent(`Olá! Tenho interesse no plano "${plan.name}" (R$${plan.price.toFixed(2)}/mês). Gostaria de mais informações para assinar.`);
+    openModal(
+      <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+        <Crown className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
+        <h3 className="text-2xl font-bold mb-2" style={{ color: primary }}>Interesse Registrado!</h3>
+        <p className="text-gray-400 mb-6">Registramos seu interesse no plano <strong className="text-white">{plan.name}</strong>. Entre em contato para finalizar sua assinatura.</p>
+        <div className="p-4 rounded-lg mb-6" style={{ backgroundColor: "#2a2a2a" }}>
+          <div className="flex justify-between text-sm mb-2">
+            <span className="text-gray-400">Plano</span>
+            <span className="text-white font-semibold">{plan.name}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">Valor</span>
+            <span className="font-bold" style={{ color: primary }}>R$ {plan.price.toFixed(2)}/mês</span>
+          </div>
+        </div>
+        <div className="space-y-3">
+          {whatsapp && (
+            <button onClick={() => window.open(`https://wa.me/${whatsapp.replace(/\D/g, "")}?text=${msg}`, "_blank")} className="w-full py-3 font-bold rounded-lg flex items-center justify-center gap-2" style={{ backgroundColor: "#25D366", color: "#fff" }}>
+              <MessageCircle className="w-5 h-5" />Falar via WhatsApp
+            </button>
+          )}
+          <button onClick={() => closeModal()} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        </div>
+      </div>, "center"
+    );
+  }
+
   function showGerenciarModal() {
     if (!subscription?.plan) return;
     openModal(
@@ -3002,11 +3161,11 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
             <span className="flex items-center gap-3"><Award className="w-5 h-5" style={{ color: primary }} />Ver benefícios</span>
             <ChevronRight className="w-4 h-4 text-gray-500" />
           </button>
-          <button className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+          <button onClick={() => closeModal(() => showPausarModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
             <span className="flex items-center gap-3"><Pause className="w-5 h-5" style={{ color: primary }} />Pausar assinatura</span>
             <ChevronRight className="w-4 h-4 text-gray-500" />
           </button>
-          <button className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+          <button onClick={() => closeModal(() => showCancelarModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
             <span className="flex items-center gap-3 text-red-500"><XCircle className="w-5 h-5" />Cancelar assinatura</span>
             <ChevronRight className="w-4 h-4 text-gray-500" />
           </button>
@@ -3089,11 +3248,27 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                     <li key={i} className="flex items-start"><Check className="w-4 h-4 mr-3 mt-0.5 flex-shrink-0" style={{ color: primary }} /><span>{b}</span></li>
                   ))}
                 </ul>
-                <button disabled={isCurrent}
-                  onClick={() => { if (!authUser) onLogin(); }}
+                <button disabled={isCurrent || interestLoading === plan.id}
+                  onClick={async () => {
+                    if (!authUser) { onLogin(); return; }
+                    setInterestLoading(plan.id);
+                    try {
+                      await supabase.from("subscription_interests").insert({
+                        id: crypto.randomUUID(),
+                        clientId: clientProfile?.id,
+                        clientName: clientProfile?.name,
+                        planId: plan.id,
+                        planName: plan.name,
+                        status: 'pending',
+                        createdAt: new Date().toISOString(),
+                      });
+                    } catch (_) { /* silently proceed to modal */ }
+                    setInterestLoading(null);
+                    showInteresseModal(plan);
+                  }}
                   className="w-full py-3 font-bold rounded-lg transition-colors"
                   style={{ backgroundColor: isCurrent ? "#4a4a4a" : primary, color: isCurrent ? "#888" : bgColor, cursor: isCurrent ? "not-allowed" : "pointer" }}>
-                  {isCurrent ? "Seu Plano Atual" : "Assinar Plano"}
+                  {isCurrent ? "Seu Plano Atual" : interestLoading === plan.id ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Assinar Plano"}
                 </button>
               </div>
             </div>
