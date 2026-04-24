@@ -485,11 +485,11 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             toast.success('Pagamento confirmado!', `R$ ${plan.price.toFixed(2)} cobrado com sucesso. Assinatura ativa!`);
                         } else if (payStatus === 'PENDING') {
                             // ⏳ Payment pending — keep as pending_payment
-                            toast.warning('Pagamento pendente', 'Cobrança enviada ao cartão, aguardando confirmação. A assinatura será ativada após a confirmação.');
+                            toast.warning('Pagamento pendente', 'Peça ao cliente para verificar as notificações do banco/app do cartão e aprovar a cobrança. A assinatura será ativada automaticamente após a confirmação.');
                         } else if (payStatus === 'REFUSED' || payStatus === 'OVERDUE') {
                             // ❌ Payment refused — mark as overdue
                             await sb.from('subscriptions').update({ status: 'overdue' }).eq('id', sub.id);
-                            toast.error('Pagamento recusado!', 'O cartão foi recusado. A assinatura NÃO foi ativada.');
+                            toast.error('Pagamento recusado!', 'O banco recusou a cobrança. Peça ao cliente para: 1) Verificar notificações do banco/app do cartão e aprovar a transação. 2) Verificar se o cartão está liberado para compras online. Depois, tente novamente.');
                         } else {
                             toast.info('ASAAS sincronizado', `Assinatura criada. Status: ${payStatus}. Aguardando confirmação.`);
                         }
@@ -507,7 +507,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     const { supabase: sb2 } = await import('../lib/supabase');
                     await sb2.from('subscriptions').update({ status: 'overdue' }).eq('id', sub.id);
                 } catch (_) {}
-                toast.error('Falha na cobrança', `Erro ao processar pagamento: ${err.message}. A assinatura NÃO foi ativada.`);
+                toast.error('Falha na cobrança', `${err.message}. Peça ao cliente para verificar as notificações do banco e aprovar a transação, depois tente novamente.`);
             }
         }
 
