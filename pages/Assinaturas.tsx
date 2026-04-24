@@ -240,6 +240,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                 );
                 if (affectedSubs.length > 0) {
                     toast.info('Atualizando ASAAS...', `Sincronizando novo valor (R$ ${plan.price.toFixed(2)}) em ${affectedSubs.length} assinatura(s)...`);
+                    let lastError = '';
                     let updated = 0;
                     for (const sub of affectedSubs) {
                         try {
@@ -249,14 +250,15 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                 description: `Plano ${plan.name}`,
                             });
                             updated++;
-                        } catch (err) {
-                            console.error(`[ASAAS] Failed to update sub ${sub.id}:`, err);
+                        } catch (err: any) {
+                            lastError = err?.message || String(err);
+                            console.error(`[ASAAS] Failed to update sub ${sub.id}:`, lastError);
                         }
                     }
                     if (updated === affectedSubs.length) {
                         toast.success('ASAAS atualizado!', `${updated} assinatura(s) atualizada(s) para R$ ${plan.price.toFixed(2)}.`);
                     } else {
-                        toast.warning('ASAAS parcial', `${updated}/${affectedSubs.length} assinaturas atualizadas. Verifique manualmente.`);
+                        toast.warning('ASAAS parcial', `${updated}/${affectedSubs.length} atualizadas. Erro: ${lastError}`);
                     }
                 }
             }
