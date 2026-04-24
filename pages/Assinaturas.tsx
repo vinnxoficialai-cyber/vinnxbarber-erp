@@ -356,15 +356,14 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     const billingTypeMap: Record<string, string> = {
                         credit: 'CREDIT_CARD', boleto: 'BOLETO', pix: 'PIX',
                     };
-                    const nextDue = new Date();
-                    nextDue.setDate(nextDue.getDate() + 1);
+                    const nextDueDate = sub.startDate || new Date().toISOString().split('T')[0];
 
                     const asaasResult = await createAsaasSubscription({
                         customerId: asaasCustomerId,
                         subscriptionId: sub.id,
                         value: plan.price,
                         billingType: billingTypeMap[sub.paymentMethod || ''] || 'UNDEFINED',
-                        nextDueDate: nextDue.toISOString().split('T')[0],
+                        nextDueDate,
                         description: `Plano ${plan.name}`,
                         cycle: recurrenceMap[plan.recurrence] || 'MONTHLY',
                         // Credit card data (if provided)
