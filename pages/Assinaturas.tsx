@@ -81,7 +81,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
     const [isSubModalOpen, setIsSubModalOpen] = useState(false);
     const [editingSubId, setEditingSubId] = useState<string | null>(null);
     const defaultSubForm = {
-        planId: '', clientId: '', clientName: '', status: 'active' as Subscription['status'],
+        planId: '', clientId: '', clientName: '', cpfCnpj: '', status: 'active' as Subscription['status'],
         startDate: new Date().toISOString().split('T')[0], paymentDay: 5,
         paymentMethod: '' as string, cardBrand: '', cardLast4: '', billingEmail: '',
         soldBy: '', soldByName: '', saleChannel: '', saleCommission: 0, saleCommissionType: 'percentage' as string,
@@ -316,25 +316,32 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         const r = await saveSubscription(sub);
         if (!r.success) { toast.error('Erro', r.error || ''); return; }
 
+        // ═══ SAVE CPF TO CLIENT IF PROVIDED ═══
+        const cpfValue = subForm.cpfCnpj?.replace(/\D/g, '');
+        if (cpfValue && client && !(client as any)?.cpf) {
+            try {
+                const { supabase } = await import('../lib/supabase');
+                await supabase.from('clients').update({ cpf: subForm.cpfCnpj }).eq('id', client.id);
+            } catch (err) { console.error('CPF save error:', err); }
+        }
+
         // ═══ AUTO-SYNC WITH ASAAS (only for new subscriptions) ═══
         if (!editingSubId && integrationConfig.apiKey) {
             const plan = plans.find(p => p.id === sub.planId);
+            const clientCpf = cpfValue || (client as any)?.cpf?.replace(/\D/g, '') || (client as any)?.cpfCnpj?.replace(/\D/g, '');
             try {
                 // 1. Ensure client has ASAAS customer ID
                 let asaasCustomerId = (client as any)?.asaasCustomerId;
-                if (!asaasCustomerId && client) {
-                    const cpf = client.cpf || (client as any).cpfCnpj;
-                    if (cpf) {
-                        toast.info('Sincronizando...', 'Criando cliente no ASAAS...');
-                        const custResult = await createAsaasCustomer({
-                            clientId: client.id,
-                            name: client.name,
-                            cpfCnpj: cpf,
-                            email: client.email || undefined,
-                            phone: client.phone || undefined,
-                        });
-                        asaasCustomerId = custResult.customerId;
-                    }
+                if (!asaasCustomerId && client && clientCpf) {
+                    toast.info('Sincronizando...', 'Criando cliente no ASAAS...');
+                    const custResult = await createAsaasCustomer({
+                        clientId: client.id,
+                        name: client.name,
+                        cpfCnpj: clientCpf,
+                        email: client.email || undefined,
+                        phone: client.phone || undefined,
+                    });
+                    asaasCustomerId = custResult.customerId;
                 }
 
                 // 2. Create subscription in ASAAS
@@ -643,7 +650,36 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             {/* Section 0: Dados */}
                             {subModalSection === 0 && (<>
                                 <div><label className={labelCls}><Users size={12} /> Cliente</label>
-                                    <CustomDropdown value={subForm.clientId} onChange={v => { const c = clients.find(c => c.id === v); setSubForm(p => ({ ...p, clientId: v, clientName: c?.name || '' })); }} options={[{ value: '', label: 'Selecionar cliente...' }, ...clients.filter(c => c.status === 'Active').map(c => ({ value: c.id, label: c.name }))]} isDarkMode={isDarkMode} /></div>
+                                    <CustomDropdown value={subForm.clientId} onChange={v => { const c = clients.find(c => c.id === v); setSubForm(p => ({ ...p, clientId: v, clientName: c?.name || '', cpfCnpj: (c as any)?.cpf || (c as any)?.cpfCnpj || '' })); }} options={[{ value: '', label: 'Selecionar cliente...' }, ...clients.filter(c => c.status === 'Active').map(c => ({ value: c.id, label: c.name }))]} isDarkMode={isDarkMode} /></div>
+                                {/* CPF/CNPJ — obrigatório para integração ASAAS */}
+                                {subForm.clientId && (() => {
+                                    const selClient = clients.find(c => c.id === subForm.clientId);
+                                    const hasCpf = (selClient as any)?.cpf || (selClient as any)?.cpfCnpj;
+                                    return (
+                                        <div>
+                                            <label className={labelCls}><Hash size={12} /> CPF / CNPJ {hasCpf && <CheckCircle size={10} className="text-emerald-500" />}</label>
+                                            {hasCpf ? (
+                                                <p className={`text-sm ${textMain} px-2.5 py-2`}>{(selClient as any)?.cpf || (selClient as any)?.cpfCnpj} <span className="text-emerald-500 text-[10px] ml-1">✓ cadastrado</span></p>
+                                            ) : (
+                                                <>
+                                                    <input type="text" className={inputCls}
+                                                        placeholder="000.000.000-00 ou 00.000.000/0001-00"
+                                                        value={subForm.cpfCnpj || ''}
+                                                        onChange={e => {
+                                                            let v = e.target.value.replace(/\D/g, '');
+                                                            if (v.length <= 11) v = v.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
+                                                            else v = v.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
+                                                            setSubForm(p => ({ ...p, cpfCnpj: v }));
+                                                        }}
+                                                        maxLength={18} />
+                                                    <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-amber-400' : 'text-amber-600'}`}>
+                                                        <AlertCircle size={10} className="inline mr-1" />Obrigatório para cobrança automática via ASAAS. Será salvo no cadastro do cliente.
+                                                    </p>
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                                 <div><label className={labelCls}><Crown size={12} /> Plano</label>
                                     <CustomDropdown value={subForm.planId} onChange={v => setSubForm(p => ({ ...p, planId: v }))} options={[{ value: '', label: 'Selecionar plano...' }, ...plans.filter(p => p.active).map(p => ({ value: p.id, label: `${p.name} — ${formatCurrency(p.price)}` }))]} isDarkMode={isDarkMode} /></div>
                                 {subForm.planId && (() => {
