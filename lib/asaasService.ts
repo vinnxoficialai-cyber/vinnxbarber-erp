@@ -95,6 +95,14 @@ export async function createAsaasSubscription(data: {
     return callApi('createSubscription', data);
 }
 
+export async function updateAsaasSubscription(data: {
+    gatewaySubscriptionId: string;
+    value?: number;
+    description?: string;
+}): Promise<{ success: boolean; value?: number }> {
+    return callApi('updateSubscription', data);
+}
+
 export async function cancelAsaasSubscription(data: {
     gatewaySubscriptionId: string;
     subscriptionId?: string;

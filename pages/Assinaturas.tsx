@@ -18,7 +18,7 @@ import {
     saveSubscription, deleteSubscription, getSubscriptions,
     getBillingConfig, saveBillingConfig
 } from '../lib/dataService';
-import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription, tokenizeCreditCard } from '../lib/asaasService';
+import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription, tokenizeCreditCard, updateAsaasSubscription } from '../lib/asaasService';
 import type { BillingGatewayConfig } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
@@ -227,6 +227,41 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
         const plan: SubscriptionPlan = { ...planForm, id: editingPlanId || crypto.randomUUID() };
         const r = await saveSubscriptionPlan(plan);
         if (!r.success) { toast.error('Erro', r.error || ''); return; }
+
+        // ═══ SYNC PRICE TO ASAAS (when editing and price changed) ═══
+        if (editingPlanId && integrationConfig.apiKey) {
+            const oldPlan = plans.find(p => p.id === editingPlanId);
+            if (oldPlan && oldPlan.price !== plan.price) {
+                // Find all active/pending subs for this plan that have a gateway ID
+                const affectedSubs = subscriptions.filter(s => 
+                    s.planId === editingPlanId && 
+                    (s.status === 'active' || s.status === 'pending_payment') &&
+                    (s as any).gatewaySubscriptionId
+                );
+                if (affectedSubs.length > 0) {
+                    toast.info('Atualizando ASAAS...', `Sincronizando novo valor (R$ ${plan.price.toFixed(2)}) em ${affectedSubs.length} assinatura(s)...`);
+                    let updated = 0;
+                    for (const sub of affectedSubs) {
+                        try {
+                            await updateAsaasSubscription({
+                                gatewaySubscriptionId: (sub as any).gatewaySubscriptionId,
+                                value: plan.price,
+                                description: `Plano ${plan.name}`,
+                            });
+                            updated++;
+                        } catch (err) {
+                            console.error(`[ASAAS] Failed to update sub ${sub.id}:`, err);
+                        }
+                    }
+                    if (updated === affectedSubs.length) {
+                        toast.success('ASAAS atualizado!', `${updated} assinatura(s) atualizada(s) para R$ ${plan.price.toFixed(2)}.`);
+                    } else {
+                        toast.warning('ASAAS parcial', `${updated}/${affectedSubs.length} assinaturas atualizadas. Verifique manualmente.`);
+                    }
+                }
+            }
+        }
+
         setPlans(await getSubscriptionPlans());
         toast.success(editingPlanId ? 'Plano atualizado' : 'Plano criado');
         setIsPlanModalOpen(false);

@@ -263,6 +263,24 @@ export default async function handler(req, res) {
         });
       }
 
+      // ═══ Update Subscription value in ASAAS ═══
+      case 'updateSubscription': {
+        const config = await getConfig();
+        if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
+        
+        const { gatewaySubscriptionId, value, description } = data;
+        if (!gatewaySubscriptionId) {
+          return res.status(400).json({ error: 'gatewaySubscriptionId obrigatório' });
+        }
+        
+        const updatePayload = {};
+        if (value !== undefined) updatePayload.value = value;
+        if (description) updatePayload.description = description;
+        
+        const updated = await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'PUT', updatePayload);
+        return res.status(200).json({ success: true, value: updated.value });
+      }
+
       // ═══ Cancel Subscription in ASAAS ═══
       case 'cancelSubscription': {
         const config = await getConfig();
