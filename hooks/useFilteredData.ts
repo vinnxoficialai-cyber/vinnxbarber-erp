@@ -36,10 +36,10 @@ export function useFilteredData() {
         });
     }, [members, unitMembers, selectedUnitId, isFiltering]);
 
-    // Clients: filtered by unitId field (no unitId = only visible in "Todas")
+    // Clients: filtered by unitId field (no unitId = visible in ALL units, consistent with other entities)
     const filteredClients = useMemo<Client[]>(() => {
         if (!isFiltering) return clients;
-        return clients.filter(c => c.unitId === selectedUnitId);
+        return clients.filter(c => c.unitId === selectedUnitId || !c.unitId);
     }, [clients, selectedUnitId, isFiltering]);
 
     // Services: filtered by unitId field

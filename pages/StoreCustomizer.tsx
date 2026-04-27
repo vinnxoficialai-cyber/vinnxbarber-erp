@@ -23,8 +23,6 @@ import {
   Eye,
   EyeOff,
   Sparkles,
-  Monitor,
-  Smartphone,
   Palette,
   Image as ImageIcon,
   Type,
@@ -53,8 +51,6 @@ import {
 // ============================================================
 // TYPES
 // ============================================================
-
-type PreviewMode = "desktop" | "mobile";
 
 interface CategoryDef {
   key: string;
@@ -1290,7 +1286,6 @@ export function StoreCustomizer({ isDarkMode, currentUser }: { isDarkMode?: bool
   const { settings, getSetting, saveSettings, isLoading, isSaving } = useStoreCustomization();
   const [activeCategory, setActiveCategory] = useState("appearance");
   const [activePanel, setActivePanel] = useState<{ key: string; type: "section" | "theme" } | null>(null);
-  const [previewMode, setPreviewMode] = useState<PreviewMode>("desktop");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [hasChanges, setHasChanges] = useState(false);
   const [initialized, setInitialized] = useState(false);
@@ -1560,14 +1555,15 @@ export function StoreCustomizer({ isDarkMode, currentUser }: { isDarkMode?: bool
         </div>
 
         <div className="flex items-center gap-2.5">
-          <div className="flex items-center bg-white/[0.04] rounded-lg p-0.5 border border-white/[0.06]">
-            <button onClick={() => setPreviewMode("desktop")}
-              className={`p-1.5 rounded-md transition-all ${previewMode === "desktop" ? "bg-white/[0.1] text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
-              title="Desktop"><Monitor className="w-4 h-4" /></button>
-            <button onClick={() => setPreviewMode("mobile")}
-              className={`p-1.5 rounded-md transition-all ${previewMode === "mobile" ? "bg-white/[0.1] text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
-              title="Mobile"><Smartphone className="w-4 h-4" /></button>
-          </div>
+          <Button
+            onClick={() => window.open(previewSrc, "_blank", "noopener,noreferrer")}
+            size="sm"
+            variant="outline"
+            className="h-7 text-[11px] px-3 border-white/10 text-gray-300 hover:text-white hover:bg-white/[0.06]"
+          >
+            <Eye className="w-3 h-3" />
+            <span className="ml-1">Ver site</span>
+          </Button>
 
           <div className="h-5 w-px bg-white/[0.06]" />
 
@@ -1604,9 +1600,6 @@ export function StoreCustomizer({ isDarkMode, currentUser }: { isDarkMode?: bool
                   : "text-gray-600 hover:text-gray-400 hover:bg-white/[0.03]"
               }`}
             >
-              {activeCategory === cat.key && (
-                <div className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-r-full bg-gradient-to-b from-orange-500 to-amber-500" />
-              )}
               <cat.icon className="w-5 h-5" />
               <span className="text-[10px] font-medium leading-tight text-center w-full px-1">{cat.label}</span>
             </button>
@@ -1620,11 +1613,7 @@ export function StoreCustomizer({ isDarkMode, currentUser }: { isDarkMode?: bool
 
         {/* Preview */}
         <div className="flex-1 flex items-center justify-center overflow-hidden p-6" style={{ background: "radial-gradient(ellipse at 50% 50%, #181818 0%, #0a0a0a 70%)" }}>
-          <div className={`overflow-hidden transition-all duration-500 ease-out ${
-            previewMode === "desktop"
-              ? "w-full h-full rounded-xl shadow-2xl shadow-black/50"
-              : "w-[375px] h-[812px] rounded-[44px] border-[6px] border-neutral-800 shadow-2xl shadow-black/60"
-          }`}>
+          <div className="overflow-hidden transition-all duration-500 ease-out w-[375px] h-[812px] rounded-[44px] border-[6px] border-neutral-800 shadow-2xl shadow-black/60">
             <iframe
               ref={iframeRef}
               src={previewSrc}

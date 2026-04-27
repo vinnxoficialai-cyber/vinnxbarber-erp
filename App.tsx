@@ -38,6 +38,7 @@ import { Credenciais } from './pages/Credenciais';
 import { Metas } from './pages/Metas';
 import { FolhaPagamento } from './pages/FolhaPagamento';
 import { Assinaturas } from './pages/Assinaturas';
+import { Notificacoes } from './pages/Notificacoes';
 import { Expedientes } from './pages/Expedientes';
 import { Relatorios } from './pages/Relatorios';
 import { Unidades } from './pages/Unidades';
@@ -562,6 +563,11 @@ const App: React.FC = () => {
                 <Route path="/assinaturas" element={
                   <ProtectedRoute path="/assinaturas" currentUser={currentUser}>
                     <Assinaturas isDarkMode={isDarkMode} currentUser={currentUser} />
+                  </ProtectedRoute>
+                } />
+                <Route path="/notificacoes" element={
+                  <ProtectedRoute path="/notificacoes" currentUser={currentUser}>
+                    <Notificacoes isDarkMode={isDarkMode} currentUser={currentUser!} />
                   </ProtectedRoute>
                 } />
                 <Route path="/expedientes" element={

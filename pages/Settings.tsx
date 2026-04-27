@@ -15,7 +15,6 @@ import { useAppData } from '../hooks/useAppData';
 import { saveAppSettings, saveRolePermissions } from '../lib/dataService';
 import { usePasswordConfirm } from '../components/PasswordConfirmModal';
 import { useToast } from '../components/Toast';
-import { PushPanel } from '../components/PushPanel';
 import {
   MOCK_COMPANY_SETTINGS, MOCK_HR_SETTINGS, MOCK_FINANCIAL_SETTINGS,
   MOCK_PROJECT_SETTINGS, MOCK_NOTIFICATION_SETTINGS
@@ -26,7 +25,7 @@ type SettingsTab = 'company' | 'hr' | 'financial' | 'projects' | 'notifications'
 interface SettingsProps {
   company: CompanySettings;
   setCompany: (c: CompanySettings) => void;
-  isDarkMode: boolean;
+  isDarkMode?: boolean;
 }
 
 const TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
@@ -52,7 +51,7 @@ const COLOR_PRESETS: { name: string; hex: string; rgb: { DEFAULT: string; '50': 
   { name: 'Teal', hex: '#14b8a6', rgb: { DEFAULT: '20 184 166', '50': '240 253 250', '500': '20 184 166', '600': '13 148 136', '700': '15 118 110' } },
 ];
 
-export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkMode }) => {
+export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkMode: _isDarkMode }) => {
   const { settings, permissions, loading, setAppSettings, setPermissions } = useAppData();
   const [activeTab, setActiveTab] = useState<SettingsTab>('company');
   const toast = useToast();
@@ -98,6 +97,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
     { path: '/budgets', label: 'Orçamentos', section: 'Comercial' },
     { path: '/contracts', label: 'Contratos', section: 'Comercial' },
     { path: '/services', label: 'Serviços', section: 'Comercial' },
+    { path: '/notificacoes', label: 'Notificações', section: 'Comercial' },
     { path: '/projects', label: 'Projetos', section: 'Comercial' },
     { path: '/finance', label: 'Financeiro', section: 'Financeiro' },
     { path: '/contas-bancarias', label: 'Contas Bancárias', section: 'Financeiro' },
@@ -194,12 +194,13 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
     return null;
   }, []);
 
-  // Theme
-  const textMain = isDarkMode ? 'text-slate-50' : 'text-slate-900';
-  const textSub = isDarkMode ? 'text-slate-400' : 'text-slate-600';
-  const bgCard = isDarkMode ? 'bg-dark-surface' : 'bg-white';
-  const borderCol = isDarkMode ? 'border-dark-border' : 'border-slate-200';
-  const bgInput = isDarkMode ? 'bg-dark' : 'bg-slate-50';
+  // Theme — using semantic tokens (auto dark mode via CSS variables)
+  // Derive isDarkMode for legacy child components that still need it
+  const isDarkMode = _isDarkMode ?? document.documentElement.classList.contains('dark');
+  const textMain = 'text-foreground';
+  const textSub = 'text-muted-foreground';
+  const borderCol = 'border-border';
+  const bgInput = 'bg-muted/50';
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -331,10 +332,16 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
   // Tab Content Renderers
   const renderCompanyTab = () => (
     <div className="space-y-6">
+      {/* Section header */}
+      <div className="flex items-center gap-2 mb-1">
+        <Building2 className="w-4 h-4 text-primary" />
+        <h3 className="text-sm font-bold text-foreground">Dados da Empresa</h3>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="md:col-span-2 flex justify-center mb-4">
           <div className="relative group">
-            <div className={`w-32 h-32 rounded-lg border-2 border-dashed ${borderCol} flex items-center justify-center overflow-hidden bg-slate-50 dark:bg-slate-900`}>
+            <div className={`w-32 h-32 rounded-lg border-2 border-dashed ${borderCol} flex items-center justify-center overflow-hidden bg-muted/30`}>
               {company.logo ? (
                 <img src={company.logo} alt="Logo" className="w-full h-full object-contain" />
               ) : (
@@ -556,7 +563,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
         </h3>
         <div className="flex flex-wrap gap-2">
           {hrSettings.departments.map((dept, i) => (
-            <span key={i} className={`px-3 py-1.5 rounded-full text-xs font-medium ${isDarkMode ? 'bg-dark' : 'bg-slate-100'} ${textMain} flex items-center gap-2`}>
+            <span key={i} className={`px-3 py-1.5 rounded-full text-xs font-medium bg-muted/50 ${textMain} flex items-center gap-2`}>
               {dept}
               <button onClick={() => setHrSettings({ ...hrSettings, departments: hrSettings.departments.filter((_, idx) => idx !== i) })}
                 className="text-red-500 hover:text-red-600">
@@ -656,7 +663,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
         <h3 className={`text-sm font-semibold ${textMain} mb-3`}>Formas de Pagamento</h3>
         <div className="flex flex-wrap gap-2">
           {finSettings.paymentMethods.map((method, i) => (
-            <span key={i} className={`px-3 py-1.5 rounded-full text-xs font-medium ${isDarkMode ? 'bg-dark' : 'bg-slate-100'} ${textMain} flex items-center gap-2`}>
+            <span key={i} className={`px-3 py-1.5 rounded-full text-xs font-medium bg-muted/50 ${textMain} flex items-center gap-2`}>
               {method}
               <button onClick={() => setFinSettings({ ...finSettings, paymentMethods: finSettings.paymentMethods.filter((_, idx) => idx !== i) })} className="text-red-500 hover:text-red-600">
                 <X size={12} />
@@ -683,7 +690,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
         </h3>
         <div className="space-y-2">
           {projSettings.projectStatuses.map((status, i) => (
-            <div key={status.id} className={`flex items-center gap-3 p-2 rounded-lg ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+            <div key={status.id} className={`flex items-center gap-3 p-2 rounded-lg bg-muted/30`}>
               <input type="color" value={status.color} onChange={e => {
                 const updated = [...projSettings.projectStatuses];
                 updated[i] = { ...status, color: e.target.value };
@@ -712,7 +719,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
         <h3 className={`text-sm font-semibold ${textMain} mb-3`}>Tipos de Serviço</h3>
         <div className="flex flex-wrap gap-2">
           {projSettings.serviceTypes.map((type, i) => (
-            <span key={i} className={`px-3 py-1.5 rounded-full text-xs font-medium ${isDarkMode ? 'bg-dark' : 'bg-slate-100'} ${textMain} flex items-center gap-2`}>
+            <span key={i} className={`px-3 py-1.5 rounded-full text-xs font-medium bg-muted/50 ${textMain} flex items-center gap-2`}>
               {type}
               <button onClick={() => setProjSettings({ ...projSettings, serviceTypes: projSettings.serviceTypes.filter((_, idx) => idx !== i) })} className="text-red-500 hover:text-red-600">
                 <X size={12} />
@@ -766,7 +773,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
             { key: 'evaluationDue', label: 'Avaliação pendente' },
             { key: 'goalProgress', label: 'Progresso de metas' },
           ].map(item => (
-            <label key={item.key} className={`flex items-center gap-3 p-3 rounded-lg ${isDarkMode ? 'bg-dark' : 'bg-slate-50'} cursor-pointer`}>
+            <label key={item.key} className={`flex items-center gap-3 p-3 rounded-lg bg-muted/30 cursor-pointer`}>
               <input type="checkbox" checked={notifSettings.emailAlerts[item.key as keyof typeof notifSettings.emailAlerts]}
                 onChange={e => setNotifSettings({ ...notifSettings, emailAlerts: { ...notifSettings.emailAlerts, [item.key]: e.target.checked } })}
                 className="w-4 h-4 text-primary rounded" />
@@ -814,8 +821,10 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
         </div>
       </div>
 
-      {/* ═══ Push Notifications Panel ═══ */}
-      <PushPanel isDarkMode={isDarkMode} textMain={textMain} textSub={textSub} bgInput={bgInput} borderCol={borderCol} />
+      {/* ═══ Push Notifications — Migrado para Comercial > Notificações ═══ */}
+      <div className={`p-4 rounded-xl border ${borderCol} ${isDarkMode ? 'bg-dark/50' : 'bg-slate-50'}`}>
+        <p className={`text-sm ${textSub}`}>As notificações push agora são gerenciadas em <strong className={textMain}>Comercial → Notificações</strong>.</p>
+      </div>
     </div>
   );
 
@@ -943,7 +952,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
       {/* Preview */}
       <div className={`border-t ${borderCol} pt-5`}>
         <h3 className={`text-sm font-semibold ${textMain} mb-3`}>Preview</h3>
-        <div className={`p-4 rounded-xl border ${borderCol} ${isDarkMode ? 'bg-dark' : 'bg-slate-50'} space-y-3`}>
+        <div className={`p-4 rounded-xl border ${borderCol} bg-muted/30 space-y-3`}>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
               <Palette size={20} className="text-primary" />
@@ -1024,7 +1033,7 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
         {/* Quick Actions */}
         <div className="flex flex-wrap gap-2">
           <button onClick={resetPermissions}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg border ${borderCol} ${textSub} hover:bg-slate-100 dark:hover:bg-dark transition-colors`}>
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg border ${borderCol} ${textSub} hover:bg-muted transition-colors`}>
             Restaurar Padrões
           </button>
         </div>
@@ -1060,14 +1069,14 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
               <tbody>
                 {sections.map(section => (
                   <React.Fragment key={section}>
-                    <tr className={`${isDarkMode ? 'bg-slate-800/50' : 'bg-slate-50'}`}>
+                    <tr className={`bg-muted/30`}>
                       <td colSpan={ROLES.length + 1} className={`px-4 py-2 text-xs font-bold ${textSub} uppercase tracking-wider`}>
                         {section}
                       </td>
                     </tr>
                     {PAGES_LIST.filter(p => p.section === section).map(page => (
-                      <tr key={page.path} className={`border-b ${borderCol} hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors`}>
-                        <td className={`px-4 py-3 font-medium ${textMain} sticky left-0 ${isDarkMode ? 'bg-dark-surface' : 'bg-white'}`}>
+                      <tr key={page.path} className={`border-b ${borderCol} hover:bg-muted/30 transition-colors`}>
+                        <td className={`px-4 py-3 font-medium ${textMain} sticky left-0 bg-card`}>
                           {page.label}
                         </td>
                         {ROLES.map(role => (
@@ -1099,41 +1108,55 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
   };
 
   return (
-    <div className={`p-6 ${isDarkMode ? 'bg-dark' : 'bg-slate-50'} min-h-screen`}>
-      <div className="flex justify-between items-center mb-6">
-        <h1 className={`text-2xl font-bold ${textMain} flex items-center gap-2`}>
-          <Settings2 className="text-primary" /> Configurações
-        </h1>
-        <button onClick={handleSave} disabled={isSaving || !hasChanges}
-          className={`px-4 py-2 rounded-lg flex items-center gap-2 font-semibold transition-colors ${(isSaving || !hasChanges) ? 'bg-slate-400 text-slate-200 cursor-not-allowed' : 'bg-primary hover:bg-primary-600 text-white'}`}>
-          {isSaving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
-          Salvar Alterações
+    <div className="space-y-6 p-6">
+      {/* ═══ Header ═══ */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <Settings2 className="w-6 h-6 text-primary" /> Configurações
+          </h1>
+          <p className="text-sm text-muted-foreground">Empresa, RH, financeiro, notificações e personalização</p>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={isSaving || !hasChanges}
+          className={`px-5 py-2.5 rounded-full flex items-center gap-2 text-sm font-semibold transition-colors ${
+            isSaving || !hasChanges
+              ? 'bg-muted text-muted-foreground cursor-not-allowed'
+              : 'bg-primary text-primary-foreground hover:opacity-90'
+          }`}
+        >
+          {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          {isSaving ? 'Salvando...' : 'Salvar'}
         </button>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-6">
-        {/* Sidebar */}
-        <div className={`w-full md:w-64 flex-shrink-0 space-y-1`}>
-          {TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === tab.id
-                ? 'bg-primary text-white'
-                : `${textSub} hover:bg-slate-100 dark:hover:bg-slate-800`
+      {/* ═══ Tabbed Layout ═══ */}
+      <div className="flex flex-col sm:flex-row gap-0 sm:gap-6 min-h-[500px]">
+        {/* Sidebar tabs */}
+        <nav className="flex sm:flex-col gap-1 sm:w-52 shrink-0 overflow-x-auto sm:overflow-visible pb-2 sm:pb-0 border-b sm:border-b-0 sm:border-r border-border sm:pr-4 scrollbar-hide">
+          {TABS.map(tab => {
+            const TabIcon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left whitespace-nowrap ${
+                  isActive
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                 }`}
-            >
-              <div className="flex items-center gap-3">
-                <tab.icon size={18} />
+              >
+                <TabIcon className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : ''}`} />
                 {tab.label}
-              </div>
-              {activeTab === tab.id && <ChevronRight size={16} />}
-            </button>
-          ))}
-        </div>
+              </button>
+            );
+          })}
+        </nav>
 
-        {/* Content */}
-        <div className={`flex-1 ${bgCard} rounded-xl border ${borderCol} p-6`}>
+        {/* Tab content */}
+        <div className="flex-1 pt-4 sm:pt-0 space-y-5 min-w-0">
           {activeTab === 'company' && renderCompanyTab()}
           {activeTab === 'hr' && renderHRTab()}
           {activeTab === 'financial' && renderFinancialTab()}
@@ -1143,6 +1166,6 @@ export const Settings: React.FC<SettingsProps> = ({ company, setCompany, isDarkM
           {activeTab === 'customize' && renderCustomizeTab()}
         </div>
       </div>
-    </div >
+    </div>
   );
 };

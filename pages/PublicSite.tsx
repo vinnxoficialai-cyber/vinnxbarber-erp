@@ -449,48 +449,50 @@ function PublicSiteApp() {
     return arr;
   }, []);
 
-  // Sync subscription on app-load — save to DB via API (bypasses RLS)
-  // IMPORTANT: We immediately set pushSubscribed=true when a local subscription
-  // exists to prevent the banner from flashing before the async API call completes.
+  // Effect 1: Check local subscription state (NO DB call — just UI state)
+  // Runs once on mount to prevent the push banner from flashing.
   useEffect(() => {
     if (!pushSupported) return;
-    const currentPermission = Notification.permission;
-    setPushPermission(currentPermission);
-    
+    setPushPermission(Notification.permission);
     navigator.serviceWorker.ready.then(async (reg) => {
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
-        // Immediately mark as subscribed to prevent banner from showing
         setPushSubscribed(true);
-
-        // Then sync to DB in the background (service_role, bypasses RLS)
-        const j = sub.toJSON();
-        try {
-          const res = await fetch('/api/push-subscribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              clientId: clientProfile?.id || 'anonymous',
-              authUserId: authUser?.id || 'anonymous',
-              endpoint: j.endpoint,
-              keys: j.keys,
-              userAgent: navigator.userAgent,
-            }),
-          });
-          if (!res.ok) {
-            console.warn('[Push] Sync failed:', await res.text());
-          }
-        } catch (err) {
-          console.warn('[Push] Sync error:', err);
-        }
-      } else if (currentPermission === 'granted') {
-        // Permission granted but no subscription object — user may have cleared
-        // site data or the subscription expired. Don't show banner; they already
-        // consented. Silently re-subscribe in the background.
+      } else if (Notification.permission === 'granted') {
         setPushSubscribed(true);
       }
     }).catch(() => {});
-  }, [pushSupported, authUser, clientProfile]);
+  }, [pushSupported]);
+
+  // Effect 2: Sync subscription to DB ONLY when clientProfile is available
+  // This prevents saving 'anonymous' as clientId (the old race condition).
+  useEffect(() => {
+    if (!pushSupported) return;
+    if (!clientProfile?.id) return; // GUARD: wait for real profile to load
+
+    navigator.serviceWorker.ready.then(async (reg) => {
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) return;
+      const j = sub.toJSON();
+      try {
+        await fetch('/api/push-subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId: clientProfile.id,
+            authUserId: authUser?.id || 'anonymous',
+            endpoint: j.endpoint,
+            keys: j.keys,
+            userAgent: navigator.userAgent,
+          }),
+        });
+      } catch (err) {
+        console.warn('[Push] Sync error:', err);
+      }
+    }).catch(() => {});
+  }, [pushSupported, clientProfile?.id, authUser?.id]);
+
+
 
   const dismissPushBanner = useCallback(() => {
     setPushBannerExiting(true);
@@ -499,6 +501,10 @@ function PublicSiteApp() {
 
   const subscribeToPush = useCallback(async () => {
     if (!pushSupported) return;
+    if (!clientProfile?.id) {
+      showToast('Faça login para ativar notificações', 'error');
+      return;
+    }
     try {
       // VAPID public key (public, not a secret — generated for this project)
       const vapidKey = 'BKX_TR3Ik7Vor8CEU8mtbdNMcT5Mk0TXaEyjW0cPCu2PNnFMWR-sZgEcuOOi3GXPM1y4MQxp8e-xP1hzLfKS_ew';
@@ -522,7 +528,7 @@ function PublicSiteApp() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          clientId: clientProfile?.id || 'anonymous',
+          clientId: clientProfile.id,
           authUserId: authUser?.id || 'anonymous',
           endpoint: j.endpoint,
           keys: j.keys,
@@ -557,7 +563,12 @@ function PublicSiteApp() {
       if (sub) {
         const endpoint = sub.endpoint;
         await sub.unsubscribe();
-        await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
+        // Use API with service_role to bypass RLS
+        await fetch('/api/push-subscribe', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint }),
+        });
       }
       setPushSubscribed(false);
       showToast('Notificações desativadas');
@@ -566,17 +577,27 @@ function PublicSiteApp() {
     }
   }, [showToast]);
 
-  // Show push banner only for users who haven't subscribed and haven't granted permission
+  // Effect: Auto re-subscribe when Service Worker reports subscription expired
+  useEffect(() => {
+    if (!pushSupported) return;
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'push-subscription-expired' && clientProfile?.id) {
+        subscribeToPush();
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handleMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', handleMessage);
+  }, [pushSupported, clientProfile?.id, subscribeToPush]);
+
+  // Show push banner only for LOGGED-IN users who haven't subscribed
   useEffect(() => {
     if (!pushSupported || pushSubscribed) return;
     if (Notification.permission === 'denied') return;
-    // If permission is already 'granted', the sync effect above handles it —
-    // don't show the banner since the user already consented.
     if (Notification.permission === 'granted') return;
-    // Only show banner for users with 'default' permission (never asked)
+    if (!authUser) return; // Only show for logged-in users
     const timer = setTimeout(() => setShowPushBanner(true), 1500);
     return () => clearTimeout(timer);
-  }, [pushSupported, pushSubscribed]);
+  }, [pushSupported, pushSubscribed, authUser]);
 
 
 
@@ -791,27 +812,7 @@ function PublicSiteApp() {
         setAuthUser(u);
         saveAuthBackup(u, session.access_token, session.refresh_token);
         loadClientProfile(u.id);
-        // Link anonymous push subscription to real client
-        navigator.serviceWorker?.ready?.then(async (reg) => {
-          const sub = await reg.pushManager.getSubscription();
-          if (sub) {
-            const j = sub.toJSON();
-            const { data: cl } = await supabase.from('clients').select('id').eq('authUserId', session.user.id).single();
-            if (cl?.id) {
-              fetch('/api/push-subscribe', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  clientId: cl.id,
-                  authUserId: session.user.id,
-                  endpoint: j.endpoint,
-                  keys: j.keys,
-                  userAgent: navigator.userAgent,
-                }),
-              }).catch(() => {});
-            }
-          }
-        }).catch(() => {});
+        // Push subscription sync is handled by Effect 2 (reacts to clientProfile.id)
         return;
       }
       if (event === "SIGNED_OUT") {
@@ -1496,6 +1497,8 @@ function PublicSiteApp() {
             onProfileUpdate={(p: any) => setClientProfile(p)}
             setActiveView={setActiveView} updateSelection={updateSelection}
             resetSelection={resetSelection}
+            pushSubscribed={pushSubscribed} pushSupported={pushSupported}
+            onPushSubscribe={subscribeToPush} onPushUnsubscribe={unsubscribeFromPush}
           />}
           {/* Footer — only on Perfil */}
           {activeView === "perfil" && (() => {
@@ -3312,7 +3315,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
 // ============================================================
 // PERFIL VIEW (complete)
 // ============================================================
-function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goals, services, onLogin, openModal, closeModal, onLogout, onProfileUpdate, setActiveView, updateSelection, resetSelection }: any) {
+function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goals, services, onLogin, openModal, closeModal, onLogout, onProfileUpdate, setActiveView, updateSelection, resetSelection, pushSubscribed, pushSupported, onPushSubscribe, onPushUnsubscribe }: any) {
   const [creditsExpanded, setCreditsExpanded] = useState(false);
 
   if (!authUser) {
@@ -3405,7 +3408,7 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
   }
 
   function showNotificacoesModal() {
-    openModal(<NotificacoesModal primary={primary} bgColor={bgColor} clientProfile={clientProfile} onClose={() => closeModal()} onSave={(p: any) => onProfileUpdate(p)} />, "center");
+    openModal(<NotificacoesModal primary={primary} bgColor={bgColor} clientProfile={clientProfile} onClose={() => closeModal()} onSave={(p: any) => onProfileUpdate(p)} pushSubscribed={pushSubscribed} pushSupported={pushSupported} onPushSubscribe={onPushSubscribe} onPushUnsubscribe={onPushUnsubscribe} />, "center");
   }
 
   function showAlterarSenhaModal() {
@@ -3729,10 +3732,11 @@ function IndiqueAmigoModal({ primary, bgColor, code, waUrl, onClose, g }: any) {
 }
 
 // --- Notificações Modal ---
-function NotificacoesModal({ primary, bgColor, clientProfile, onClose, onSave }: any) {
+function NotificacoesModal({ primary, bgColor, clientProfile, onClose, onSave, pushSubscribed, pushSupported, onPushSubscribe, onPushUnsubscribe }: any) {
   const prefs = clientProfile?.notificationPreferences || {};
   const [emailNotif, setEmailNotif] = useState(prefs.email !== false);
   const [whatsappNotif, setWhatsappNotif] = useState(prefs.whatsapp !== false);
+  const [pushToggling, setPushToggling] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function handleSave() {
@@ -3746,11 +3750,43 @@ function NotificacoesModal({ primary, bgColor, clientProfile, onClose, onSave }:
     onClose();
   }
 
+  const handlePushToggle = async () => {
+    setPushToggling(true);
+    try {
+      if (pushSubscribed) {
+        await onPushUnsubscribe();
+      } else {
+        await onPushSubscribe();
+      }
+    } catch (e) {
+      console.error('[Push] Toggle error:', e);
+    }
+    setPushToggling(false);
+  };
+
+  const pushDenied = typeof Notification !== 'undefined' && Notification.permission === 'denied';
+
   return (
     <div className="p-6" style={{ borderRadius: "1rem" }}>
       <h3 className="text-2xl font-bold text-center mb-2" style={{ color: primary }}>Notificações</h3>
       <p className="text-center text-gray-400 text-sm mb-8">Defina suas preferências de notificação.</p>
       <div className="space-y-4">
+        {/* Push Notifications toggle */}
+        {pushSupported && (
+          <div onClick={!pushDenied && !pushToggling ? handlePushToggle : undefined} className={`flex justify-between items-center p-4 rounded-lg ${pushDenied ? 'opacity-50' : 'cursor-pointer'}`} style={{ backgroundColor: "#2a2a2a" }}>
+            <div>
+              <span className="text-white font-medium">Notificações Push</span>
+              {pushDenied && <p className="text-xs text-red-400 mt-1">Bloqueado pelo navegador. Ative nas configurações.</p>}
+            </div>
+            {pushToggling ? (
+              <Loader2 className="w-5 h-5 booking-spin" style={{ color: primary }} />
+            ) : (
+              <div className="relative w-11 h-6 rounded-full transition-colors" style={{ backgroundColor: pushSubscribed ? primary : "#6b7280" }}>
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${pushSubscribed ? "left-6" : "left-1"}`} />
+              </div>
+            )}
+          </div>
+        )}
         {[
           { label: "Notificações por e-mail", value: emailNotif, toggle: () => setEmailNotif(!emailNotif) },
           { label: "Notificações por WhatsApp", value: whatsappNotif, toggle: () => setWhatsappNotif(!whatsappNotif) },

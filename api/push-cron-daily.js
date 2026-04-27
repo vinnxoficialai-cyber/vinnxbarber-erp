@@ -1,0 +1,29 @@
+// Vercel Cron Wrapper — Push Daily (incomplete profiles, birthdays, inactive clients)
+// Auth: Vercel CRON_SECRET (auto-injected via Authorization header)
+// Delegates to /api/push-cron?type=daily
+// Schedule: 0 12 * * * (12h UTC = 9h BRT)
+
+const API_BASE = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : 'https://vinnxbarber-erp.vercel.app';
+
+export default async function handler(req, res) {
+  // Verify Vercel Cron auth
+  const authHeader = req.headers['authorization'];
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const result = await fetch(`${API_BASE}/api/push-cron?type=daily`, {
+      method: 'GET',
+      headers: { 'x-push-secret': process.env.PUSH_API_SECRET },
+    });
+
+    const data = await result.json();
+    return res.status(result.status).json(data);
+  } catch (error) {
+    console.error('[push-cron-daily] Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+}

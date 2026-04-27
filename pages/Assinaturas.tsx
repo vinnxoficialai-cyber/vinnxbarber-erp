@@ -24,15 +24,15 @@ import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
 import { useFilteredData } from '../hooks/useFilteredData';
 
-interface AssinaturasProps { isDarkMode: boolean; currentUser: TeamMember; }
+interface AssinaturasProps { isDarkMode?: boolean; currentUser: TeamMember; }
 type PageTab = 'plans' | 'subscribers' | 'dashboard' | 'history' | 'integration';
 
-const STATUS_CONFIG: Record<string, { label: string; color: string; darkColor: string; icon: React.ElementType }> = {
-    active: { label: 'Ativo', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20', darkColor: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20', icon: CheckCircle },
-    pending_payment: { label: 'Aguardando Pgto', color: 'bg-blue-500/10 text-blue-600 border-blue-500/20', darkColor: 'bg-blue-500/10 text-blue-400 border-blue-500/20', icon: Clock },
-    paused: { label: 'Pausado', color: 'bg-amber-500/10 text-amber-600 border-amber-500/20', darkColor: 'bg-amber-500/10 text-amber-400 border-amber-500/20', icon: Pause },
-    cancelled: { label: 'Cancelado', color: 'bg-red-500/10 text-red-600 border-red-500/20', darkColor: 'bg-red-500/10 text-red-400 border-red-500/20', icon: XCircle },
-    overdue: { label: 'Inadimplente', color: 'bg-red-500/10 text-red-600 border-red-500/20', darkColor: 'bg-red-500/10 text-red-400 border-red-500/20', icon: AlertCircle },
+const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ElementType }> = {
+    active: { label: 'Ativo', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20', icon: CheckCircle },
+    pending_payment: { label: 'Aguardando Pgto', color: 'bg-blue-500/10 text-blue-500 border-blue-500/20', icon: Clock },
+    paused: { label: 'Pausado', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20', icon: Pause },
+    cancelled: { label: 'Cancelado', color: 'bg-red-500/10 text-red-500 border-red-500/20', icon: XCircle },
+    overdue: { label: 'Inadimplente', color: 'bg-red-500/10 text-red-500 border-red-500/20', icon: AlertCircle },
 };
 const RECURRENCE_LABELS: Record<string, string> = { monthly: 'Mensal', quarterly: 'Trimestral', semiannual: 'Semestral', annual: 'Anual' };
 const COMMISSION_TYPES: { value: string; label: string }[] = [
@@ -55,21 +55,23 @@ const defaultPlanForm = (): SubscriptionPlan => ({
     unitScope: 'all', allowedUnitIds: [],
 });
 
-export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUser }) => {
+export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMode, currentUser }) => {
     const { permissions: contextPermissions } = useAppData();
     const { filteredServices: services, filteredClients: clients, filteredMembers: members, filteredProducts: products, filteredTransactions: transactions, filteredComandas: comandas, selectedUnitId } = useFilteredData();
     const isUnitFiltering = selectedUnitId !== 'all';
     const { canCreate } = usePermissions(currentUser, contextPermissions);
     const confirm = useConfirm();
     const toast = useToast();
-    const textMain = isDarkMode ? 'text-slate-50' : 'text-slate-900';
-    const textSub = isDarkMode ? 'text-slate-400' : 'text-slate-600';
-    const bgCard = isDarkMode ? 'bg-dark-surface' : 'bg-white';
-    const borderCol = isDarkMode ? 'border-dark-border' : 'border-slate-300';
-    const bgInput = isDarkMode ? 'bg-dark' : 'bg-white';
-    const shadowClass = isDarkMode ? '' : 'shadow-sm';
-    const inputCls = `w-full ${bgInput} border ${borderCol} rounded-lg p-2.5 text-sm ${textMain} focus:ring-1 focus:ring-primary outline-none`;
-    const labelCls = `block text-xs font-medium ${textSub} mb-1 flex items-center gap-1`;
+    // Semantic tokens — auto dark mode via CSS variables
+    const isDarkMode = _isDarkMode ?? document.documentElement.classList.contains('dark');
+    const textMain = 'text-foreground';
+    const textSub = 'text-muted-foreground';
+    const bgCard = 'bg-card';
+    const borderCol = 'border-border';
+    const bgInput = 'bg-muted/50';
+    const shadowClass = 'shadow-sm dark:shadow-none';
+    const inputCls = `w-full bg-transparent border border-input rounded-lg p-2.5 text-sm text-foreground focus:ring-1 focus:ring-primary outline-none`;
+    const labelCls = `block text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1`;
 
     const [activeTab, setActiveTab] = useState<PageTab>('plans');
     const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
@@ -635,7 +637,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             {isPlanModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                     <div className={`${bgCard} border ${borderCol} rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col h-[85vh]`}>
-                        <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                        <div className={`p-4 border-b ${borderCol} flex justify-between items-center bg-muted/50`}>
                             <h3 className={`font-semibold text-lg ${textMain}`}>{editingPlanId ? 'Editar Plano' : 'Novo Plano'}</h3>
                             <button onClick={() => setIsPlanModalOpen(false)} className={textSub}><X size={20} /></button>
                         </div>
@@ -752,10 +754,10 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                 {planForm.planServices.length > 0 && (
                                     <div className={`rounded-lg border ${borderCol} overflow-hidden`}>
                                         <table className="w-full text-xs">
-                                            <thead className={`${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`}>
+                                            <thead className={`bg-muted/30`}>
                                                 <tr><th className="px-3 py-2 text-left">Serviço</th><th className="px-3 py-2">Desconto</th><th className="px-3 py-2">Limite</th><th className="px-3 py-2">Comissão</th><th className="px-3 py-2"></th></tr>
                                             </thead>
-                                            <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-200'}`}>
+                                            <tbody className={`divide-y divide-border`}>
                                                 {planForm.planServices.map(ps => {
                                                     const svc = services.find(s => s.id === ps.serviceId); return (
                                                         <tr key={ps.serviceId}>
@@ -801,10 +803,10 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                 {planForm.planProducts.length > 0 && (
                                     <div className={`rounded-lg border ${borderCol} overflow-hidden`}>
                                         <table className="w-full text-xs">
-                                            <thead className={`${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`}>
+                                            <thead className={`bg-muted/30`}>
                                                 <tr><th className="px-3 py-2 text-left">Produto</th><th className="px-3 py-2">Desconto</th><th className="px-3 py-2">Qtd/mês</th><th className="px-3 py-2">Comissão</th><th className="px-3 py-2"></th></tr>
                                             </thead>
-                                            <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-200'}`}>
+                                            <tbody className={`divide-y divide-border`}>
                                                 {planForm.planProducts.map(pp => {
                                                     const prod = products.find(p => p.id === pp.productId); return (
                                                         <tr key={pp.productId}>
@@ -830,7 +832,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                             <button key={d.key} type="button" onClick={() => toggleDay(d.key)}
                                                 className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition-all border ${planForm.disabledDays.includes(d.key)
                                                     ? 'bg-red-500/10 text-red-500 border-red-500/30 ring-1 ring-red-500/20'
-                                                    : `${isDarkMode ? 'border-dark-border text-slate-400' : 'border-slate-300 text-slate-500'} hover:border-primary`}`}>{d.label}</button>
+                                                    : `border-border text-muted-foreground hover:border-primary`}`}>{d.label}</button>
                                         ))}
                                     </div>
                                 </div>
@@ -864,7 +866,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             {isSubModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                     <div className={`${bgCard} border ${borderCol} rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col h-[85vh]`}>
-                        <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                        <div className={`p-4 border-b ${borderCol} flex justify-between items-center bg-muted/50`}>
                             <h3 className={`font-semibold text-lg ${textMain}`}>{editingSubId ? 'Editar Assinatura' : 'Nova Assinatura'}</h3>
                             <button onClick={() => setIsSubModalOpen(false)} className={textSub}><X size={20} /></button>
                         </div>
@@ -875,7 +877,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                     className={`px-4 py-2.5 text-xs font-semibold whitespace-nowrap transition-all border-b-2 ${subModalSection === i ? 'border-primary text-primary' : `border-transparent ${textSub} hover:text-primary/70`}`}>{s}</button>
                             ))}
                         </div>
-                        <div className="p-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+                        <form autoComplete="off" className="p-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
                             {/* Section 0: Dados */}
                             {subModalSection === 0 && (<>
                                 <div><label className={labelCls}><Users size={12} /> Cliente</label>
@@ -901,7 +903,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                             setSubForm(p => ({ ...p, cpfCnpj: v }));
                                                         }}
                                                         maxLength={18} />
-                                                    <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-amber-400' : 'text-amber-600'}`}>
+                                                    <p className={`text-[10px] mt-1 text-amber-500`}>
                                                         <AlertCircle size={10} className="inline mr-1" />Obrigatório para cobrança automática via ASAAS. Será salvo no cadastro do cliente.
                                                     </p>
                                                 </>
@@ -915,7 +917,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                     const selPlan = plans.find(p => p.id === subForm.planId);
                                     if (!selPlan) return null;
                                     return (
-                                        <div className={`p-3 rounded-lg border ${isDarkMode ? 'border-primary/20 bg-primary/5' : 'border-primary/10 bg-primary/5'}`}>
+                                        <div className={`p-3 rounded-lg border border-primary/20 bg-primary/5`}>
                                             <p className="text-xs text-primary font-bold mb-1">Resumo do Plano</p>
                                             <div className="grid grid-cols-3 gap-2 text-[11px]">
                                                 <div><span className={textSub}>Valor:</span> <span className={`font-bold ${textMain}`}>{formatCurrency(selPlan.price)}</span></div>
@@ -974,7 +976,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                     onChange={e => setSubForm(p => ({ ...p, cardCvv: e.target.value.replace(/\D/g, '').slice(0, 4) }))} />
                                             </div>
                                         </div>
-                                        <div className={`mt-2 p-3 rounded-lg border ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-200 bg-slate-50'}`}>
+                                        <div className={`mt-2 p-3 rounded-lg border border-border bg-muted/30`}>
                                             <p className={`text-[10px] font-bold ${textMain} mb-2`}>Dados do Titular</p>
                                             <div className="grid grid-cols-2 gap-3">
                                                 <div>
@@ -1015,7 +1017,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                 </div>
                                             </div>
                                         </div>
-                                        <p className={`text-[10px] ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} flex items-center gap-1`}>
+                                        <p className={`text-[10px] text-emerald-500 flex items-center gap-1`}>
                                             <Shield size={10} /> Dados transmitidos com segurança via HTTPS para o ASAAS.
                                         </p>
                                     </div>
@@ -1029,7 +1031,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                     </label>
                                 </div>
                                 {subForm.paymentMethod && (
-                                    <div className={`p-3 rounded-lg ${isDarkMode ? 'bg-emerald-500/5 border border-emerald-500/10' : 'bg-emerald-50 border border-emerald-200'}`}>
+                                    <div className={`p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10`}>
                                         <p className="text-[11px] text-emerald-500 font-medium"><CheckCircle size={10} className="inline mr-1" />
                                             {subForm.paymentMethod === 'credit' ? 'Cartão será cobrado automaticamente no dia do pagamento' : subForm.paymentMethod === 'boleto' ? 'Boleto será gerado automaticamente e enviado por email' : 'Chave Pix será enviada no dia do pagamento'}
                                         </p>
@@ -1063,7 +1065,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                 <div><label className={labelCls}><Info size={12} /> Observações Internas</label>
                                     <textarea value={subForm.notes} onChange={e => setSubForm(p => ({ ...p, notes: e.target.value }))} className={`${inputCls} resize-none`} rows={2} placeholder="Anotações visíveis apenas para a equipe..." /></div>
                             </>)}
-                        </div>
+                        </form>
                         {/* Footer pinned to bottom */}
                         <div className={`p-5 border-t ${borderCol} mt-auto flex gap-3 shrink-0`}>
                             {subModalSection > 0 && <button type="button" onClick={() => setSubModalSection(s => s - 1)} className={`px-6 py-3 rounded-lg border ${borderCol} font-semibold text-sm ${textMain}`}>Anterior</button>}
@@ -1084,7 +1086,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                 return (
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                         <div className={`${bgCard} border ${borderCol} rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]`}>
-                            <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`p-4 border-b ${borderCol} flex justify-between items-center bg-muted/50`}>
                                 <div>
                                     <h3 className={`font-semibold text-lg ${textMain} flex items-center gap-2`}><Crown size={18} className="text-primary" /> Assinantes — {modalPlan?.name || '—'}</h3>
                                     <p className={`text-xs ${textSub}`}>{planSubs.length} assinante{planSubs.length !== 1 ? 's' : ''} encontrado{planSubs.length !== 1 ? 's' : ''}</p>
@@ -1094,7 +1096,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             <div className={`px-4 py-3 border-b ${borderCol}`}>
                                 <div className="relative"><Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${textSub}`} size={16} />
                                     <input type="text" value={planSubsSearch} onChange={e => setPlanSubsSearch(e.target.value)} placeholder="Buscar por nome..."
-                                        className={`pl-9 pr-4 py-2 text-sm w-full border rounded-lg ${isDarkMode ? 'bg-dark border-dark-border text-slate-200 placeholder:text-slate-600' : 'bg-white border-slate-300 text-slate-700 placeholder:text-slate-400'} focus:ring-1 focus:ring-primary outline-none`} />
+                                        className={`pl-9 pr-4 py-2 text-sm w-full border rounded-lg bg-transparent border-input text-foreground placeholder:text-muted-foreground focus:ring-1 focus:ring-primary outline-none`} />
                                 </div>
                             </div>
                             <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -1104,20 +1106,20 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                     </div>
                                 ) : (
                                     <table className="w-full text-left text-sm">
-                                        <thead className={`${isDarkMode ? 'bg-slate-950 text-slate-200' : 'bg-slate-50 text-slate-700'} uppercase font-medium sticky top-0`}>
+                                        <thead className={`bg-muted/30 text-foreground uppercase font-medium sticky top-0`}>
                                             <tr><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Pagamento</th><th className="px-5 py-3">Consumo</th><th className="px-5 py-3">Início</th><th className="px-5 py-3 text-right">Ações</th></tr>
                                         </thead>
-                                        <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-200'}`}>
+                                        <tbody className={`divide-y divide-border`}>
                                             {planSubs.map(sub => {
                                                 const cfg = STATUS_CONFIG[sub.status] || STATUS_CONFIG.active; const SI = cfg.icon;
                                                 const max = sub.plan?.maxUsesPerMonth; const pct = max ? Math.min((sub.usesThisMonth / max) * 100, 100) : 0;
                                                 const methodLabels: Record<string, string> = { credit: 'Cartão', boleto: 'Boleto', pix: 'Pix' };
                                                 return (
-                                                    <tr key={sub.id} className={isDarkMode ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
+                                                    <tr key={sub.id} className="hover:bg-muted/30">
                                                         <td className={`px-5 py-3 font-medium ${textMain}`}>{sub.clientName || '—'}</td>
-                                                        <td className="px-5 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border inline-flex items-center gap-1 ${isDarkMode ? cfg.darkColor : cfg.color}`}><SI size={10} />{cfg.label}</span></td>
+                                                        <td className="px-5 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border inline-flex items-center gap-1 ${cfg.color}`}><SI size={10} />{cfg.label}</span></td>
                                                         <td className={`px-5 py-3 text-xs ${textSub}`}>{sub.paymentMethod ? methodLabels[sub.paymentMethod] || sub.paymentMethod : '—'}</td>
-                                                        <td className="px-5 py-3">{max ? (<div className="flex items-center gap-2"><div className={`w-16 h-1.5 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}><div className={`h-full rounded-full ${pct >= 100 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} /></div><span className={`text-xs ${textSub}`}>{sub.usesThisMonth}/{max}</span></div>) : <Infinity size={12} className={textSub} />}</td>
+                                                        <td className="px-5 py-3">{max ? (<div className="flex items-center gap-2"><div className={`w-16 h-1.5 rounded-full bg-muted`}><div className={`h-full rounded-full ${pct >= 100 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} /></div><span className={`text-xs ${textSub}`}>{sub.usesThisMonth}/{max}</span></div>) : <Infinity size={12} className={textSub} />}</td>
                                                         <td className={`px-5 py-3 text-xs ${textSub}`}>{sub.startDate ? new Date(sub.startDate).toLocaleDateString('pt-BR') : '—'}</td>
                                                         <td className="px-5 py-3 text-right"><div className="flex justify-end gap-2">
                                                             <button onClick={() => { setPlanSubsModalPlanId(null); openSubModal(sub); }} className="text-primary hover:underline text-xs font-medium">Editar</button>
@@ -1153,14 +1155,14 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             {/* ═══ KPIs ═══ */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 {[
-                    { label: 'MRR', value: formatCurrency(kpis.mrr), icon: DollarSign, color: 'text-emerald-500', bg: isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50' },
-                    { label: 'Ativos', value: kpis.active.toString(), icon: Users, color: 'text-primary', bg: isDarkMode ? 'bg-primary/10' : 'bg-primary/5' },
-                    { label: 'Churn', value: `${kpis.churn.toFixed(1)}%`, icon: TrendingDown, color: 'text-red-500', bg: isDarkMode ? 'bg-red-500/10' : 'bg-red-50' },
-                    { label: 'LTV Médio', value: formatCurrency(kpis.ltv), icon: TrendingUp, color: 'text-violet-500', bg: isDarkMode ? 'bg-violet-500/10' : 'bg-violet-50' },
-                    { label: 'Ticket Médio', value: formatCurrency(kpis.avg), icon: Star, color: 'text-amber-500', bg: isDarkMode ? 'bg-amber-500/10' : 'bg-amber-50' },
-                    { label: 'Retenção', value: `${kpis.retentionRate.toFixed(1)}%`, icon: CheckCircle, color: 'text-cyan-500', bg: isDarkMode ? 'bg-cyan-500/10' : 'bg-cyan-50' },
-                    { label: 'Inadimplentes', value: kpis.overdue.toString(), icon: AlertCircle, color: 'text-orange-500', bg: isDarkMode ? 'bg-orange-500/10' : 'bg-orange-50' },
-                    { label: 'Receita Anual', value: formatCurrency(kpis.totalRevenue), icon: BarChart3, color: 'text-indigo-500', bg: isDarkMode ? 'bg-indigo-500/10' : 'bg-indigo-50' },
+                    { label: 'MRR', value: formatCurrency(kpis.mrr), icon: DollarSign, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+                    { label: 'Ativos', value: kpis.active.toString(), icon: Users, color: 'text-primary', bg: 'bg-primary/10' },
+                    { label: 'Churn', value: `${kpis.churn.toFixed(1)}%`, icon: TrendingDown, color: 'text-red-500', bg: 'bg-red-500/10' },
+                    { label: 'LTV Médio', value: formatCurrency(kpis.ltv), icon: TrendingUp, color: 'text-violet-500', bg: 'bg-violet-500/10' },
+                    { label: 'Ticket Médio', value: formatCurrency(kpis.avg), icon: Star, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+                    { label: 'Retenção', value: `${kpis.retentionRate.toFixed(1)}%`, icon: CheckCircle, color: 'text-cyan-500', bg: 'bg-cyan-500/10' },
+                    { label: 'Inadimplentes', value: kpis.overdue.toString(), icon: AlertCircle, color: 'text-orange-500', bg: 'bg-orange-500/10' },
+                    { label: 'Receita Anual', value: formatCurrency(kpis.totalRevenue), icon: BarChart3, color: 'text-indigo-500', bg: 'bg-indigo-500/10' },
                 ].map((k, i) => (
                     <div key={i} className={`${bgCard} border ${borderCol} rounded-xl p-4 ${shadowClass} flex items-center gap-3`}>
                         <div className={`p-2 rounded-lg ${k.bg}`}><k.icon size={20} className={k.color} /></div>
@@ -1173,7 +1175,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
             <div className="flex gap-1 mb-6 overflow-x-auto">
                 {TABS.map(tab => (
                     <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-                        className={`flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${activeTab === tab.key ? 'bg-primary text-white shadow-md shadow-primary/20' : `${isDarkMode ? 'text-slate-400 hover:bg-dark-surface' : 'text-slate-600 hover:bg-slate-100'}`}`}>
+                        className={`flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${activeTab === tab.key ? 'bg-primary text-white shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-muted'}`}>
                         <tab.icon size={16} /> {tab.label}
                     </button>
                 ))}
@@ -1193,13 +1195,13 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                 <div className="p-5 flex-1">
                                     <div className="flex items-start justify-between mb-3">
                                         <div className="flex items-center gap-2">
-                                            <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-primary/10' : 'bg-primary/5'}`}><Crown size={18} className="text-primary" /></div>
+                                            <div className={`p-2 rounded-lg bg-primary/10`}><Crown size={18} className="text-primary" /></div>
                                             <div><h3 className={`font-bold ${textMain}`}>{plan.name}</h3>
                                                 {plan.description && <p className={`text-xs ${textSub} mt-0.5`}>{plan.description}</p>}</div>
                                         </div>
                                         <div className="flex flex-col items-end gap-1">
                                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${plan.active ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-slate-500/10 text-slate-500 border-slate-500/20'}`}>{plan.active ? 'Ativo' : 'Inativo'}</span>
-                                            {!plan.availableForSale && <span className={`px-2 py-0.5 rounded-full text-[10px] border ${isDarkMode ? 'border-dark-border text-slate-500' : 'border-slate-200 text-slate-400'}`}><EyeOff size={8} className="inline mr-0.5" />Oculto</span>}
+                                            {!plan.availableForSale && <span className={`px-2 py-0.5 rounded-full text-[10px] border border-border text-muted-foreground`}><EyeOff size={8} className="inline mr-0.5" />Oculto</span>}
                                         </div>
                                     </div>
                                     <div className="text-2xl font-bold text-primary mb-1">{formatCurrency(plan.price)}<span className={`text-xs font-normal ${textSub} ml-1`}>/{RECURRENCE_LABELS[plan.recurrence] || 'mês'}</span></div>
@@ -1216,10 +1218,10 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                 <div className={`px-5 py-3 border-t ${borderCol} space-y-2`}>
                                     <div className="flex gap-2">
                                         <button onClick={() => openSubModalForPlan(plan.id)} className="flex-1 py-2 text-xs font-bold uppercase rounded-lg bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 flex items-center justify-center gap-1"><UserPlus size={12} /> Cadastrar</button>
-                                        <button onClick={() => { setPlanSubsModalPlanId(plan.id); setPlanSubsSearch(''); }} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg border ${isDarkMode ? 'border-dark-border text-slate-300 hover:bg-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'} flex items-center justify-center gap-1`}><Users size={12} /> Assinantes ({subsCount})</button>
+                                        <button onClick={() => { setPlanSubsModalPlanId(plan.id); setPlanSubsSearch(''); }} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg border border-border text-foreground hover:bg-muted flex items-center justify-center gap-1`}><Users size={12} /> Assinantes ({subsCount})</button>
                                     </div>
                                     <div className="flex gap-2">
-                                        <button onClick={() => openPlanModal(plan)} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg border ${isDarkMode ? 'border-dark-border text-slate-300 hover:bg-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'} flex items-center justify-center gap-1`}><Pencil size={12} /> Editar</button>
+                                        <button onClick={() => openPlanModal(plan)} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg border border-border text-foreground hover:bg-muted flex items-center justify-center gap-1`}><Pencil size={12} /> Editar</button>
                                         <button onClick={() => handleDeletePlan(plan.id)} className="px-4 py-2 text-xs font-bold uppercase rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/5 flex items-center justify-center gap-1"><Trash2 size={12} /></button>
                                     </div>
                                 </div>
@@ -1234,14 +1236,14 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                 <div className="mb-4"><div className="relative flex-1 md:max-w-xs">
                     <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${textSub}`} size={18} />
                     <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Buscar assinante..."
-                        className={`pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary w-full ${isDarkMode ? 'bg-dark border-dark-border text-slate-200 placeholder:text-slate-600' : 'bg-white border-slate-300 text-slate-700 placeholder:text-slate-400'}`} />
+                        className={`pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary w-full bg-transparent border-input text-foreground placeholder:text-muted-foreground`} />
                 </div></div>
                 <div className={`${bgCard} border ${borderCol} ${shadowClass} rounded-xl overflow-hidden`}>
                     <table className="w-full text-left text-sm">
-                        <thead className={`${isDarkMode ? 'bg-slate-950 text-slate-200' : 'bg-slate-50 text-slate-700'} uppercase font-medium`}>
+                        <thead className={`bg-muted/30 text-foreground uppercase font-medium`}>
                             <tr><th className="px-6 py-4">Cliente</th><th className="px-6 py-4">Plano</th><th className="px-6 py-4">Status</th><th className="px-6 py-4">Consumo</th><th className="px-6 py-4">Início</th><th className="px-6 py-4">Dia Pgto</th><th className="px-6 py-4 text-right">Ações</th></tr>
                         </thead>
-                        <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-200'}`}>
+                        <tbody className={`divide-y divide-border`}>
                             {(() => {
                                 const filtered = subscriptions.filter(s => !searchQuery || (s.clientName || '').toLowerCase().includes(searchQuery.toLowerCase()) || (s.plan?.name || '').toLowerCase().includes(searchQuery.toLowerCase()));
                                 if (filtered.length === 0) return <tr><td colSpan={7} className={`px-6 py-12 text-center ${textSub}`}><Users size={32} className="mx-auto mb-2 opacity-30" />Nenhum assinante.</td></tr>;
@@ -1249,11 +1251,11 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                     const cfg = STATUS_CONFIG[sub.status] || STATUS_CONFIG.active; const SI = cfg.icon;
                                     const max = sub.plan?.maxUsesPerMonth; const pct = max ? Math.min((sub.usesThisMonth / max) * 100, 100) : 0;
                                     return (
-                                        <tr key={sub.id} className={isDarkMode ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
+                                        <tr key={sub.id} className="hover:bg-muted/30">
                                             <td className={`px-6 py-3 font-medium ${textMain}`}>{sub.clientName || '—'}</td>
                                             <td className={`px-6 py-3 ${textSub}`}><Crown size={12} className="inline text-primary mr-1" />{sub.plan?.name || '—'}</td>
-                                            <td className="px-6 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border inline-flex items-center gap-1 ${isDarkMode ? cfg.darkColor : cfg.color}`}><SI size={10} />{cfg.label}</span></td>
-                                            <td className="px-6 py-3">{max ? (<div className="flex items-center gap-2"><div className={`w-20 h-1.5 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}><div className={`h-full rounded-full ${pct >= 100 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} /></div><span className={`text-xs ${textSub}`}>{sub.usesThisMonth}/{max}</span></div>) : <Infinity size={12} className={textSub} />}</td>
+                                            <td className="px-6 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border inline-flex items-center gap-1 ${cfg.color}`}><SI size={10} />{cfg.label}</span></td>
+                                            <td className="px-6 py-3">{max ? (<div className="flex items-center gap-2"><div className={`w-20 h-1.5 rounded-full bg-muted`}><div className={`h-full rounded-full ${pct >= 100 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} /></div><span className={`text-xs ${textSub}`}>{sub.usesThisMonth}/{max}</span></div>) : <Infinity size={12} className={textSub} />}</td>
                                             <td className={`px-6 py-3 text-xs ${textSub}`}>{sub.startDate ? new Date(sub.startDate).toLocaleDateString('pt-BR') : '—'}</td>
                                             <td className={`px-6 py-3 text-xs ${textSub}`}>Dia {sub.paymentDay}</td>
                                             <td className="px-6 py-3 text-right"><div className="flex justify-end gap-2">
@@ -1278,7 +1280,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             <CalendarDays size={14} className={textSub} />
                             {(['month', '7d', '30d', '90d', 'all'] as const).map(p => (
                                 <button key={p} onClick={() => setDashPeriod(p)}
-                                    className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${dashPeriod === p ? 'bg-primary text-white' : `${isDarkMode ? 'bg-slate-800 text-slate-400 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}`}>
+                                    className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${dashPeriod === p ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
                                     {p === 'month' ? 'Este Mês' : p === '7d' ? '7 dias' : p === '30d' ? '30 dias' : p === '90d' ? '90 dias' : 'Tudo'}
                                 </button>
                             ))}
@@ -1288,10 +1290,10 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     {/* Section 1: Executive KPIs with Goals */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         {[
-                            { label: 'MRR', value: formatCurrency(kpis.mrr), numVal: kpis.mrr, goal: DASHBOARD_GOALS.mrr, goalLabel: `Meta: ${formatCurrency(DASHBOARD_GOALS.mrr)}`, icon: DollarSign, color: 'text-emerald-500', bg: isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50', barColor: 'bg-emerald-500' },
-                            { label: 'Assinantes', value: kpis.active.toString(), numVal: kpis.active, goal: DASHBOARD_GOALS.subscribers, goalLabel: `Meta: ${DASHBOARD_GOALS.subscribers}`, icon: Users, color: 'text-primary', bg: isDarkMode ? 'bg-primary/10' : 'bg-primary/5', barColor: 'bg-primary' },
-                            { label: 'Novas Vendas', value: kpis.newSales.toString(), numVal: kpis.newSales, goal: DASHBOARD_GOALS.newSales, goalLabel: `Meta: ${DASHBOARD_GOALS.newSales}`, icon: ShoppingBag, color: kpis.newSales >= DASHBOARD_GOALS.newSales ? 'text-emerald-500' : 'text-red-500', bg: kpis.newSales >= DASHBOARD_GOALS.newSales ? (isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50') : (isDarkMode ? 'bg-red-500/10' : 'bg-red-50'), barColor: kpis.newSales >= DASHBOARD_GOALS.newSales ? 'bg-emerald-500' : 'bg-red-500' },
-                            { label: 'Frequência Média', value: kpis.freqAvg.toFixed(1), numVal: kpis.freqAvg, goal: DASHBOARD_GOALS.freqAvg, goalLabel: `Meta: ${DASHBOARD_GOALS.freqAvg.toFixed(1)}`, icon: Activity, color: 'text-violet-500', bg: isDarkMode ? 'bg-violet-500/10' : 'bg-violet-50', barColor: 'bg-violet-500' },
+                            { label: 'MRR', value: formatCurrency(kpis.mrr), numVal: kpis.mrr, goal: DASHBOARD_GOALS.mrr, goalLabel: `Meta: ${formatCurrency(DASHBOARD_GOALS.mrr)}`, icon: DollarSign, color: 'text-emerald-500', bg: 'bg-emerald-500/10', barColor: 'bg-emerald-500' },
+                            { label: 'Assinantes', value: kpis.active.toString(), numVal: kpis.active, goal: DASHBOARD_GOALS.subscribers, goalLabel: `Meta: ${DASHBOARD_GOALS.subscribers}`, icon: Users, color: 'text-primary', bg: 'bg-primary/10', barColor: 'bg-primary' },
+                            { label: 'Novas Vendas', value: kpis.newSales.toString(), numVal: kpis.newSales, goal: DASHBOARD_GOALS.newSales, goalLabel: `Meta: ${DASHBOARD_GOALS.newSales}`, icon: ShoppingBag, color: kpis.newSales >= DASHBOARD_GOALS.newSales ? 'text-emerald-500' : 'text-red-500', bg: kpis.newSales >= DASHBOARD_GOALS.newSales ? 'bg-emerald-500/10' : 'bg-red-500/10', barColor: kpis.newSales >= DASHBOARD_GOALS.newSales ? 'bg-emerald-500' : 'bg-red-500' },
+                            { label: 'Frequência Média', value: kpis.freqAvg.toFixed(1), numVal: kpis.freqAvg, goal: DASHBOARD_GOALS.freqAvg, goalLabel: `Meta: ${DASHBOARD_GOALS.freqAvg.toFixed(1)}`, icon: Activity, color: 'text-violet-500', bg: 'bg-violet-500/10', barColor: 'bg-violet-500' },
                         ].map((k, i) => {
                             const pctGoal = k.goal > 0 ? Math.min((k.numVal / k.goal) * 100, 100) : 0;
                             const goalColor = pctGoal >= 80 ? 'bg-emerald-500' : pctGoal >= 50 ? 'bg-amber-500' : 'bg-red-500';
@@ -1303,7 +1305,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                     </div>
                                     <p className={`text-2xl font-bold ${textMain} mb-0.5`}>{k.value}</p>
                                     <p className={`text-[10px] ${textSub} mb-2`}>{k.goalLabel}</p>
-                                    <div className={`h-1.5 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                    <div className={`h-1.5 rounded-full bg-muted`}>
                                         <div className={`h-full rounded-full ${goalColor} transition-all`} style={{ width: `${pctGoal}%` }} />
                                     </div>
                                 </div>
@@ -1338,7 +1340,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                         <span className={`text-xs ${textSub}`}>Assinantes</span>
                                         <span className="text-xl font-bold text-emerald-500">{formatCurrency(kpis.ticketSub)}</span>
                                     </div>
-                                    <div className={`h-3 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                    <div className={`h-3 rounded-full bg-muted`}>
                                         <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${kpis.ticketSub > 0 && kpis.ticketNonSub > 0 ? Math.min((kpis.ticketSub / Math.max(kpis.ticketSub, kpis.ticketNonSub)) * 100, 100) : (kpis.ticketSub > 0 ? 100 : 0)}%` }} />
                                     </div>
                                 </div>
@@ -1347,8 +1349,8 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                         <span className={`text-xs ${textSub}`}>Avulsos</span>
                                         <span className={`text-xl font-bold ${textMain}`}>{formatCurrency(kpis.ticketNonSub)}</span>
                                     </div>
-                                    <div className={`h-3 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}>
-                                        <div className={`h-full rounded-full ${isDarkMode ? 'bg-slate-600' : 'bg-slate-400'} transition-all`} style={{ width: `${kpis.ticketNonSub > 0 && kpis.ticketSub > 0 ? Math.min((kpis.ticketNonSub / Math.max(kpis.ticketSub, kpis.ticketNonSub)) * 100, 100) : (kpis.ticketNonSub > 0 ? 100 : 0)}%` }} />
+                                    <div className={`h-3 rounded-full bg-muted`}>
+                                        <div className={`h-full rounded-full bg-muted-foreground/50 transition-all`} style={{ width: `${kpis.ticketNonSub > 0 && kpis.ticketSub > 0 ? Math.min((kpis.ticketNonSub / Math.max(kpis.ticketSub, kpis.ticketNonSub)) * 100, 100) : (kpis.ticketNonSub > 0 ? 100 : 0)}%` }} />
                                     </div>
                                 </div>
                                 {kpis.ticketSub > 0 && kpis.ticketNonSub > 0 && (
@@ -1365,7 +1367,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             <div className="flex flex-col items-center mb-4">
                                 <div className="relative w-28 h-28">
                                     <svg className="w-28 h-28 -rotate-90" viewBox="0 0 100 100">
-                                        <circle cx="50" cy="50" r="42" stroke={isDarkMode ? '#1e293b' : '#e2e8f0'} strokeWidth="12" fill="none" />
+                                        <circle cx="50" cy="50" r="42" stroke="hsl(var(--muted))" strokeWidth="12" fill="none" />
                                         <circle cx="50" cy="50" r="42" stroke={kpis.occupationRate >= DASHBOARD_GOALS.occupationRate ? '#10b981' : kpis.occupationRate >= 50 ? '#f59e0b' : '#ef4444'} strokeWidth="12" fill="none" strokeDasharray={`${kpis.occupationRate * 2.64} 264`} strokeLinecap="round" />
                                     </svg>
                                     <div className="absolute inset-0 flex flex-col items-center justify-center">
@@ -1405,7 +1407,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                     <span className={`text-[10px] ${textSub}`}>{pct.toFixed(0)}%</span>
                                                 </div>
                                             </div>
-                                            <div className={`h-2 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                            <div className={`h-2 rounded-full bg-muted`}>
                                                 <div className={`h-full rounded-full ${r.color} transition-all`} style={{ width: `${pct}%` }} />
                                             </div>
                                         </div>
@@ -1421,7 +1423,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                 <span className={`text-lg font-bold text-emerald-500`}>{formatCurrency(total)}</span>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <div className={`flex-1 h-1.5 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                                <div className={`flex-1 h-1.5 rounded-full bg-muted`}>
                                                     <div className={`h-full rounded-full ${goalPct >= 80 ? 'bg-emerald-500' : goalPct >= 50 ? 'bg-amber-500' : 'bg-red-500'} transition-all`} style={{ width: `${goalPct}%` }} />
                                                 </div>
                                                 <span className={`text-[10px] ${textSub}`}>{goalPct.toFixed(0)}% da meta</span>
@@ -1451,7 +1453,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                         <td className={`py-2.5 px-3 text-right text-emerald-500 font-bold`}>{formatCurrency(pd.revenue)}</td>
                                         <td className="py-2.5 px-3">
                                             <div className="flex items-center gap-2 justify-end">
-                                                <div className={`h-2 rounded-full flex-1 max-w-[100px] ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                                <div className={`h-2 rounded-full flex-1 max-w-[100px] bg-muted`}>
                                                     <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pd.pct}%` }} />
                                                 </div>
                                                 <span className={`text-xs ${textSub} w-10 text-right`}>{pd.pct.toFixed(0)}%</span>
@@ -1495,7 +1497,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                 <td className={`py-2 px-3 font-medium ${textMain}`}>{sub.clientName || 'Cliente'}</td>
                                                 <td className={`py-2 px-3 text-xs ${textSub}`}>{sub.plan?.name || '—'}</td>
                                                 <td className="py-2 px-3 text-center">
-                                                    <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${i < 3 ? 'bg-primary/10 text-primary' : `${isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}`}>{sub.usesThisMonth}</span>
+                                                    <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${i < 3 ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>{sub.usesThisMonth}</span>
                                                 </td>
                                             </tr>
                                         ))}</tbody>
@@ -1576,7 +1578,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                 <tr key={s.id} className={`border-t ${borderCol}`}>
                                                     <td className={`py-2 px-3 font-medium ${textMain}`}>{s.clientName || 'Cliente'}</td>
                                                     <td className={`py-2 px-3 text-xs ${textSub}`}>{s.plan?.name || '—'}</td>
-                                                    <td className="py-2 px-3 text-center"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${isDarkMode ? sc?.darkColor : sc?.color}`}>{sc?.label}</span></td>
+                                                    <td className="py-2 px-3 text-center"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${sc?.color}`}>{sc?.label}</span></td>
                                                     <td className={`py-2 px-3 text-right text-xs ${textSub}`}>{s.createdAt ? new Date(s.createdAt).toLocaleDateString('pt-BR') : '—'}</td>
                                                 </tr>
                                             );
@@ -1620,7 +1622,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                             <tr key={p.id} className={`border-t ${borderCol}`}>
                                                 <td className={`py-2.5 px-3 font-medium ${textMain}`}>
                                                     <div className="flex items-center gap-2">
-                                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${i < 3 ? 'bg-primary/10 text-primary' : isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>{i + 1}</div>
+                                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${i < 3 ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>{i + 1}</div>
                                                         {p.name}
                                                     </div>
                                                 </td>
@@ -1631,7 +1633,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                 <td className="py-2.5 px-3 text-right font-bold text-emerald-500">{formatCurrency(p.totalRevenue)}</td>
                                                 <td className="py-2.5 px-3">
                                                     <div className="flex items-center gap-2 justify-end">
-                                                        <div className={`h-2 rounded-full flex-1 max-w-[80px] ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                                        <div className={`h-2 rounded-full flex-1 max-w-[80px] bg-muted`}>
                                                             <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
                                                         </div>
                                                         <span className={`text-xs ${textSub} w-10 text-right`}>{pct.toFixed(0)}%</span>
@@ -1660,7 +1662,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                 <tr key={p.id} className={`border-t ${borderCol}`}>
                                                     <td className={`py-2.5 px-3 font-medium ${textMain}`}>
                                                         <div className="flex items-center gap-2">
-                                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${i < 3 ? 'bg-amber-500/10 text-amber-500' : isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>{i + 1}</div>
+                                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${i < 3 ? 'bg-amber-500/10 text-amber-500' : 'bg-muted text-muted-foreground'}`}>{i + 1}</div>
                                                             {p.name}
                                                         </div>
                                                     </td>
@@ -1669,7 +1671,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                                     <td className="py-2.5 px-3 text-right font-bold text-amber-500">{formatCurrency(extras)}</td>
                                                     <td className="py-2.5 px-3">
                                                         <div className="flex items-center gap-2 justify-end">
-                                                            <div className={`h-2 rounded-full flex-1 max-w-[80px] ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                                            <div className={`h-2 rounded-full flex-1 max-w-[80px] bg-muted`}>
                                                                 <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${pct}%` }} />
                                                             </div>
                                                             <span className={`text-xs ${textSub} w-10 text-right`}>{pct.toFixed(0)}%</span>
@@ -1706,7 +1708,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                         <h3 className={`font-semibold ${textMain}`}>Histórico de Assinaturas</h3>
                         <p className={`text-xs ${textSub}`}>Todas as assinaturas ordenadas por data de criação.</p>
                     </div>
-                    <div className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-200'}`}>
+                    <div className={`divide-y divide-border`}>
                         {(() => {
                             const methodLabels: Record<string, string> = { credit: 'Cartão', boleto: 'Boleto', pix: 'Pix' };
                             const filtered = subscriptions.filter(s => {
@@ -1719,14 +1721,14 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                             return filtered.map(sub => {
                                 const cfg = STATUS_CONFIG[sub.status] || STATUS_CONFIG.active; const SI = cfg.icon;
                                 return (
-                                    <div key={sub.id} className={`px-5 py-4 flex items-center gap-4 ${isDarkMode ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
-                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isDarkMode ? cfg.darkColor : cfg.color} border`}><SI size={16} /></div>
+                                    <div key={sub.id} className={`px-5 py-4 flex items-center gap-4 hover:bg-muted/30`}>
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${cfg.color} border`}><SI size={16} /></div>
                                         <div className="flex-1 min-w-0">
                                             <p className={`font-medium text-sm ${textMain} truncate`}>{sub.clientName || '—'}</p>
                                             <p className={`text-xs ${textSub}`}><Crown size={10} className="inline text-primary mr-1" />{sub.plan?.name || '—'} · Dia {sub.paymentDay}{sub.paymentMethod ? ` · ${methodLabels[sub.paymentMethod]}` : ''}</p>
                                         </div>
                                         <div className="text-right">
-                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${isDarkMode ? cfg.darkColor : cfg.color}`}>{cfg.label}</span>
+                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${cfg.color}`}>{cfg.label}</span>
                                             <p className={`text-[10px] ${textSub} mt-1`}>{sub.createdAt ? new Date(sub.createdAt).toLocaleDateString('pt-BR') : '—'}</p>
                                         </div>
                                     </div>
@@ -1760,7 +1762,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                         <div className="flex justify-between text-xs"><span className={textSub}>NF Automática</span><span className="font-bold text-emerald-500">Sim</span></div>
                                         <div className="flex justify-between text-xs"><span className={textSub}>Inadimplência</span><span className="font-bold text-emerald-500">WhatsApp + Email + SMS</span></div>
                                     </div>
-                                    <div className={`p-3 rounded-lg ${isDarkMode ? 'bg-emerald-500/5 border border-emerald-500/10' : 'bg-emerald-50 border border-emerald-200'}`}>
+                                    <div className={`p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10`}>
                                         <p className="text-[11px] text-emerald-500 font-medium"><CheckCircle size={10} className="inline mr-1" />Melhor custo-benefício para barbearias</p>
                                     </div>
                                 </div>
@@ -1780,8 +1782,8 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                         <div className="flex justify-between text-xs"><span className={textSub}>NF Automática</span><span className={`font-bold text-red-400`}>Não</span></div>
                                         <div className="flex justify-between text-xs"><span className={textSub}>Anti-Fraude</span><span className="font-bold text-emerald-500">Stripe Radar</span></div>
                                     </div>
-                                    <div className={`p-3 rounded-lg ${isDarkMode ? 'bg-violet-500/5 border border-violet-500/10' : 'bg-violet-50 border border-violet-200'}`}>
-                                        <p className={`text-[11px] ${isDarkMode ? 'text-violet-400' : 'text-violet-600'} font-medium`}><Info size={10} className="inline mr-1" />Ideal para alcance global</p>
+                                    <div className={`p-3 rounded-lg bg-violet-500/5 border border-violet-500/10`}>
+                                        <p className={`text-[11px] text-violet-500 font-medium`}><Info size={10} className="inline mr-1" />Ideal para alcance global</p>
                                     </div>
                                 </div>
                             </div>
@@ -1800,7 +1802,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                         <div className="flex justify-between text-xs"><span className={textSub}>NF Automática</span><span className={`font-bold text-red-400`}>Não</span></div>
                                         <div className="flex justify-between text-xs"><span className={textSub}>Maquininha</span><span className="font-bold text-emerald-500">Integrada</span></div>
                                     </div>
-                                    <div className={`p-3 rounded-lg ${isDarkMode ? 'bg-slate-500/5 border border-slate-500/10' : 'bg-slate-50 border border-slate-200'}`}>
+                                    <div className={`p-3 rounded-lg bg-muted/30 border border-border`}>
                                         <p className={`text-[11px] ${textSub} font-medium`}><Info size={10} className="inline mr-1" />Para já clientes PagBank</p>
                                     </div>
                                 </div>
@@ -1969,11 +1971,11 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                     {/* Section 3: Integration Status */}
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                         {[
-                            { label: 'Gateway', value: integrationConfig.apiKey ? 'Asaas' : 'Não configurado', icon: Link, color: integrationConfig.apiKey ? 'text-emerald-500' : 'text-slate-400', bg: integrationConfig.apiKey ? (isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50') : (isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50') },
-                            { label: 'Cobranças Auto', value: integrationConfig.autoCharge ? 'Ativado' : 'Desativado', icon: Repeat, color: integrationConfig.autoCharge ? 'text-blue-500' : 'text-slate-400', bg: integrationConfig.autoCharge ? (isDarkMode ? 'bg-blue-500/10' : 'bg-blue-50') : (isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50') },
-                            { label: 'Ambiente', value: integrationConfig.environment === 'production' ? 'Produção' : 'Sandbox', icon: Shield, color: integrationConfig.environment === 'production' ? 'text-red-500' : 'text-amber-500', bg: integrationConfig.environment === 'production' ? (isDarkMode ? 'bg-red-500/10' : 'bg-red-50') : (isDarkMode ? 'bg-amber-500/10' : 'bg-amber-50') },
-                            { label: 'Notificações', value: integrationConfig.sendNotifications ? 'Ativado' : 'Desativado', icon: Zap, color: integrationConfig.sendNotifications ? 'text-emerald-500' : 'text-slate-400', bg: integrationConfig.sendNotifications ? (isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50') : (isDarkMode ? 'bg-slate-500/10' : 'bg-slate-50') },
-                            { label: 'Webhook', value: (integrationConfig as any).webhookSecret ? 'Configurado' : 'Não configurado', icon: Activity, color: (integrationConfig as any).webhookSecret ? 'text-emerald-500' : 'text-red-500', bg: (integrationConfig as any).webhookSecret ? (isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50') : (isDarkMode ? 'bg-red-500/10' : 'bg-red-50') },
+                            { label: 'Gateway', value: integrationConfig.apiKey ? 'Asaas' : 'Não configurado', icon: Link, color: integrationConfig.apiKey ? 'text-emerald-500' : 'text-muted-foreground', bg: integrationConfig.apiKey ? 'bg-emerald-500/10' : 'bg-muted/50' },
+                            { label: 'Cobranças Auto', value: integrationConfig.autoCharge ? 'Ativado' : 'Desativado', icon: Repeat, color: integrationConfig.autoCharge ? 'text-blue-500' : 'text-muted-foreground', bg: integrationConfig.autoCharge ? 'bg-blue-500/10' : 'bg-muted/50' },
+                            { label: 'Ambiente', value: integrationConfig.environment === 'production' ? 'Produção' : 'Sandbox', icon: Shield, color: integrationConfig.environment === 'production' ? 'text-red-500' : 'text-amber-500', bg: integrationConfig.environment === 'production' ? 'bg-red-500/10' : 'bg-amber-500/10' },
+                            { label: 'Notificações', value: integrationConfig.sendNotifications ? 'Ativado' : 'Desativado', icon: Zap, color: integrationConfig.sendNotifications ? 'text-emerald-500' : 'text-muted-foreground', bg: integrationConfig.sendNotifications ? 'bg-emerald-500/10' : 'bg-muted/50' },
+                            { label: 'Webhook', value: (integrationConfig as any).webhookSecret ? 'Configurado' : 'Não configurado', icon: Activity, color: (integrationConfig as any).webhookSecret ? 'text-emerald-500' : 'text-red-500', bg: (integrationConfig as any).webhookSecret ? 'bg-emerald-500/10' : 'bg-red-500/10' },
                         ].map((s, i) => (
                             <div key={i} className={`${bgCard} border ${borderCol} rounded-xl p-4 ${shadowClass} flex items-center gap-3`}>
                                 <div className={`p-2 rounded-lg ${s.bg}`}><s.icon size={18} className={s.color} /></div>
@@ -1993,7 +1995,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode, currentUse
                                     { ok: integrationConfig.autoCharge, label: 'Cobrança automática ativa', detail: 'Cobranças serão geradas automaticamente ao criar assinaturas' },
                                     { ok: integrationConfig.sendNotifications, label: 'Notificações do ASAAS ativas', detail: 'Clientes receberão emails/SMS de cobrança do ASAAS' },
                                 ].map((item, i) => (
-                                    <div key={i} className={`flex items-start gap-3 p-3 rounded-lg ${item.ok ? (isDarkMode ? 'bg-emerald-500/5' : 'bg-emerald-50/50') : (isDarkMode ? 'bg-red-500/5' : 'bg-red-50/50')}`}>
+                                    <div key={i} className={`flex items-start gap-3 p-3 rounded-lg ${item.ok ? 'bg-emerald-500/5' : 'bg-red-500/5'}`}>
                                         {item.ok ? <CheckCircle size={16} className="text-emerald-500 mt-0.5 shrink-0" /> : <AlertCircle size={16} className="text-red-500 mt-0.5 shrink-0" />}
                                         <div>
                                             <p className={`text-sm font-medium ${textMain}`}>{item.label}</p>

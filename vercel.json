@@ -3,6 +3,14 @@
         {
             "path": "/api/subscription-cron",
             "schedule": "0 3 1 * *"
+        },
+        {
+            "path": "/api/push-cron-hourly",
+            "schedule": "0 * * * *"
+        },
+        {
+            "path": "/api/push-cron-daily",
+            "schedule": "0 12 * * *"
         }
     ],
     "rewrites": [

@@ -105,7 +105,16 @@ self.addEventListener('notificationclick', (event) => {
 });
 
 // ═══════════════════════════════════════════
-// NOTE: pushsubscriptionchange is NOT handled here
-// because the SW has no auth token → RLS blocks DB updates.
-// Subscription sync happens on app-load in PublicSite.tsx
+// PUSH SUBSCRIPTION CHANGE
+// When the browser revokes/expires the subscription,
+// notify the open window so PublicSite.tsx can re-subscribe.
 // ═══════════════════════════════════════════
+self.addEventListener('pushsubscriptionchange', ((event: any) => {
+  event.waitUntil(
+    (self as any).clients.matchAll({ type: 'window' }).then((clients: any[]) => {
+      clients.forEach((client: any) => {
+        client.postMessage({ type: 'push-subscription-expired' });
+      });
+    })
+  );
+}) as EventListener);

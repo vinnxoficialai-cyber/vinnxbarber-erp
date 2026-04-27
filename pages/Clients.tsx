@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, Filter, Mail, Pencil, Plus, X, User, Briefcase, Phone, MessageCircle, Calendar, DollarSign, Target, Image as ImageIcon, Upload, Trash2, Lock, Tag, Loader2, Users, TrendingUp, Gift, CreditCard, ChevronDown, ChevronUp, Crown, AlertTriangle, AlertCircle, BarChart3, Shield, HelpCircle, UserCheck, UserMinus, Clock, Settings, RotateCcw, Info, ToggleRight, Play, Download, MapPin, CheckCircle2 } from 'lucide-react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { Search, Filter, Mail, Pencil, Plus, X, User, Briefcase, Phone, MessageCircle, Calendar, DollarSign, Target, Image as ImageIcon, Upload, Trash2, Lock, Tag, Loader2, Users, TrendingUp, Gift, CreditCard, ChevronDown, ChevronUp, Crown, AlertTriangle, AlertCircle, BarChart3, Shield, HelpCircle, UserCheck, UserMinus, Clock, Settings, RotateCcw, Info, ToggleRight, Play, Download, MapPin, CheckCircle2, ArrowUpDown, Flame, FileSpreadsheet, Zap, Heart } from 'lucide-react';
 import { Client, TeamMember, Contract, Subscription, SubscriptionPlan, ClientUnitSettings } from '../types';
 import { useClientReassignment, getClientUnitSettings, saveClientUnitSettings } from '../hooks/useClientReassignment';
 import { CustomDropdown } from '../components/CustomDropdown';
@@ -11,17 +11,33 @@ import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
 import { useFilteredData } from '../hooks/useFilteredData';
 
+type ClientFilter = 'all' | 'active' | 'subscribers' | 'noPlan' | 'birthday' | 'inactive' | 'noVisit';
+type ClientSort = 'name' | 'visits_desc' | 'lastVisit_desc' | 'lastVisit_asc' | 'ltv_desc';
+type EngagementLevel = 'loyal' | 'frequent' | 'occasional' | 'at_risk' | 'lost';
+
+const PAGE_SIZE = 30;
+
+const ENGAGEMENT_CONFIG: Record<EngagementLevel, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+  loyal:      { label: 'Fiel',       color: 'text-emerald-500', bg: 'bg-emerald-500/10', icon: <Heart size={10} /> },
+  frequent:   { label: 'Frequente',  color: 'text-blue-500',    bg: 'bg-blue-500/10',    icon: <Zap size={10} /> },
+  occasional: { label: 'Ocasional',  color: 'text-slate-400',   bg: 'bg-muted',          icon: <Clock size={10} /> },
+  at_risk:    { label: 'Em risco',   color: 'text-amber-500',   bg: 'bg-amber-500/10',   icon: <AlertTriangle size={10} /> },
+  lost:       { label: 'Perdido',    color: 'text-red-500',     bg: 'bg-red-500/10',     icon: <AlertCircle size={10} /> },
+};
+
 interface ClientsProps {
   clients: Client[];
   setClients: (clients: Client[]) => void;
   members: TeamMember[];
   contracts: Contract[];
   globalSearchTerm?: string;
-  isDarkMode: boolean;
+  isDarkMode?: boolean;
   currentUser: TeamMember;
 }
 
-export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, contracts, globalSearchTerm, isDarkMode, currentUser }) => {
+export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, contracts, globalSearchTerm, isDarkMode: _isDarkMode, currentUser }) => {
+  const isDarkMode = _isDarkMode ?? document.documentElement.classList.contains('dark');
+
   // Permissions
   const { permissions: contextPermissions, subscriptions, subscriptionPlans } = useAppData();
   const { selectedUnitId, filteredComandas: comandas } = useFilteredData();
@@ -45,6 +61,12 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
   const confirm = useConfirm();
   const toast = useToast();
 
+  // ═══ NEW: Pagination, Filter, Sort state ═══
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [activeFilter, setActiveFilter] = useState<ClientFilter>('all');
+  const [sortBy, setSortBy] = useState<ClientSort>('name');
+  const [showSortDropdown, setShowSortDropdown] = useState(false);
+
   // Unit context
   const { units } = useAppData();
   const isFilteringUnit = selectedUnitId !== 'all';
@@ -59,13 +81,31 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
   // ALL clients (unfiltered -- for import modal)
   const { clients: allClients } = useAppData();
 
-  // Theme Helpers
-  const textMain = isDarkMode ? 'text-slate-50' : 'text-slate-900';
-  const textSub = isDarkMode ? 'text-slate-400' : 'text-slate-600';
-  const bgCard = isDarkMode ? 'bg-dark-surface' : 'bg-white';
-  const borderCol = isDarkMode ? 'border-dark-border' : 'border-slate-300';
-  const bgInput = isDarkMode ? 'bg-dark' : 'bg-white';
-  const shadowClass = isDarkMode ? '' : 'shadow-sm';
+  // Theme Helpers (semantic tokens)
+  const textMain = 'text-foreground';
+  const textSub = 'text-muted-foreground';
+  const bgCard = 'bg-card';
+  const borderCol = 'border-border';
+  const bgInput = 'bg-transparent';
+  const shadowClass = 'shadow-sm dark:shadow-none';
+  const inputCls = 'bg-transparent border border-input text-foreground rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary outline-none';
+  const labelCls = 'text-muted-foreground';
+
+  // ═══ Engagement Score Helper ═══
+  const getEngagement = useCallback((client: Client): EngagementLevel => {
+    const now = Date.now();
+    const DAY = 86400000;
+    const daysSince = client.lastVisit ? (now - new Date(client.lastVisit).getTime()) / DAY : 999;
+    const hasSub = subscriptions.some(s => s.clientId === client.id && s.status === 'active');
+    const visits = client.totalVisits || 0;
+    if (daysSince > 90) return 'lost';
+    if (daysSince > 30) return 'at_risk';
+    if (hasSub && visits >= 4) return 'loyal';
+    if (visits >= 2) return 'frequent';
+    return 'occasional';
+  }, [subscriptions]);
+
+
 
   // Sync Global Search with Local Search
   useEffect(() => {
@@ -137,15 +177,79 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
     if (!viewAll) {
       data = data.filter(client => client.salesExecutiveId === currentUser.id);
     }
+    // Text search
     const query = searchQuery.toLowerCase();
-    return data.filter(client =>
-      (client.name || '').toLowerCase().includes(query) ||
-      (client.company || '').toLowerCase().includes(query) ||
-      (client.email || '').toLowerCase().includes(query) ||
-      (client.phone || '').includes(query) ||
-      (client.cpfCnpj || '').includes(query)
-    );
-  }, [clients, searchQuery, viewAll, currentUser.id]);
+    if (query) {
+      data = data.filter(client =>
+        (client.name || '').toLowerCase().includes(query) ||
+        (client.company || '').toLowerCase().includes(query) ||
+        (client.email || '').toLowerCase().includes(query) ||
+        (client.phone || '').includes(query) ||
+        (client.cpfCnpj || '').includes(query)
+      );
+    }
+    // Smart filters
+    const now = Date.now();
+    const DAY = 86400000;
+    if (activeFilter === 'active') data = data.filter(c => c.status === 'Active');
+    else if (activeFilter === 'subscribers') data = data.filter(c => subscriptions.some(s => s.clientId === c.id && s.status === 'active'));
+    else if (activeFilter === 'noPlan') data = data.filter(c => !subscriptions.some(s => s.clientId === c.id && (s.status === 'active' || s.status === 'pending_payment')));
+    else if (activeFilter === 'birthday') {
+      const month = new Date().getMonth();
+      data = data.filter(c => {
+        if (!c.birthday) return false;
+        const bMonth = new Date(c.birthday + 'T00:00:00').getMonth();
+        return bMonth === new Date().getMonth();
+      });
+    }
+    else if (activeFilter === 'inactive') data = data.filter(c => { const d = c.lastVisit ? (now - new Date(c.lastVisit).getTime()) / DAY : 999; return d > 90; });
+    else if (activeFilter === 'noVisit') data = data.filter(c => !c.totalVisits || c.totalVisits === 0);
+    // Sorting
+    data = [...data].sort((a, b) => {
+      switch (sortBy) {
+        case 'name': return (a.name || '').localeCompare(b.name || '');
+        case 'visits_desc': return (b.totalVisits || 0) - (a.totalVisits || 0);
+        case 'lastVisit_desc': return new Date(b.lastVisit || 0).getTime() - new Date(a.lastVisit || 0).getTime();
+        case 'lastVisit_asc': return new Date(a.lastVisit || 0).getTime() - new Date(b.lastVisit || 0).getTime();
+        case 'ltv_desc': {
+          const ltvA = contracts.filter(c => c.clientId === a.id && c.status === 'Active').reduce((acc, c) => acc + c.monthlyValue * c.contractDuration + c.setupValue, 0);
+          const ltvB = contracts.filter(c => c.clientId === b.id && c.status === 'Active').reduce((acc, c) => acc + c.monthlyValue * c.contractDuration + c.setupValue, 0);
+          return ltvB - ltvA;
+        }
+        default: return 0;
+      }
+    });
+    return data;
+  }, [clients, searchQuery, viewAll, currentUser.id, activeFilter, sortBy, subscriptions, contracts]);
+
+  // Reset pagination on search/filter/sort change
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [searchQuery, activeFilter, sortBy]);
+
+  // Visible (paginated) clients
+  const visibleClients = useMemo(() => filteredClients.slice(0, visibleCount), [filteredClients, visibleCount]);
+
+  // ═══ CSV Export Helper ═══
+  const handleExportCSV = useCallback(() => {
+    const headers = ['Nome', 'Telefone', 'Email', 'CPF/CNPJ', 'Status', 'Gênero', 'Plano', 'Última Visita', 'Total Visitas', 'Engajamento'];
+    const rows = filteredClients.map(c => {
+      const sub = subscriptions.find(s => s.clientId === c.id && s.status === 'active');
+      const plan = sub ? subscriptionPlans.find(p => p.id === sub.planId) : null;
+      const eng = getEngagement(c);
+      return [
+        c.name || '', c.phone || '', c.email || '', c.cpfCnpj || '',
+        c.status || '', c.gender || '', plan?.name || 'Sem plano',
+        c.lastVisit ? new Date(c.lastVisit).toLocaleDateString('pt-BR') : 'Nunca',
+        String(c.totalVisits || 0), ENGAGEMENT_CONFIG[eng].label,
+      ];
+    });
+    const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `clientes_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    toast.success('Exportado', `${rows.length} clientes exportados para CSV.`);
+  }, [filteredClients, subscriptions, subscriptionPlans, getEngagement, toast]);
 
   // Form validation - required fields
   const isFormValid = useMemo(() => {
@@ -368,7 +472,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
               <button onClick={() => setIsModalOpen(false)} className={`${textSub} hover:${textMain}`}><X size={20} /></button>
             </div>
 
-            <form onSubmit={handleSave} className="flex-1 overflow-y-auto custom-scrollbar">
+            <form onSubmit={handleSave} id="client-form" className="flex-1 overflow-y-auto custom-scrollbar">
               <div className="flex flex-col lg:flex-row">
                 {/* LEFT COLUMN - 60% */}
                 <div className="flex-1 lg:w-[60%] p-6 space-y-4">
@@ -644,13 +748,13 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                   </div>
                 </div>
               </div>
-
-              {/* Footer */}
-              <div className={`p-4 border-t ${borderCol} flex gap-3 justify-end shrink-0 ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
-                <button type="button" onClick={() => setIsModalOpen(false)} className={`px-6 py-2.5 rounded-lg text-sm font-medium border ${isDarkMode ? 'border-dark-border text-slate-300 hover:bg-dark-surface' : 'border-slate-300 text-slate-600 hover:bg-slate-100'} transition-colors`}>Cancelar</button>
-                <button type="submit" disabled={!isFormValid} className={`px-6 py-2.5 font-bold rounded-lg text-sm transition-colors shadow-lg ${isFormValid ? 'bg-primary hover:bg-primary-600 text-white shadow-primary/20' : 'bg-slate-400 text-slate-200 cursor-not-allowed shadow-none'}`}>{editingId ? 'Salvar Alteracoes' : 'Cadastrar Cliente'}</button>
-              </div>
             </form>
+
+            {/* Footer — outside form, always pinned */}
+            <div className={`p-4 border-t ${borderCol} flex gap-3 justify-end shrink-0 bg-card`}>
+              <button type="button" onClick={() => setIsModalOpen(false)} className={`px-6 py-2.5 rounded-lg text-sm font-medium border ${borderCol} ${textSub} hover:bg-muted/50 transition-colors`}>Cancelar</button>
+              <button type="submit" form="client-form" disabled={!isFormValid} className={`px-6 py-2.5 font-bold rounded-lg text-sm transition-colors ${isFormValid ? 'bg-primary hover:bg-primary-600 text-white' : 'bg-slate-400 text-slate-200 cursor-not-allowed'}`}>{editingId ? 'Salvar Alteracoes' : 'Cadastrar Cliente'}</button>
+            </div>
           </div>
         </div>
       )}
@@ -690,40 +794,70 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
       {/* TAB: Clientes */}
       {activeTab === 'clients' && (<>
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
           <div>
             <h1 className={`text-2xl font-bold ${textMain}`}>Clientes</h1>
             <p className={`${textSub} text-sm`}>Gerencie seu relacionamento e veja o valor gerado.</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-2 flex-wrap items-center">
+            {/* Search */}
             <div className="relative">
-              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${textSub}`} size={18} />
-              <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Buscar por nome, telefone, CPF..." className={`pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary w-full md:w-64 ${isDarkMode ? 'bg-dark border-dark-border text-slate-200 placeholder:text-slate-600' : 'bg-white border-slate-300 text-slate-700 placeholder:text-slate-400'}`} />
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${textSub}`} size={16} />
+              <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Buscar" className={`pl-9 pr-4 h-10 border ${borderCol} rounded-lg focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary w-40 md:w-52 text-sm ${bgCard} ${textMain} placeholder:text-muted-foreground`} />
             </div>
+            {/* Sort */}
+            <div className="relative">
+              <button onClick={() => setShowSortDropdown(!showSortDropdown)} className={`h-10 px-3 border ${borderCol} rounded-lg text-sm flex items-center gap-2 transition-colors ${bgCard} ${textSub} hover:text-primary`}>
+                <ArrowUpDown size={15} />
+                <span className="hidden md:inline">Ordenar</span>
+              </button>
+              {showSortDropdown && (
+                <div className={`absolute right-0 top-full mt-1 w-48 rounded-lg border ${borderCol} shadow-xl z-50 overflow-hidden ${bgCard}`}>
+                  {([
+                    { value: 'name' as ClientSort, label: 'Nome A→Z' },
+                    { value: 'visits_desc' as ClientSort, label: 'Mais visitas' },
+                    { value: 'lastVisit_desc' as ClientSort, label: 'Última visita (recente)' },
+                    { value: 'lastVisit_asc' as ClientSort, label: 'Última visita (antigo)' },
+                    { value: 'ltv_desc' as ClientSort, label: 'Maior LTV' },
+                  ]).map(opt => (
+                    <button key={opt.value} onClick={() => { setSortBy(opt.value); setShowSortDropdown(false); }}
+                      className={`w-full px-4 py-2.5 text-left text-sm transition-colors whitespace-nowrap ${sortBy === opt.value ? 'text-primary font-semibold bg-primary/5' : `${textSub} hover:bg-muted/50`}`}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Export CSV */}
+            <button onClick={handleExportCSV} className={`h-10 px-3 border ${borderCol} rounded-lg text-sm flex items-center gap-2 transition-colors ${bgCard} ${textSub} hover:text-primary`} title="Exportar para CSV">
+              <FileSpreadsheet size={16} />
+              <span className="hidden md:inline">Exportar</span>
+            </button>
+            {/* Add */}
             <div className="relative">
               <div className="flex">
-                <button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg rounded-r-none text-sm transition-colors flex items-center gap-2">
+                <button onClick={() => handleOpenModal()} className="h-10 px-4 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg rounded-r-none text-sm transition-colors flex items-center gap-2">
                   <Plus size={18} /> Adicionar
                 </button>
                 <button
                   onClick={() => setShowAddDropdown(!showAddDropdown)}
-                  className="px-2 py-2 bg-primary hover:bg-primary-600 text-white rounded-lg rounded-l-none border-l border-white/20 transition-colors"
+                  className="h-10 px-2 bg-primary hover:bg-primary-600 text-white rounded-lg rounded-l-none border-l border-white/20 transition-colors"
                 >
                   <ChevronDown size={16} />
                 </button>
               </div>
               {showAddDropdown && (
-                <div className={`absolute right-0 top-full mt-1 w-full min-w-max rounded-lg border shadow-xl z-50 overflow-hidden ${isDarkMode ? 'bg-dark-surface border-dark-border' : 'bg-white border-slate-200'}`}>
+                <div className={`absolute right-0 top-full mt-1 w-full min-w-max rounded-lg border ${borderCol} shadow-xl z-50 overflow-hidden ${bgCard}`}>
                   <button
                     onClick={() => { setShowAddDropdown(false); handleOpenModal(); }}
-                    className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2.5 transition-colors whitespace-nowrap ${isDarkMode ? 'hover:bg-dark text-slate-200' : 'hover:bg-slate-50 text-slate-700'}`}
+                    className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2.5 transition-colors whitespace-nowrap ${textSub} hover:bg-muted/50 hover:text-primary`}
                   >
                     <Plus size={14} className="text-primary" /> Adicionar Cliente
                   </button>
                   {isFilteringUnit && (
                     <button
                       onClick={() => { setShowAddDropdown(false); setIsImportModalOpen(true); setImportSearch(''); setImportSelected(new Set()); }}
-                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2.5 transition-colors border-t whitespace-nowrap ${isDarkMode ? 'hover:bg-dark text-slate-200 border-dark-border' : 'hover:bg-slate-50 text-slate-700 border-slate-100'}`}
+                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2.5 transition-colors border-t ${borderCol} whitespace-nowrap ${textSub} hover:bg-muted/50 hover:text-primary`}
                     >
                       <Download size={14} className="text-blue-500" /> Importar Cliente
                     </button>
@@ -734,9 +868,41 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
           </div>
         </div>
 
+        {/* Smart Filter Pills */}
+        <div className="flex gap-2 mb-5 overflow-x-auto pb-1 scrollbar-hide">
+          {([
+            { key: 'all' as ClientFilter, label: 'Todos', icon: <Users size={13} />, count: clients.length },
+            { key: 'active' as ClientFilter, label: 'Ativos', icon: <UserCheck size={13} />, count: clients.filter(c => c.status === 'Active').length },
+            { key: 'subscribers' as ClientFilter, label: 'Assinantes', icon: <Crown size={13} />, count: subscriptions.filter(s => s.status === 'active').length },
+            { key: 'noPlan' as ClientFilter, label: 'Sem plano', icon: <UserMinus size={13} /> },
+            { key: 'birthday' as ClientFilter, label: 'Aniversariantes', icon: <Gift size={13} />, count: kpis.birthdaysThisMonth },
+            { key: 'inactive' as ClientFilter, label: 'Inativos (+90d)', icon: <AlertCircle size={13} /> },
+            { key: 'noVisit' as ClientFilter, label: 'Sem visita', icon: <Clock size={13} /> },
+          ]).map(f => (
+            <button key={f.key} onClick={() => setActiveFilter(f.key)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all border ${
+                activeFilter === f.key
+                  ? 'bg-primary text-white border-primary'
+                  : `${bgCard} ${textSub} ${borderCol} hover:border-primary/50 hover:text-primary`
+              }`}>
+              {f.icon} {f.label} {f.count !== undefined && <span className={`ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] ${activeFilter === f.key ? 'bg-white/20' : 'bg-muted'}`}>{f.count}</span>}
+            </button>
+          ))}
+        </div>
+
+        {/* Results count */}
+        <div className={`flex items-center justify-between mb-4 ${textSub} text-xs`}>
+          <span>Mostrando <strong className={textMain}>{Math.min(visibleCount, filteredClients.length)}</strong> de <strong className={textMain}>{filteredClients.length}</strong> clientes</span>
+          {activeFilter !== 'all' && (
+            <button onClick={() => setActiveFilter('all')} className="text-primary hover:underline flex items-center gap-1">
+              <X size={12} /> Limpar filtro
+            </button>
+          )}
+        </div>
+
         {/* Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {filteredClients.map((client) => {
+          {visibleClients.map((client) => {
             const salesExec = members.find(m => m.id === client.salesExecutiveId);
             const clientSub = subscriptions.find(s => s.clientId === client.id && (s.status === 'active' || s.status === 'pending_payment'));
             const clientPlan = clientSub ? subscriptionPlans.find(p => p.id === clientSub.planId) : null;
@@ -753,20 +919,26 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
               return diff >= -1 && diff <= 7;
             })();
 
+            const engagement = getEngagement(client);
+            const engCfg = ENGAGEMENT_CONFIG[engagement];
+            const hasActiveSub = !!clientSub;
+
             return (
-              <div key={client.id} className={`${bgCard} border ${borderCol} ${shadowClass} rounded-xl p-5 hover:border-slate-400/50 hover:shadow-lg transition-all group flex flex-col h-full animate-in fade-in duration-300`}>
+              <div key={client.id} className={`${bgCard} border ${borderCol} ${shadowClass} rounded-xl p-5 hover:border-primary/30 hover:shadow-lg transition-all group flex flex-col h-full animate-in fade-in duration-300`}>
                 <div className="flex justify-between items-start mb-3">
                   <div className="flex items-center gap-3">
-                    {client.image ? (
-                      <img src={client.image} alt={client.name} className={`w-11 h-11 rounded-full object-cover border shadow-sm ${isDarkMode ? 'border-dark-border' : 'border-slate-200'}`} />
-                    ) : (
-                      <div className={`w-11 h-11 rounded-full bg-gradient-to-br flex items-center justify-center text-primary font-bold border shadow-sm text-base ${isDarkMode ? 'from-dark to-dark-surface border-dark-border' : 'from-slate-100 to-white border-slate-200'}`}>
-                        {client.name.charAt(0)}
-                      </div>
-                    )}
+                    <div className={`relative ${hasActiveSub ? 'ring-2 ring-amber-500 ring-offset-2 ring-offset-card rounded-full' : ''}`}>
+                      {client.image ? (
+                        <img src={client.image} alt={client.name || 'Cliente'} className={`w-11 h-11 rounded-full object-cover border shadow-sm ${borderCol}`} />
+                      ) : (
+                        <div className={`w-11 h-11 rounded-full bg-gradient-to-br flex items-center justify-center text-primary font-bold border shadow-sm text-base from-muted to-card ${borderCol}`}>
+                          {(client.name || '?').charAt(0)}
+                        </div>
+                      )}
+                    </div>
                     <div>
                       <h3 className={`font-bold ${textMain} text-sm leading-tight flex items-center gap-1.5`}>
-                        {client.name}
+                        {client.name || 'Sem nome'}
                         {isBirthdayWeek && <Gift size={13} className="text-pink-500" />}
                       </h3>
                       <p className={`text-[11px] ${textSub} flex items-center gap-1 mt-0.5`}>
@@ -775,19 +947,24 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    <button onClick={() => handleOpenModal(client)} className={`p-1.5 rounded-lg transition-colors ${isDarkMode ? 'text-slate-600 hover:text-primary hover:bg-dark-surface' : 'text-slate-400 hover:text-primary hover:bg-slate-100'}`}><Pencil size={14} /></button>
-                    {canDeleteClient && <button onClick={() => handleDelete(client.id)} className={`p-1.5 rounded-lg transition-colors ${isDarkMode ? 'text-slate-600 hover:text-red-500 hover:bg-dark-surface' : 'text-slate-400 hover:text-red-500 hover:bg-slate-100'}`}><Trash2 size={14} /></button>}
+                    <button onClick={() => handleOpenModal(client)} className={`p-1.5 rounded-lg transition-colors ${textSub} hover:text-primary hover:bg-muted/50`}><Pencil size={14} /></button>
+                    {canDeleteClient && <button onClick={() => handleDelete(client.id)} className={`p-1.5 rounded-lg transition-colors ${textSub} hover:text-red-500 hover:bg-muted/50`}><Trash2 size={14} /></button>}
                   </div>
                 </div>
 
                 <div className="flex flex-wrap gap-1.5 mb-3">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${client.status === 'Active' ? 'bg-primary/10 text-primary' : client.status === 'Lead' ? 'bg-blue-500/10 text-blue-500' : client.status === 'Churned' ? 'bg-red-500/10 text-red-500' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-600')}`}>
+                  {/* Engagement badge */}
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${engCfg.bg} ${engCfg.color}`}>
+                    {engCfg.icon} {engCfg.label}
+                  </span>
+                  {/* Status */}
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${client.status === 'Active' ? 'bg-primary/10 text-primary' : client.status === 'Lead' ? 'bg-blue-500/10 text-blue-500' : client.status === 'Churned' ? 'bg-red-500/10 text-red-500' : 'bg-muted text-muted-foreground'}`}>
                     {client.status === 'Active' ? 'Ativo' : client.status === 'Lead' ? 'Lead' : client.status === 'Churned' ? 'Churned' : 'Inativo'}
                   </span>
                   {(() => {
                     const unit = client.unitId ? units.find(u => u.id === client.unitId) : null;
                     return unit ? (
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${isDarkMode ? 'bg-primary/10 text-primary' : 'bg-emerald-50 text-emerald-600'}`}>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 bg-primary/10 text-primary">
                         <MapPin size={8} /> {unit.tradeName || unit.name}
                       </span>
                     ) : null;
@@ -795,40 +972,43 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                   {clientPlan ? (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500/10 text-amber-600 flex items-center gap-1"><Crown size={9} /> {clientPlan.name}</span>
                   ) : (
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400'}`}>Sem plano</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">Sem plano</span>
                   )}
-                  {client.gender && <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>{client.gender === 'M' ? 'Masc' : client.gender === 'F' ? 'Fem' : 'Outro'}</span>}
+                  {client.gender && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-muted text-muted-foreground">{client.gender === 'M' ? 'Masc' : client.gender === 'F' ? 'Fem' : 'Outro'}</span>}
                 </div>
 
                 <div className="space-y-2 flex-1 mb-3">
                   <div className="grid grid-cols-2 gap-2">
-                    <div className={`p-2 rounded-lg border text-center ${isDarkMode ? 'bg-dark/50 border-dark-border/50' : 'bg-slate-50 border-slate-100'}`}>
+                    <div className="p-2 rounded-lg border border-border bg-muted/30 text-center">
                       <span className={`text-[10px] ${textSub} block`}>Visitas</span>
                       <span className={`text-sm font-bold ${textMain}`}>{client.totalVisits || 0}</span>
                     </div>
-                    <div className={`p-2 rounded-lg border text-center ${isDarkMode ? 'bg-dark/50 border-dark-border/50' : 'bg-slate-50 border-slate-100'}`}>
+                    <div className="p-2 rounded-lg border border-border bg-muted/30 text-center">
                       <span className={`text-[10px] ${textSub} block`}>LTV</span>
                       <span className="text-sm font-bold text-primary">{formatCurrency(totalLTV)}</span>
                     </div>
                   </div>
                   {preferredBarber && (
                     <div className={`flex items-center gap-1.5 text-[11px] ${textSub} px-1`}>
-                      <User size={10} /> Preferido: <span className={textMain}>{preferredBarber.name.split(' ')[0]}</span>
+                      <User size={10} /> Preferido: <span className={textMain}>{(preferredBarber.name || '').split(' ')[0]}</span>
                     </div>
                   )}
                   {salesExec && (
                     <div className={`flex items-center gap-1.5 text-[11px] ${textSub} px-1`}>
-                      <Briefcase size={10} /> Vendedor: <span className={textMain}>{salesExec.name.split(' ')[0]}</span>
+                      <Briefcase size={10} /> Vendedor: <span className={textMain}>{(salesExec.name || '').split(' ')[0]}</span>
                     </div>
                   )}
                 </div>
 
-                <div className={`flex gap-2 pt-2 border-t ${isDarkMode ? 'border-dark-border/50' : 'border-slate-100'}`}>
-                  <button onClick={() => window.location.href = `mailto:${client.email}`} className={`flex-1 py-2 rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 border ${isDarkMode ? 'bg-dark hover:bg-dark-surface text-slate-300 border-dark-border' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'}`}>
+                <div className={`flex gap-2 pt-2 border-t ${borderCol}`}>
+                  <button onClick={() => window.location.href = `mailto:${client.email}`} className={`flex-1 py-2 rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 border ${borderCol} bg-muted/30 hover:bg-muted/60 ${textSub}`}>
                     <Mail size={13} /> Email
                   </button>
-                  <button onClick={() => handleWhatsApp(client.phone)} className="flex-1 py-2 bg-primary hover:bg-primary-600 rounded-lg text-xs text-white font-bold transition-colors flex items-center justify-center gap-1.5 shadow-lg shadow-primary/20">
+                  <button onClick={() => handleWhatsApp(client.phone)} className="flex-1 py-2 bg-primary hover:bg-primary-600 rounded-lg text-xs text-white font-bold transition-colors flex items-center justify-center gap-1.5">
                     <MessageCircle size={13} /> WhatsApp
+                  </button>
+                  <button onClick={() => { window.location.hash = `/agenda?clientId=${client.id}`; }} className={`px-3 py-2 rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 border ${borderCol} bg-muted/30 hover:bg-muted/60 ${textSub}`} title="Agendar">
+                    <Calendar size={13} />
                   </button>
                 </div>
               </div>
@@ -838,9 +1018,14 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
           {filteredClients.length === 0 && (
             <div className={`col-span-full py-16 text-center ${textSub}`}>
               <Users size={48} className="mx-auto mb-4 opacity-30" />
-              <p className="text-lg font-semibold mb-1">Nenhum cliente nesta unidade</p>
-              <p className="text-sm mb-4">Adicione um novo cliente ou importe de outra unidade.</p>
-              {isFilteringUnit && (
+              <p className="text-lg font-semibold mb-1">Nenhum cliente encontrado</p>
+              <p className="text-sm mb-4">{activeFilter !== 'all' ? 'Tente outro filtro ou limpe a busca.' : 'Adicione um novo cliente ou importe de outra unidade.'}</p>
+              {activeFilter !== 'all' && (
+                <button onClick={() => { setActiveFilter('all'); setSearchQuery(''); }} className="px-4 py-2 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg text-sm transition-colors inline-flex items-center gap-2">
+                  <X size={16} /> Limpar filtros
+                </button>
+              )}
+              {activeFilter === 'all' && isFilteringUnit && (
                 <button
                   onClick={() => { setIsImportModalOpen(true); setImportSearch(''); setImportSelected(new Set()); }}
                   className="px-4 py-2 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg text-sm transition-colors inline-flex items-center gap-2"
@@ -852,12 +1037,24 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
           )}
         </div>
 
+        {/* Load More */}
+        {visibleCount < filteredClients.length && (
+          <div className="flex justify-center mt-6">
+            <button
+              onClick={() => setVisibleCount(v => v + PAGE_SIZE)}
+              className={`px-6 py-3 rounded-xl border ${borderCol} ${bgCard} ${textSub} hover:text-primary hover:border-primary/50 font-semibold text-sm transition-all flex items-center gap-2`}
+            >
+              <ChevronDown size={18} /> Carregar mais ({filteredClients.length - visibleCount} restantes)
+            </button>
+          </div>
+        )}
+
         {/* Import Client Modal */}
         {isImportModalOpen && (() => {
           // Clients NOT in this unit
           const importableClients = allClients.filter(c => c.unitId !== selectedUnitId);
           const filtered = importableClients.filter(c =>
-            c.name.toLowerCase().includes(importSearch.toLowerCase()) ||
+            (c.name || '').toLowerCase().includes(importSearch.toLowerCase()) ||
             (c.phone && c.phone.includes(importSearch)) ||
             (c.email && c.email.toLowerCase().includes(importSearch.toLowerCase()))
           );
@@ -966,7 +1163,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                           {c.image ? (
                             <img src={c.image} alt={c.name} className="w-full h-full rounded-full object-cover" />
                           ) : (
-                            <span className={`text-sm font-bold ${textSub}`}>{c.name.charAt(0)}</span>
+                            <span className={`text-sm font-bold ${textSub}`}>{(c.name || '?').charAt(0)}</span>
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -1428,7 +1625,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                     <div className="space-y-3">
                       {birthdaysWeek.length > 0 ? birthdaysWeek.slice(0, 5).map(c => (
                         <div key={c.id} className="flex items-center gap-3 bg-white/10 p-2 rounded-lg backdrop-blur-sm border border-white/10">
-                          <div className="w-8 h-8 rounded-full bg-white text-primary flex items-center justify-center font-bold text-xs">{c.name.charAt(0)}</div>
+                          <div className="w-8 h-8 rounded-full bg-white text-primary flex items-center justify-center font-bold text-xs">{(c.name || '?').charAt(0)}</div>
                           <div className="flex-1 min-w-0">
                             <p className="font-semibold text-xs truncate">{c.name}</p>
                             <p className="text-[10px] opacity-80">{c.birthday ? new Date(c.birthday + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' }) : ''}</p>

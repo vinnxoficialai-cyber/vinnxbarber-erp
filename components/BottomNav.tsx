@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Briefcase, Users, Calendar, DollarSign, Settings,
   Home, ShoppingBag, PiggyBank, UserCircle, Wrench, Kanban, CheckSquare,
   FileSpreadsheet, FileSignature, Layers, UserCog, Landmark, Star, Clock,
-  Sun, Key, Target, Wallet, CreditCard, Scissors, Package, ClipboardList
+  Sun, Key, Target, Wallet, CreditCard, Scissors, Package, ClipboardList, Bell
 } from 'lucide-react';
 import { SectionModal } from './SectionModal';
 import { useMenuBadges } from '../hooks/useMenuBadges';
@@ -55,6 +55,7 @@ const SECTIONS: NavSection[] = [
       { icon: Layers, label: 'Serviços', path: '/services' },
       { icon: Package, label: 'Produtos', path: '/products' },
       { icon: Briefcase, label: 'Projetos', path: '/projects' },
+      { icon: Bell, label: 'Notificações', path: '/notificacoes' },
     ],
   },
   {

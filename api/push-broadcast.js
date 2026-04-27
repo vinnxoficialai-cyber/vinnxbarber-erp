@@ -64,8 +64,11 @@ export default async function handler(req, res) {
     let targetClientIds = null;
     if (filterCriteria) {
       let clientQuery = 'clients?select=id&"authUserId"=not.is.null';
-      if (filterCriteria.gender) clientQuery += `&gender=eq.${filterCriteria.gender}`;
-      if (filterCriteria.minVisits) clientQuery += `&"totalVisits"=gte.${filterCriteria.minVisits}`;
+      const VALID_GENDERS = ['Masculino', 'Feminino', 'Outro', 'Prefiro não informar'];
+      if (filterCriteria.gender && VALID_GENDERS.includes(filterCriteria.gender)) {
+        clientQuery += `&gender=eq.${encodeURIComponent(filterCriteria.gender)}`;
+      }
+      if (filterCriteria.minVisits) clientQuery += `&"totalVisits"=gte.${parseInt(filterCriteria.minVisits, 10) || 0}`;
       
       const clientsRes = await sbFetch(clientQuery);
       const clients = await clientsRes.json();

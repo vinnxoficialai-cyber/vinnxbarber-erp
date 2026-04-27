@@ -5,7 +5,7 @@ import {
   Layers, ChevronLeft, ChevronRight, UserCog, CheckSquare,
   FileSpreadsheet, FileSignature, LogOut, Kanban, Star,
   Clock, Sun, Key, Target, Wallet, CreditCard, ChevronDown, ChevronUp,
-  Home, ShoppingBag, PiggyBank, UserCircle, Wrench, Scissors, Package, ClipboardList, Crown, BarChart3, Building2, Receipt, Globe
+  Home, ShoppingBag, PiggyBank, UserCircle, Wrench, Scissors, Package, ClipboardList, Crown, BarChart3, Building2, Receipt, Globe, Bell
 } from 'lucide-react';
 import { TeamMember } from '../types';
 import { safeStorage } from '../utils';
@@ -58,6 +58,7 @@ const SECTIONS: NavSection[] = [
       { icon: Layers, label: 'Serviços', path: '/services' },
       { icon: Package, label: 'Produtos', path: '/products' },
       { icon: Crown, label: 'Assinaturas', path: '/assinaturas' },
+      { icon: Bell, label: 'Notificações', path: '/notificacoes' },
     ],
   },
   {

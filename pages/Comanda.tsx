@@ -5,7 +5,8 @@ import {
     CreditCard, Banknote, QrCode, XCircle, Timer, RotateCcw,
     CalendarDays, Store, Crown, Percent, Split, TrendingUp,
     Filter, AlertTriangle, Star, History, BarChart3, CalendarRange,
-    Settings, ToggleLeft, Clock, Zap, ShieldCheck
+    Settings, ToggleLeft, Clock, Zap, ShieldCheck, FileSpreadsheet,
+    MessageSquare, Award, ArrowUpRight, ArrowDownRight, Save
 } from 'lucide-react';
 import { Comanda, ComandaItem, Service, Product, TeamMember, CalendarEvent, Client } from '../types';
 import { useConfirm } from '../components/ConfirmModal';
@@ -76,6 +77,8 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
     const bgCard = isDarkMode ? 'bg-dark-surface' : 'bg-white';
     const borderCol = isDarkMode ? 'border-dark-border' : 'border-slate-200';
     const bgInput = isDarkMode ? 'bg-dark' : 'bg-white';
+    const bgMuted = isDarkMode ? 'bg-dark' : 'bg-slate-50';
+    const bgToggleOff = isDarkMode ? 'bg-dark-border' : 'bg-slate-300';
 
 
     // â”€â”€ State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -191,7 +194,8 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                     if (comandaSettings.autoCreateComanda && !ev.comandaId) {
 
-                        createComandaFromAppointment(ev, services, clients, currentUser.id).then(res => {
+                        const clientSub = ev.clientId ? getClientSubscription(ev.clientId) : null;
+                        createComandaFromAppointment(ev, services, clients, currentUser.id, clientSub || undefined, clientSub?.plan || undefined).then(res => {
 
                             if (res.success && res.comanda) {
 
@@ -286,6 +290,14 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
         return () => clearInterval(timer);
     }, []);
 
+    // History pagination
+    const HIST_PAGE_SIZE = 50;
+    const [histVisibleCount, setHistVisibleCount] = useState(HIST_PAGE_SIZE);
+
+    // Notes editing
+    const [editingNotes, setEditingNotes] = useState<string | null>(null);
+    const [notesValue, setNotesValue] = useState('');
+
     // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
@@ -296,6 +308,39 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
         const h = Math.floor(diff / 60);
         const m = diff % 60;
         return m > 0 ? `${h}h ${m}min` : `${h}h`;
+    };
+
+    const getTimerColor = (openedAt: string) => {
+        const min = Math.floor((now.getTime() - new Date(openedAt).getTime()) / 60000);
+        if (min < 30) return 'text-emerald-500';
+        if (min < 60) return 'text-amber-500';
+        return 'text-red-500';
+    };
+
+    const handleExportCSV = () => {
+        if (historyComandas.length === 0) return;
+        const header = 'Cliente,Barbeiro,Data,Itens,Pagamento,Origem,Valor\n';
+        const rows = historyComandas.map(c =>
+            `"${c.clientName || 'Avulso'}","${c.barberName}","${new Date(c.closedAt || c.openedAt).toLocaleDateString('pt-BR')}","${c.items?.length || 0}","${c.paymentMethod || '--'}","${c.origin || 'manual'}","${c.finalAmount.toFixed(2)}"`
+        ).join('\n');
+        const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `comandas_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click(); URL.revokeObjectURL(url);
+        toast.success('CSV exportado!');
+    };
+
+    const handleSaveNotes = async (comandaId: string, notes: string) => {
+        const comanda = comandas.find(c => c.id === comandaId);
+        if (!comanda) return;
+        const updated = { ...comanda, notes };
+        const result = await saveComanda(updated);
+        if (!result.success) { toast.error('Erro ao salvar notas'); return; }
+        setComandas((prev: Comanda[]) => prev.map(c => c.id === comandaId ? { ...c, notes } : c));
+        setDetailComanda(prev => prev?.id === comandaId ? { ...prev, notes } : prev);
+        setEditingNotes(null);
+        toast.success('Notas salvas!');
     };
 
     const barbers = useMemo(() =>
@@ -321,16 +366,37 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
     const stats = useMemo(() => {
         const today = new Date().toDateString();
+        const yesterday = new Date(Date.now() - 86400000).toDateString();
         const todayComandas = comandas.filter(c => new Date(c.openedAt).toDateString() === today);
+        const yesterdayComandas = comandas.filter(c => new Date(c.openedAt).toDateString() === yesterday);
         const openCount = comandas.filter(c => c.status === 'open' || c.status === 'in_progress').length;
         const todayClosed = todayComandas.filter(c => c.status === 'closed');
+        const yesterdayClosed = yesterdayComandas.filter(c => c.status === 'closed');
         const todayRevenue = todayClosed.reduce((sum, c) => sum + c.finalAmount, 0);
+        const yesterdayRevenue = yesterdayClosed.reduce((sum, c) => sum + c.finalAmount, 0);
         const avgTicket = todayClosed.length > 0 ? todayRevenue / todayClosed.length : 0;
         const openComandas = comandas.filter(c => c.status === 'open' || c.status === 'in_progress');
         const avgTime = openComandas.length > 0
             ? Math.floor(openComandas.reduce((sum, c) => sum + (now.getTime() - new Date(c.openedAt).getTime()), 0) / openComandas.length / 60000)
             : 0;
-        return { openCount, todayRevenue, todayClosed: todayClosed.length, avgTicket, avgTime };
+        // Payment breakdown
+        const paymentBreakdown: Record<string, number> = {};
+        todayClosed.forEach(c => {
+            const method = c.paymentMethod || 'outro';
+            paymentBreakdown[method] = (paymentBreakdown[method] || 0) + c.finalAmount;
+        });
+        // Barber ranking
+        const barberStats: Record<string, { name: string; revenue: number; count: number }> = {};
+        todayClosed.forEach(c => {
+            if (!barberStats[c.barberId]) barberStats[c.barberId] = { name: c.barberName || '?', revenue: 0, count: 0 };
+            barberStats[c.barberId].revenue += c.finalAmount;
+            barberStats[c.barberId].count++;
+        });
+        const barberRanking = Object.entries(barberStats)
+            .map(([id, d]) => ({ id, ...d, avgTicket: d.count > 0 ? d.revenue / d.count : 0 }))
+            .sort((a, b) => b.revenue - a.revenue);
+        const revenueChange = yesterdayRevenue > 0 ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue * 100) : 0;
+        return { openCount, todayRevenue, todayClosed: todayClosed.length, avgTicket, avgTime, paymentBreakdown, barberRanking, revenueChange };
     }, [comandas, now]);
 
     // History filtered comandas
@@ -366,6 +432,13 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
         const avg = historyComandas.length > 0 ? total / historyComandas.length : 0;
         return { count: historyComandas.length, total, avg };
     }, [historyComandas]);
+
+    const visibleHistoryComandas = useMemo(() => historyComandas.slice(0, histVisibleCount), [historyComandas, histVisibleCount]);
+    const hasMoreHistory = histVisibleCount < historyComandas.length;
+
+    useEffect(() => {
+        setHistVisibleCount(HIST_PAGE_SIZE);
+    }, [histDateFrom, histDateTo, histBarber, histService, histPayment, histProduct, histSearchQuery]);
 
     const selectedComanda = selectedComandaId ? comandas.find(c => c.id === selectedComandaId) : null;
 
@@ -633,7 +706,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
             {isNewComandaOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                     <div className={`${bgCard} border ${borderCol} rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200`}>
-                        <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                        <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${bgMuted}`}>
                             <div className="flex items-center gap-2">
                                 <Store size={18} className="text-primary" />
                                 <h3 className={`font-semibold text-lg ${textMain}`}>Nova Comanda (Balcao)</h3>
@@ -655,7 +728,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                     <input type="text" value={walkInName} onChange={e => setWalkInName(e.target.value)} placeholder="Ex: Joao (cadeira 2)" className={`w-full ${bgInput} border ${borderCol} rounded-lg p-2.5 text-sm ${textMain} focus:ring-1 focus:ring-primary outline-none`} />
                                 </div>
                             )}
-                            <button onClick={handleCreateComanda} className="w-full py-3 bg-primary hover:bg-primary-600 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2 shadow-lg shadow-primary/20">
+                            <button onClick={handleCreateComanda} className="w-full py-3 bg-primary hover:bg-primary-600 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2">
                                 <Store size={16} /> Abrir Comanda
                             </button>
                         </div>
@@ -667,7 +740,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
             {showCheckout && selectedComanda && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                     <div className={`${bgCard} border ${borderCol} rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200`}>
-                        <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                        <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${bgMuted}`}>
                             <div className="flex items-center gap-2">
                                 <Receipt size={18} className="text-emerald-500" />
                                 <h3 className={`font-bold text-lg ${textMain}`}>Finalizar Pagamento</h3>
@@ -760,8 +833,8 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                             </div>
                         </div>
                         <div className="p-4 border-t border-emerald-500/20">
-                            <button onClick={handleCloseComanda} className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 text-sm">
-                                <CheckCircle size={18} /> Finalizar â€” {formatCurrency(computedFinal)}
+                            <button onClick={handleCloseComanda} className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-sm">
+                                <CheckCircle size={18} /> Finalizar - {formatCurrency(computedFinal)}
                             </button>
                         </div>
                     </div>
@@ -775,7 +848,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                     <p className={`${textSub} text-sm`}>Comandas e atendimentos da barbearia</p>
                 </div>
                 {canCreate('/comanda') && (
-                    <button onClick={() => setIsNewComandaOpen(true)} className="px-4 py-2.5 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg text-sm transition-all flex items-center gap-2 whitespace-nowrap shadow-lg shadow-primary/20">
+                    <button onClick={() => setIsNewComandaOpen(true)} className="h-10 px-4 bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg text-sm transition-all flex items-center gap-2 whitespace-nowrap">
                         <Plus size={18} /> Nova Comanda
                     </button>
                 )}
@@ -787,6 +860,66 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                 <StatCard label="Faturado Hoje" value={formatCurrency(stats.todayRevenue)} Icon={DollarSign} subtitle={`${stats.todayClosed} atendimentos`} />
                 <StatCard label="Ticket Medio" value={formatCurrency(stats.avgTicket)} Icon={Receipt} color="text-amber-500" bgIconColor="bg-amber-50 dark:bg-amber-500/10" />
                 <StatCard label="Tempo Medio" value={stats.avgTime > 0 ? `${stats.avgTime} min` : '--'} Icon={Timer} color="text-blue-500" bgIconColor="bg-blue-50 dark:bg-blue-500/10" subtitle="das comandas abertas" />
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mb-5">
+                <div className={`${bgCard} border ${borderCol} rounded-xl p-4`}>
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                            <Award size={16} className="text-amber-500" />
+                            <h2 className={`text-sm font-bold ${textMain}`}>Ranking de barbeiros hoje</h2>
+                        </div>
+                        {stats.revenueChange !== 0 && (
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${stats.revenueChange > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                {stats.revenueChange > 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+                                {Math.abs(stats.revenueChange).toFixed(0)}% vs ontem
+                            </span>
+                        )}
+                    </div>
+                    {stats.barberRanking.length === 0 ? (
+                        <p className={`text-xs ${textSub}`}>Nenhuma comanda finalizada hoje.</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {stats.barberRanking.slice(0, 4).map((barber, index) => (
+                                <div key={barber.id} className={`flex items-center justify-between rounded-lg ${bgMuted} px-3 py-2`}>
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <span className="w-6 h-6 rounded-full bg-primary/10 text-primary text-[10px] font-black flex items-center justify-center shrink-0">{index + 1}</span>
+                                        <div className="min-w-0">
+                                            <p className={`text-xs font-bold ${textMain} truncate`}>{barber.name}</p>
+                                            <p className={`text-[10px] ${textSub}`}>{barber.count} atend. • ticket {formatCurrency(barber.avgTicket)}</p>
+                                        </div>
+                                    </div>
+                                    <span className="text-xs font-black text-emerald-500">{formatCurrency(barber.revenue)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className={`${bgCard} border ${borderCol} rounded-xl p-4`}>
+                    <div className="flex items-center gap-2 mb-3">
+                        <Banknote size={16} className="text-emerald-500" />
+                        <h2 className={`text-sm font-bold ${textMain}`}>Resumo de caixa hoje</h2>
+                    </div>
+                    {Object.keys(stats.paymentBreakdown).length === 0 ? (
+                        <p className={`text-xs ${textSub}`}>Nenhum pagamento registrado hoje.</p>
+                    ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            {PAYMENT_METHODS.map(method => {
+                                const amount = stats.paymentBreakdown[method.value] || 0;
+                                const Icon = method.icon;
+                                return (
+                                    <div key={method.value} className={`rounded-lg ${bgMuted} px-3 py-2`}>
+                                        <div className={`flex items-center gap-1.5 text-[10px] ${textSub} mb-1`}>
+                                            <Icon size={11} /> {method.label}
+                                        </div>
+                                        <p className={`text-sm font-black ${amount > 0 ? 'text-emerald-500' : textMain}`}>{formatCurrency(amount)}</p>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* ===================== TAB SWITCHER ===================== */}
@@ -847,15 +980,15 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                         const isSelected = selectedComandaId === c.id;
                                         const elapsed = isComandaActive(c) ? formatElapsed(c.openedAt) : undefined;
                                         return (
-                                            <button key={c.id} onClick={() => { setSelectedComandaId(c.id); setShowCheckout(false); }} className={`w-full text-left p-3 rounded-xl border transition-all ${isSelected ? `border-primary ${isDarkMode ? 'bg-primary/5' : 'bg-primary/5'} shadow-sm shadow-primary/10` : `${borderCol} hover:border-primary/30 ${isDarkMode ? 'hover:bg-dark/50' : 'hover:bg-slate-50'}`}`}>
+                                            <button key={c.id} onClick={() => { setSelectedComandaId(c.id); setShowCheckout(false); }} className={`w-full text-left p-3 rounded-xl border transition-all ${isSelected ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10' : `${borderCol} hover:border-primary/30 hover:bg-muted/50`}`}>
                                                 <div className="flex items-center justify-between mb-1.5">
                                                     <div className="flex items-center gap-2 min-w-0">
-                                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${isSelected ? 'bg-primary text-white' : isDarkMode ? 'bg-dark text-primary' : 'bg-primary/10 text-primary'}`}>
+                                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${isSelected ? 'bg-primary text-white' : `${bgMuted} text-primary`}`}>
                                                             {(c.clientName || 'A')[0].toUpperCase()}
                                                         </div>
                                                         <div className="min-w-0">
                                                             <p className={`font-semibold text-xs truncate ${textMain}`}>{c.clientName || 'Cliente Avulso'}</p>
-                                                            <p className={`text-[10px] ${textSub} truncate`}>{c.barberName}{elapsed ? ` â€¢ ${elapsed}` : ''}</p>
+                                                            <p className={`text-[10px] ${textSub} truncate`}>{c.barberName}{elapsed ? ` - ${elapsed}` : ''}</p>
                                                         </div>
                                                     </div>
                                                     <div className="flex flex-col items-end shrink-0">
@@ -919,7 +1052,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                                 {/* Smart Client Info Banner */}
                                 {selectedComanda.clientId && clientSuggestions.visitCount > 0 && (
-                                    <div className={`px-4 py-2.5 border-b ${borderCol} flex items-center gap-4 ${isDarkMode ? 'bg-dark/30' : 'bg-slate-50/80'}`}>
+                                    <div className={`px-4 py-2.5 border-b ${borderCol} flex items-center gap-4 ${bgMuted}`}>
                                         <div className="flex items-center gap-1.5">
                                             <History size={11} className={textSub} />
                                             <span className={`text-[10px] ${textSub}`}>{clientSuggestions.visitCount} visitas</span>
@@ -1033,7 +1166,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                                 {/* Bottom: Totals + Actions */}
                                 <div className={`p-4 border-t ${borderCol} shrink-0`}>
-                                    <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-dark/60' : 'bg-slate-50'} mb-3`}>
+                                    <div className={`p-3 rounded-xl ${bgMuted} mb-3`}>
                                         <div className="flex justify-between mb-1">
                                             <span className={`text-xs ${textSub}`}>Subtotal</span>
                                             <span className={`text-sm font-medium ${textMain}`}>{formatCurrency(selectedComanda.totalAmount)}</span>
@@ -1044,14 +1177,14 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                                 <span className="text-sm font-medium text-red-500">-{formatCurrency(selectedComanda.discountAmount)}</span>
                                             </div>
                                         )}
-                                        <div className={`flex justify-between pt-2 border-t ${isDarkMode ? 'border-dark-border' : 'border-slate-200'}`}>
+                                        <div className={`flex justify-between pt-2 border-t ${borderCol}`}>
                                             <span className={`text-sm font-bold ${textMain}`}>Total</span>
                                             <span className="text-lg font-black text-emerald-500">{formatCurrency(selectedComanda.finalAmount)}</span>
                                         </div>
                                     </div>
                                     <div className="flex gap-2">
                                         {isComandaActive(selectedComanda) && selectedComanda.items && selectedComanda.items.length > 0 && (
-                                            <button onClick={() => { setShowCheckout(true); setCloseDiscount(0); setTipAmount(0); setSplitEnabled(false); }} className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20">
+                                            <button onClick={() => { setShowCheckout(true); setCloseDiscount(0); setTipAmount(0); setSplitEnabled(false); }} className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2">
                                                 <Receipt size={16} /> Finalizar Pagamento
                                             </button>
                                         )}
@@ -1105,28 +1238,33 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                 </div>
                             </div>
                         </div>
-                        <div className={`flex items-center gap-6 mt-3 pt-3 border-t ${borderCol}`}>
-                            <div className="flex items-center gap-2">
-                                <BarChart3 size={13} className="text-primary" />
-                                <span className={`text-xs ${textSub}`}>Resultados:</span>
-                                <span className={`text-xs font-bold ${textMain}`}>{historyStats.count} comandas</span>
+                        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-3 pt-3 border-t ${borderCol}`}>
+                            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                                <div className="flex items-center gap-2">
+                                    <BarChart3 size={13} className="text-primary" />
+                                    <span className={`text-xs ${textSub}`}>Resultados:</span>
+                                    <span className={`text-xs font-bold ${textMain}`}>{historyStats.count} comandas</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <DollarSign size={13} className="text-emerald-500" />
+                                    <span className={`text-xs ${textSub}`}>Total:</span>
+                                    <span className="text-xs font-bold text-emerald-500">{formatCurrency(historyStats.total)}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Receipt size={13} className="text-amber-500" />
+                                    <span className={`text-xs ${textSub}`}>Ticket Medio:</span>
+                                    <span className={`text-xs font-bold ${textMain}`}>{formatCurrency(historyStats.avg)}</span>
+                                </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <DollarSign size={13} className="text-emerald-500" />
-                                <span className={`text-xs ${textSub}`}>Total:</span>
-                                <span className="text-xs font-bold text-emerald-500">{formatCurrency(historyStats.total)}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Receipt size={13} className="text-amber-500" />
-                                <span className={`text-xs ${textSub}`}>Ticket Medio:</span>
-                                <span className={`text-xs font-bold ${textMain}`}>{formatCurrency(historyStats.avg)}</span>
-                            </div>
+                            <button type="button" onClick={handleExportCSV} disabled={historyComandas.length === 0} className={`inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-xs font-bold transition-colors ${historyComandas.length === 0 ? `${borderCol} ${textSub} opacity-50 cursor-not-allowed` : `border-primary/30 text-primary hover:bg-primary/5`}`}>
+                                <FileSpreadsheet size={14} /> Exportar CSV
+                            </button>
                         </div>
                     </div>
                     <div className={`flex-1 ${bgCard} rounded-xl border ${borderCol} overflow-hidden flex flex-col`}>
                         <div className="overflow-x-auto overflow-y-auto flex-1 custom-scrollbar">
                             <table className="w-full text-left">
-                                <thead className={`sticky top-0 z-10 ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                                <thead className={`sticky top-0 z-10 ${bgMuted}`}>
                                     <tr className={`border-b ${borderCol}`}>
                                         <th className={`px-4 py-3 text-[10px] font-bold ${textSub} uppercase tracking-wider`}>Cliente</th>
                                         <th className={`px-4 py-3 text-[10px] font-bold ${textSub} uppercase tracking-wider`}>Barbeiro</th>
@@ -1143,11 +1281,11 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                             <CalendarRange size={32} className="mx-auto mb-2 opacity-15" />
                                             <p className="text-xs">Nenhuma comanda encontrada neste periodo</p>
                                         </td></tr>
-                                    ) : historyComandas.map(c => (
-                                        <tr key={c.id} onClick={() => setDetailComanda(c)} className={`border-b ${borderCol} ${isDarkMode ? 'hover:bg-dark/50' : 'hover:bg-slate-50'} transition-colors cursor-pointer`}>
+                                    ) : visibleHistoryComandas.map(c => (
+                                        <tr key={c.id} onClick={() => setDetailComanda(c)} className={`border-b ${borderCol} hover:bg-muted/50 transition-colors cursor-pointer`}>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-2">
-                                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-[10px] ${isDarkMode ? 'bg-dark text-primary' : 'bg-primary/10 text-primary'}`}>
+                                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-[10px] ${bgMuted} text-primary`}>
                                                         {(c.clientName || 'A')[0].toUpperCase()}
                                                     </div>
                                                     <span className={`text-xs font-medium ${textMain} truncate max-w-[140px]`}>{c.clientName || 'Avulso'}</span>
@@ -1157,7 +1295,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                             <td className={`px-4 py-3 text-xs ${textSub}`}>{new Date(c.closedAt || c.openedAt).toLocaleDateString('pt-BR')}</td>
                                             <td className={`px-4 py-3 text-xs ${textSub}`}>{c.items?.length || 0} itens</td>
                                             <td className="px-4 py-3 text-xs">
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium capitalize ${isDarkMode ? 'bg-dark text-slate-300' : 'bg-slate-100 text-slate-600'}`}>
+                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium capitalize ${bgMuted} ${textSub}`}>
                                                     {c.paymentMethod || '--'}
                                                 </span>
                                             </td>
@@ -1170,6 +1308,13 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                 </tbody>
                             </table>
                         </div>
+                        {hasMoreHistory && (
+                            <div className={`p-3 border-t ${borderCol} flex justify-center`}>
+                                <button type="button" onClick={() => setHistVisibleCount(count => count + HIST_PAGE_SIZE)} className={`px-4 py-2 rounded-lg border ${borderCol} ${textSub} hover:text-primary hover:border-primary/40 text-xs font-bold transition-colors`}>
+                                    Carregar mais ({historyComandas.length - histVisibleCount} restantes)
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -1208,7 +1353,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                         <div className="space-y-3">
 
-                            <div className={`flex items-center justify-between p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`flex items-center justify-between p-3 rounded-xl ${bgMuted}`}>
 
                                 <div className="flex items-center gap-3">
 
@@ -1224,7 +1369,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                                 </div>
 
-                                <button onClick={() => updateSetting('autoStatusEnabled', !comandaSettings.autoStatusEnabled)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.autoStatusEnabled ? 'bg-emerald-500' : isDarkMode ? 'bg-dark-border' : 'bg-slate-300'}`}>
+                                <button onClick={() => updateSetting('autoStatusEnabled', !comandaSettings.autoStatusEnabled)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.autoStatusEnabled ? 'bg-emerald-500' : bgToggleOff}`}>
 
                                     <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${comandaSettings.autoStatusEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
 
@@ -1232,7 +1377,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                             </div>
 
-                            <div className={`flex items-center justify-between p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`flex items-center justify-between p-3 rounded-xl ${bgMuted}`}>
 
                                 <div className="flex items-center gap-3">
 
@@ -1248,7 +1393,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                                 </div>
 
-                                <button onClick={() => updateSetting('autoCompleteEnabled', !comandaSettings.autoCompleteEnabled)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.autoCompleteEnabled ? 'bg-emerald-500' : isDarkMode ? 'bg-dark-border' : 'bg-slate-300'}`}>
+                                <button onClick={() => updateSetting('autoCompleteEnabled', !comandaSettings.autoCompleteEnabled)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.autoCompleteEnabled ? 'bg-emerald-500' : bgToggleOff}`}>
 
                                     <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${comandaSettings.autoCompleteEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
 
@@ -1256,7 +1401,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                             </div>
 
-                            <div className={`flex items-center justify-between p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`flex items-center justify-between p-3 rounded-xl ${bgMuted}`}>
 
                                 <div className="flex items-center gap-3">
 
@@ -1312,7 +1457,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                         <div className="space-y-3">
 
-                            <div className={`flex items-center justify-between p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`flex items-center justify-between p-3 rounded-xl ${bgMuted}`}>
 
                                 <div className="flex items-center gap-3">
 
@@ -1328,7 +1473,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                                 </div>
 
-                                <button onClick={() => updateSetting('autoCreateComanda', !comandaSettings.autoCreateComanda)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.autoCreateComanda ? 'bg-emerald-500' : isDarkMode ? 'bg-dark-border' : 'bg-slate-300'}`}>
+                                <button onClick={() => updateSetting('autoCreateComanda', !comandaSettings.autoCreateComanda)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.autoCreateComanda ? 'bg-emerald-500' : bgToggleOff}`}>
 
                                     <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${comandaSettings.autoCreateComanda ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
 
@@ -1336,7 +1481,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                             </div>
 
-                            <div className={`flex items-center justify-between p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`flex items-center justify-between p-3 rounded-xl ${bgMuted}`}>
 
                                 <div className="flex items-center gap-3">
 
@@ -1352,7 +1497,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                                 </div>
 
-                                <button onClick={() => updateSetting('requireClientForComanda', !comandaSettings.requireClientForComanda)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.requireClientForComanda ? 'bg-emerald-500' : isDarkMode ? 'bg-dark-border' : 'bg-slate-300'}`}>
+                                <button onClick={() => updateSetting('requireClientForComanda', !comandaSettings.requireClientForComanda)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.requireClientForComanda ? 'bg-emerald-500' : bgToggleOff}`}>
 
                                     <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${comandaSettings.requireClientForComanda ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
 
@@ -1360,7 +1505,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                             </div>
 
-                            <div className={`flex items-center justify-between p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`flex items-center justify-between p-3 rounded-xl ${bgMuted}`}>
 
                                 <div className="flex items-center gap-3">
 
@@ -1380,7 +1525,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                             </div>
 
-                            <div className={`flex items-center justify-between p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`flex items-center justify-between p-3 rounded-xl ${bgMuted}`}>
 
                                 <div className="flex items-center gap-3">
 
@@ -1436,7 +1581,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                         <div className="space-y-3">
 
-                            <div className={`flex items-center justify-between p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`flex items-center justify-between p-3 rounded-xl ${bgMuted}`}>
 
                                 <div className="flex items-center gap-3">
 
@@ -1452,7 +1597,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                                 </div>
 
-                                <button onClick={() => updateSetting('allowReopenClosed', !comandaSettings.allowReopenClosed)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.allowReopenClosed ? 'bg-emerald-500' : isDarkMode ? 'bg-dark-border' : 'bg-slate-300'}`}>
+                                <button onClick={() => updateSetting('allowReopenClosed', !comandaSettings.allowReopenClosed)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.allowReopenClosed ? 'bg-emerald-500' : bgToggleOff}`}>
 
                                     <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${comandaSettings.allowReopenClosed ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
 
@@ -1460,7 +1605,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                             </div>
 
-                            <div className={`flex items-center justify-between p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                            <div className={`flex items-center justify-between p-3 rounded-xl ${bgMuted}`}>
 
                                 <div className="flex items-center gap-3">
 
@@ -1476,7 +1621,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
                                 </div>
 
-                                <button onClick={() => updateSetting('showProductSuggestions', !comandaSettings.showProductSuggestions)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.showProductSuggestions ? 'bg-emerald-500' : isDarkMode ? 'bg-dark-border' : 'bg-slate-300'}`}>
+                                <button onClick={() => updateSetting('showProductSuggestions', !comandaSettings.showProductSuggestions)} className={`relative w-11 h-6 rounded-full transition-colors ${comandaSettings.showProductSuggestions ? 'bg-emerald-500' : bgToggleOff}`}>
 
                                     <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${comandaSettings.showProductSuggestions ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
 
@@ -1523,33 +1668,33 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                 <h2 className={`text-lg font-bold ${textMain}`}>Detalhes da Comanda</h2>
                                 <p className={`text-xs ${textSub}`}>#{detailComanda.id.slice(0, 8)}</p>
                             </div>
-                            <button onClick={() => setDetailComanda(null)} className={`p-2 rounded-lg ${isDarkMode ? 'hover:bg-dark' : 'hover:bg-slate-100'} transition-colors`}><X size={18} className={textSub} /></button>
+                            <button onClick={() => setDetailComanda(null)} className={`p-2 rounded-lg hover:bg-muted/50 transition-colors`}><X size={18} className={textSub} /></button>
                         </div>
 
                         {/* Info Grid */}
                         <div className="p-5 space-y-4">
                             <div className="grid grid-cols-2 gap-3">
-                                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                                <div className={`p-3 rounded-xl ${bgMuted}`}>
                                     <p className={`text-[10px] font-semibold ${textSub} uppercase tracking-wider mb-0.5`}>Cliente</p>
                                     <p className={`text-sm font-bold ${textMain}`}>{detailComanda.clientName || 'Avulso'}</p>
                                 </div>
-                                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                                <div className={`p-3 rounded-xl ${bgMuted}`}>
                                     <p className={`text-[10px] font-semibold ${textSub} uppercase tracking-wider mb-0.5`}>Barbeiro</p>
                                     <p className={`text-sm font-bold ${textMain}`}>{detailComanda.barberName}</p>
                                 </div>
-                                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                                <div className={`p-3 rounded-xl ${bgMuted}`}>
                                     <p className={`text-[10px] font-semibold ${textSub} uppercase tracking-wider mb-0.5`}>Abertura</p>
                                     <p className={`text-sm font-bold ${textMain}`}>{new Date(detailComanda.openedAt).toLocaleString('pt-BR')}</p>
                                 </div>
-                                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                                <div className={`p-3 rounded-xl ${bgMuted}`}>
                                     <p className={`text-[10px] font-semibold ${textSub} uppercase tracking-wider mb-0.5`}>Fechamento</p>
                                     <p className={`text-sm font-bold ${textMain}`}>{detailComanda.closedAt ? new Date(detailComanda.closedAt).toLocaleString('pt-BR') : '--'}</p>
                                 </div>
-                                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                                <div className={`p-3 rounded-xl ${bgMuted}`}>
                                     <p className={`text-[10px] font-semibold ${textSub} uppercase tracking-wider mb-0.5`}>Pagamento</p>
                                     <p className={`text-sm font-bold ${textMain} capitalize`}>{detailComanda.paymentMethod || '--'}</p>
                                 </div>
-                                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
+                                <div className={`p-3 rounded-xl ${bgMuted}`}>
                                     <p className={`text-[10px] font-semibold ${textSub} uppercase tracking-wider mb-0.5`}>Origem</p>
                                     <div className="mt-0.5"><OriginBadge origin={detailComanda.origin} /></div>
                                 </div>
@@ -1560,7 +1705,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                 <p className={`text-[10px] font-semibold ${textSub} uppercase tracking-wider mb-2`}>Itens ({detailComanda.items?.length || 0})</p>
                                 <div className={`rounded-xl border ${borderCol} overflow-hidden`}>
                                     <table className="w-full text-left">
-                                        <thead className={isDarkMode ? 'bg-dark' : 'bg-slate-50'}>
+                                        <thead className={bgMuted}>
                                             <tr className={`border-b ${borderCol}`}>
                                                 <th className={`px-3 py-2 text-[10px] font-bold ${textSub} uppercase`}>Tipo</th>
                                                 <th className={`px-3 py-2 text-[10px] font-bold ${textSub} uppercase`}>Nome</th>
@@ -1607,12 +1752,31 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                 </div>
                             </div>
 
-                            {detailComanda.notes && (
-                                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-dark' : 'bg-slate-50'}`}>
-                                    <p className={`text-[10px] font-semibold ${textSub} uppercase tracking-wider mb-1`}>Observacoes</p>
-                                    <p className={`text-xs ${textMain}`}>{detailComanda.notes}</p>
+                            <div className={`p-3 rounded-xl ${bgMuted}`}>
+                                <div className="flex items-center justify-between gap-2 mb-2">
+                                    <p className={`text-[10px] font-semibold ${textSub} uppercase tracking-wider flex items-center gap-1`}>
+                                        <MessageSquare size={11} /> Observacoes
+                                    </p>
+                                    {editingNotes !== detailComanda.id && (
+                                        <button type="button" onClick={() => { setEditingNotes(detailComanda.id); setNotesValue(detailComanda.notes || ''); }} className="text-[10px] font-bold text-primary hover:text-primary-600">
+                                            Editar
+                                        </button>
+                                    )}
                                 </div>
-                            )}
+                                {editingNotes === detailComanda.id ? (
+                                    <div className="space-y-2">
+                                        <textarea value={notesValue} onChange={e => setNotesValue(e.target.value)} rows={3} className={`w-full ${bgInput} border ${borderCol} rounded-lg p-2 text-xs ${textMain} focus:ring-1 focus:ring-primary outline-none resize-none`} placeholder="Anote preferencias, ajustes ou observacoes internas..." />
+                                        <div className="flex justify-end gap-2">
+                                            <button type="button" onClick={() => setEditingNotes(null)} className={`px-3 py-1.5 rounded-lg border ${borderCol} ${textSub} text-[10px] font-bold`}>Cancelar</button>
+                                            <button type="button" onClick={() => handleSaveNotes(detailComanda.id, notesValue)} className="px-3 py-1.5 rounded-lg bg-primary text-white text-[10px] font-bold flex items-center gap-1">
+                                                <Save size={11} /> Salvar
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className={`text-xs ${detailComanda.notes ? textMain : textSub}`}>{detailComanda.notes || 'Sem observacoes registradas.'}</p>
+                                )}
+                            </div>
 
                             {(comandaSettings.allowReopenClosed && (detailComanda.status === 'closed' || detailComanda.status === 'cancelled')) && (
                                 <button onClick={() => handleReopenComanda(detailComanda.id)} className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm transition-colors ${isDarkMode ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20' : 'bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100'}`}>

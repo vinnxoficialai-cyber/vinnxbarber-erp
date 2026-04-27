@@ -79,7 +79,7 @@ export default async function handler(req, res) {
 
     // Fetch all subscriptions for this client (supports multiple devices)
     const subsRes = await sbQuery(
-      `push_subscriptions?${`"clientId"=eq.${encodeURIComponent(clientId)}`}&select=id,endpoint,keys`
+      `push_subscriptions?select=id,endpoint,keys&"clientId"=eq.${encodeURIComponent(clientId)}`
     );
     const subscriptions = await subsRes.json();
 

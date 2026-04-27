@@ -5,6 +5,27 @@ const SUPABASE_URL = 'https://enjyflztvyomrlzddavk.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export default async function handler(req, res) {
+  // DELETE: Remove subscription (bypasses RLS using service_role)
+  if (req.method === 'DELETE') {
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ error: 'endpoint is required' });
+
+    const deleteRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(endpoint)}`,
+      {
+        method: 'DELETE',
+        headers: {
+          apikey: SUPABASE_SERVICE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+          Prefer: 'return=minimal',
+        },
+      }
+    );
+    return deleteRes.ok
+      ? res.status(200).json({ ok: true })
+      : res.status(500).json({ error: 'Failed to delete subscription' });
+  }
+
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
@@ -12,6 +33,10 @@ export default async function handler(req, res) {
 
     if (!endpoint || !keys) {
       return res.status(400).json({ error: 'endpoint and keys are required' });
+    }
+
+    if (!clientId || clientId === 'anonymous') {
+      return res.status(400).json({ error: 'Valid clientId is required (login first)' });
     }
 
     // Upsert subscription using service_role (bypasses RLS)
@@ -24,7 +49,7 @@ export default async function handler(req, res) {
         Prefer: 'resolution=merge-duplicates',
       },
       body: JSON.stringify({
-        clientId: clientId || 'anonymous',
+        clientId,
         authUserId: authUserId || 'anonymous',
         endpoint,
         keys,

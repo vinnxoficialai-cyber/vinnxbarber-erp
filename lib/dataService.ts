@@ -1912,7 +1912,9 @@ export async function createComandaFromAppointment(
     event: CalendarEvent,
     allServices: Service[],
     allClients: Client[],
-    currentUserId: string
+    currentUserId: string,
+    activeSubscription?: Subscription,
+    subscriptionPlan?: SubscriptionPlan
 ): Promise<{ success: boolean; comanda?: Comanda; error?: string }> {
     try {
         // Guard: check if a comanda already exists for this appointment
@@ -1929,10 +1931,63 @@ export async function createComandaFromAppointment(
         const now = new Date().toISOString();
         const comandaId = crypto.randomUUID();
 
-        // Resolve client info
-        const client = event.client
-            ? allClients.find(c => c.name === event.client || c.id === event.client)
-            : null;
+        // Resolve client info — prioritize clientId over name-based lookup
+        const client = event.clientId
+            ? allClients.find(c => c.id === event.clientId)
+            : event.client
+                ? allClients.find(c => c.name === event.client || c.id === event.client)
+                : null;
+
+        // ── Subscription Discount Logic ──────────────────────────
+        // Safely parse JSONB fields that may arrive as JSON strings
+        const safeParse = (val: any): any[] => {
+            if (Array.isArray(val)) return val;
+            if (typeof val === 'string') { try { const p = JSON.parse(val); return Array.isArray(p) ? p : []; } catch { return []; } }
+            return [];
+        };
+
+        // Determine if subscription discount applies
+        let discountRules: Record<string, number> = {}; // serviceId → discount %
+        const plan = subscriptionPlan || activeSubscription?.plan;
+        if (activeSubscription?.status === 'active' && plan) {
+            const planServices = safeParse(plan.planServices);
+            const allowedUnitIds = safeParse(plan.allowedUnitIds);
+            const excludedProfessionals = safeParse(plan.excludedProfessionals);
+            const disabledDays = safeParse(plan.disabledDays);
+
+            // Unit scope check
+            const unitOk = plan.unitScope === 'all' || allowedUnitIds.length === 0 ||
+                allowedUnitIds.includes(event.unitId);
+            // Excluded professionals check
+            const barberOk = excludedProfessionals.length === 0 ||
+                !excludedProfessionals.includes(event.barberId);
+            // Disabled days check
+            const eventDate = new Date(event.year, event.month, event.date);
+            const dayOfWeek = eventDate.getDay();
+            const dayOk = disabledDays.length === 0 || !disabledDays.includes(dayOfWeek);
+
+            if (unitOk && barberOk && dayOk) {
+                // Check monthly usage limit
+                const usesThisMonth = activeSubscription.usesThisMonth || 0;
+                const maxUses = plan.maxUsesPerMonth;
+                const withinLimit = !maxUses || usesThisMonth < maxUses;
+
+                if (withinLimit) {
+                    for (const rule of planServices) {
+                        if (rule.serviceId && Number(rule.discount) > 0) {
+                            // Per-service monthly limit check
+                            if (rule.monthlyLimit) {
+                                // For per-service limits, we trust the global counter as approximation
+                                // Fine-grained per-service counting is done in Comanda.tsx handleAddItem
+                                discountRules[rule.serviceId] = Number(rule.discount);
+                            } else {
+                                discountRules[rule.serviceId] = Number(rule.discount);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Build comanda items from event services
         const serviceIds = event.serviceIds && event.serviceIds.length > 0
@@ -1943,6 +1998,11 @@ export async function createComandaFromAppointment(
             .map(svcId => {
                 const svc = allServices.find(s => s.id === svcId);
                 if (!svc) return null;
+
+                const discountPct = discountRules[svcId] || 0;
+                const discountAmount = +(svc.price * discountPct / 100).toFixed(2);
+                const finalPrice = +(svc.price - discountAmount).toFixed(2);
+
                 return {
                     id: crypto.randomUUID(),
                     comandaId,
@@ -1950,8 +2010,12 @@ export async function createComandaFromAppointment(
                     itemId: svc.id,
                     name: svc.name,
                     quantity: 1,
-                    unitPrice: svc.price,
-                    totalPrice: svc.price,
+                    unitPrice: finalPrice,
+                    totalPrice: finalPrice,
+                    ...(discountPct > 0 ? {
+                        originalPrice: svc.price,
+                        subscriptionDiscount: discountPct,
+                    } : {}),
                 };
             })
             .filter(Boolean) as ComandaItem[];
@@ -1960,7 +2024,7 @@ export async function createComandaFromAppointment(
 
         const newComanda: Comanda = {
             id: comandaId,
-            clientId: client?.id || undefined,
+            clientId: client?.id || event.clientId || undefined,
             clientName: client?.name || event.client || 'Cliente Avulso',
             barberId: event.barberId || '',
             barberName: event.barberName || '',
@@ -1988,6 +2052,27 @@ export async function createComandaFromAppointment(
             if (!itemResult.success) {
                 console.warn('Failed to save comanda item:', item.name, itemResult.error);
             }
+
+            // Register subscription usage for discounted items
+            if (item.subscriptionDiscount && activeSubscription) {
+                await saveSubscriptionUsageLog({
+                    id: crypto.randomUUID(),
+                    subscriptionId: activeSubscription.id,
+                    comandaId,
+                    comandaItemId: item.id,
+                    itemId: item.itemId,
+                    type: 'service',
+                    discountApplied: item.subscriptionDiscount,
+                    originalPrice: item.originalPrice,
+                    finalPrice: item.unitPrice,
+                });
+            }
+        }
+
+        // Increment subscription usage counter if any discounts were applied
+        const discountedCount = comandaItems.filter(i => i.subscriptionDiscount).length;
+        if (discountedCount > 0 && activeSubscription) {
+            await incrementSubscriptionUses(activeSubscription.id, discountedCount);
         }
 
         // Link the calendar_event to the comanda

@@ -24,6 +24,7 @@ const AUTOMATION_LABELS: Record<string, { title: string; icon: React.ReactNode; 
   review: { title: 'Pedir Avaliação', icon: <MessageSquare size={16} />, desc: 'Pede avaliação após o serviço concluído' },
   incomplete: { title: 'Cadastro Incompleto', icon: <Users size={16} />, desc: 'Nudge periódico para completar o perfil' },
   birthday: { title: 'Aniversário', icon: <Calendar size={16} />, desc: 'Parabéns + desconto no aniversário do cliente' },
+  inactive: { title: 'Clientes Inativos', icon: <Bell size={16} />, desc: 'Nudge para clientes que não visitam há X dias' },
 };
 
 export function PushPanel({ isDarkMode, textMain, textSub, bgInput, borderCol }: PushPanelProps) {

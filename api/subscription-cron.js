@@ -16,12 +16,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Auth check — accepts Vercel CRON_SECRET or PUSH_SECRET
+  // Auth check — accepts Vercel CRON_SECRET or PUSH_API_SECRET
   const bearerToken = req.headers['authorization']?.replace('Bearer ', '');
   const pushSecret = req.headers['x-push-secret'];
   const validSecret = bearerToken === process.env.CRON_SECRET
-    || bearerToken === process.env.PUSH_SECRET
-    || pushSecret === process.env.PUSH_SECRET;
+    || bearerToken === process.env.PUSH_API_SECRET
+    || pushSecret === process.env.PUSH_API_SECRET;
   if (!validSecret) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
