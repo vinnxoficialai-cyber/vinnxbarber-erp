@@ -3681,19 +3681,17 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     const canReactivate = isPaused || isOverdue;
     openModal(
       <div className="p-6" style={{ borderRadius: "1rem" }}>
-        <h3 className="text-2xl font-bold text-center mb-8" style={{ color: primary }}>Gerenciar Assinatura</h3>
-        <div className="p-5 rounded-lg mb-6" style={{ backgroundColor: "#2a2a2a" }}>
-          <h4 className="font-bold text-lg mb-3 text-white">Meu Plano</h4>
-          <div className="flex justify-between text-sm mb-2">
-            <span className="text-gray-400">{subscription.plan.name}</span>
-            <span className="font-bold text-white">R$ {Number(subscription.plan.price).toFixed(2)}/mês</span>
+        <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Gerenciar Assinatura</h3>
+        <div className="p-4 rounded-lg mb-4 flex items-center justify-between" style={{ backgroundColor: "#2a2a2a" }}>
+          <div>
+            <p className="text-sm font-bold text-white">{subscription.plan.name}</p>
+            {subscription.cardBrand && <p className="text-[11px] text-gray-500 mt-0.5">{subscription.cardBrand} ****{subscription.cardLast4}</p>}
           </div>
-          {subscription.cardBrand && <div className="flex justify-between text-sm">
-            <span className="text-gray-400">Cartão</span>
-            <span className="text-white">{subscription.cardBrand} ****{subscription.cardLast4}</span>
-          </div>}
-          {isPaused && <div className="mt-2 px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold text-center flex items-center justify-center gap-1.5"><Pause className="w-3 h-3" /> Pausado</div>}
-          {isOverdue && <div className="mt-2 px-3 py-1.5 rounded-full bg-red-500/10 text-red-400 text-xs font-bold text-center flex items-center justify-center gap-1.5"><AlertTriangle className="w-3 h-3" /> Inadimplente</div>}
+          <div className="text-right">
+            <p className="text-sm font-bold text-white">R$ {Number(subscription.plan.price).toFixed(2)}<span className="text-xs text-gray-500 font-normal">/mês</span></p>
+            {isPaused && <span className="text-[10px] font-bold text-amber-400 flex items-center justify-end gap-1 mt-0.5"><Pause className="w-2.5 h-2.5" />Pausado</span>}
+            {isOverdue && <span className="text-[10px] font-bold text-red-400 flex items-center justify-end gap-1 mt-0.5"><AlertTriangle className="w-2.5 h-2.5" />Inadimplente</span>}
+          </div>
         </div>
         <div className="space-y-3">
           {canReactivate && (
@@ -3731,7 +3729,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
             <ChevronRight className="w-4 h-4 text-gray-500" />
           </button>
         </div>
-        <div className="mt-6 pt-6 border-t border-gray-700">
+        <div className="mt-6">
           <button onClick={() => closeModal()} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
         </div>
       </div>, "center"
