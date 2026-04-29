@@ -765,7 +765,7 @@ export default async function handler(req, res) {
         );
         const subs = await subRes.json();
         const sub = subs?.[0];
-        if (!sub || !sub.gatewaySubscriptionId) {
+        if (!sub) {
           return res.status(400).json({ error: 'Nenhuma assinatura ativa encontrada.' });
         }
 
@@ -782,19 +782,21 @@ export default async function handler(req, res) {
         const config = await getConfig();
         if (!config) return res.status(500).json({ error: 'Gateway não configurado.' });
 
-        // Update subscription value in ASAAS
+        // Update subscription value in ASAAS (only if we have a gateway subscription)
         const newPrice = Number(newPlan.creditPrice) || Number(newPlan.price) || 0;
-        try {
-          await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'PUT', {
-            value: newPrice,
-            description: `Assinatura ${newPlan.name}`,
-            updatePendingPayments: true,
-          });
-        } catch (asaasErr) {
-          return res.status(400).json({
-            error: asaasErr.message || 'Erro ao atualizar plano no gateway.',
-            errorCode: 'PLAN_CHANGE_FAILED',
-          });
+        if (sub.gatewaySubscriptionId) {
+          try {
+            await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'PUT', {
+              value: newPrice,
+              description: `Assinatura ${newPlan.name}`,
+              updatePendingPayments: true,
+            });
+          } catch (asaasErr) {
+            return res.status(400).json({
+              error: asaasErr.message || 'Erro ao atualizar plano no gateway.',
+              errorCode: 'PLAN_CHANGE_FAILED',
+            });
+          }
         }
 
         // Update local subscription

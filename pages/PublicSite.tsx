@@ -3407,9 +3407,6 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     openModal(
       <div className="p-6" style={{ borderRadius: "1rem" }}>
         <div className="text-center mb-6">
-          <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${primary}15` }}>
-            <Award className="w-7 h-7" style={{ color: primary }} />
-          </div>
           <h3 className="text-2xl font-bold" style={{ color: primary }}>Benefícios Exclusivos</h3>
           <p className="text-gray-400 text-sm mt-1">Vantagens do seu plano <strong className="text-white">{subscription?.plan?.name}</strong></p>
         </div>
@@ -3462,8 +3459,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
           <div className="space-y-3">
             {[
               { Icon: Zap, title: "Agilidade e Conveniência", desc: "Agende seus horários de forma rápida e fácil." },
-              { Icon: Tag, title: "Descontos Exclusivos", desc: "Preços especiais em produtos e serviços selecionados." },
-              { Icon: ShieldCheck, title: "Prioridade no Atendimento", desc: "Tenha preferência na hora de agendar." },
+              { Icon: Tag, title: "Descontos Exclusivos", desc: "Preços especiais em produtos e serviços." },
               { Icon: Star, title: "Acesso Antecipado", desc: "Seja o primeiro a saber de novidades e eventos." },
             ].map(({ Icon, title, desc }) => (
               <div key={title} className="flex items-start gap-3">
@@ -3484,6 +3480,24 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
   }
 
   function showPausarModal() {
+    // Calculate remaining period
+    const startDate = subscription?.startDate ? new Date(subscription.startDate) : null;
+    const recurrence = subscription?.plan?.recurrence || 'monthly';
+    const recMonths: Record<string, number> = { monthly: 1, quarterly: 3, semiannual: 6, annual: 12 };
+    let pauseNextDueStr = '';
+    let pauseDaysRemaining = 0;
+    if (startDate) {
+      const start = new Date(startDate);
+      const now = new Date();
+      const months = recMonths[recurrence] || 1;
+      while (start <= now) { start.setMonth(start.getMonth() + months); }
+      pauseNextDueStr = start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+      pauseDaysRemaining = Math.max(0, Math.ceil((start.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+    }
+    const pauseMaxUses = subscription?.plan?.maxUsesPerMonth || 0;
+    const pauseUsed = subscription?.usesThisMonth || 0;
+    const pauseRemaining = pauseMaxUses ? Math.max(0, pauseMaxUses - pauseUsed) : 0;
+
     const PauseFlow = () => {
       const [pausing, setPausing] = useState(false);
       const [error, setError] = useState('');
@@ -3491,14 +3505,32 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
       <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
         <Pause className="w-12 h-12 mx-auto mb-4 text-yellow-400" />
         <h3 className="text-2xl font-bold mb-2 text-white">Pausar Assinatura?</h3>
-        <p className="text-gray-400 mb-6">Seu plano será pausado e os benefícios ficarão suspensos até que você reative. Você pode reativar a qualquer momento.</p>
+        <p className="text-gray-400 mb-6">Seu plano será pausado e os benefícios ficarão suspensos até que você reative.</p>
         {error && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{error}</div>}
-        <div className="p-4 rounded-lg mb-6 text-left" style={{ backgroundColor: "#2a2a2a" }}>
-          <div className="flex justify-between text-sm">
+        <div className="p-4 rounded-xl mb-4 text-left" style={{ backgroundColor: "#2a2a2a" }}>
+          <div className="flex justify-between text-sm mb-2">
             <span className="text-gray-400">Plano</span>
             <span className="text-white font-semibold">{subscription?.plan?.name}</span>
           </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">Valor</span>
+            <span className="text-white">R$ {Number(subscription?.plan?.price || 0).toFixed(2)}/mês</span>
+          </div>
         </div>
+        {/* Período restante */}
+        {pauseNextDueStr && (
+          <div className="p-4 rounded-xl mb-4 text-left flex items-start gap-3" style={{ backgroundColor: '#22c55e10', border: '1px solid #22c55e25' }}>
+            <Calendar className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#4ade80' }} />
+            <div>
+              <p className="text-sm font-bold text-green-400">Ainda disponível</p>
+              <p className="text-xs text-gray-300 mt-1">Seu plano está pago até <strong className="text-white">{pauseNextDueStr}</strong></p>
+              {pauseDaysRemaining > 0 && <p className="text-xs text-gray-400 mt-0.5">{pauseDaysRemaining} dia{pauseDaysRemaining !== 1 ? 's' : ''} restante{pauseDaysRemaining !== 1 ? 's' : ''}</p>}
+              {pauseMaxUses > 0 && (
+                <p className="text-xs text-gray-300 mt-1">Ainda tem <strong className="text-white">{pauseRemaining} de {pauseMaxUses}</strong> usos disponíveis este mês</p>
+              )}
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <button onClick={() => closeModal(() => showGerenciarModal())} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
           <button disabled={pausing} onClick={async () => {
@@ -4012,11 +4044,15 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                   <button disabled={isCurrent}
                     onClick={() => {
                       if (!authUser) { onLogin(); return; }
-                      showAssinarModal(plan);
+                      if (subscription && subscription.status !== 'cancelled') {
+                        showTrocarPlanoModal();
+                      } else {
+                        showAssinarModal(plan);
+                      }
                     }}
                     className="w-full py-3 font-bold rounded-lg transition-colors"
                     style={{ backgroundColor: isCurrent ? "#4a4a4a" : primary, color: isCurrent ? "#888" : bgColor, cursor: isCurrent ? "not-allowed" : "pointer" }}>
-                    {isCurrent ? "Seu Plano Atual" : "Assinar Plano"}
+                    {isCurrent ? "Seu Plano Atual" : subscription ? "Trocar para este Plano" : "Assinar Plano"}
                   </button>
                 )}
               </div>
