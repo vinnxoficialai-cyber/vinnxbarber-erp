@@ -8,7 +8,7 @@ import {
   Gift, Share2, Bell, Edit3, Lock, Eye, EyeOff, Camera, CreditCard,
   Phone, Mail, Award, Heart, Settings, ChevronDown, ChevronUp,
   MessageCircle, Copy, ExternalLink, Pause, XCircle, RefreshCw, Crown, ImagePlus, Trash2,
-  ArrowUpDown, Receipt, Infinity as InfinityIcon,
+  ArrowUpDown, Receipt, Infinity as InfinityIcon, Zap, Tag, ShieldCheck,
 } from "lucide-react";
 import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscription } from "../types";
 import { usePlatform } from "../hooks/usePlatform";
@@ -3395,28 +3395,90 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
 function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services, authUser, clientProfile, onLogin, openModal, closeModal, onRefresh, setActiveView, onSubscriptionChange }: any) {
 
   function showBeneficiosModal() {
+    const planBenefits = subscription?.plan?.benefits
+      ? (typeof subscription.plan.benefits === 'string' ? JSON.parse(subscription.plan.benefits || '[]') : subscription.plan.benefits)
+      : [];
+    const planServicesList = subscription?.plan?.planServices
+      ? safeParseJsonArray(subscription.plan.planServices)
+      : [];
+    const usesInfo = subscription?.plan?.maxUsesPerMonth
+      ? `${subscription.usesThisMonth || 0} de ${subscription.plan.maxUsesPerMonth} usos este mês`
+      : 'Uso ilimitado';
     openModal(
-      <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
-        <Award className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
-        <h3 className="text-2xl font-bold mb-2" style={{ color: primary }}>Benefícios Exclusivos</h3>
-        <p className="text-gray-400 mb-8">Veja as vantagens de ser um assinante.</p>
-        <div className="text-left space-y-5">
-          {[
-            { icon: "⚡", title: "Agilidade e Conveniência", desc: "Agende seus horários de forma rápida e fácil." },
-            { icon: "🏷️", title: "Descontos em Produtos", desc: "Preços especiais em nossa linha de produtos para cabelo e barba." },
-            { icon: "➕", title: "Serviços Adicionais com Desconto", desc: "Descontos exclusivos em serviços como hidratação e pigmentação." },
-            { icon: "⭐", title: "Prioridade e Exclusividade", desc: "Seja o primeiro a saber de novidades e eventos especiais." },
-          ].map(({ icon, title, desc }) => (
-            <div key={title} className="flex items-start gap-4">
-              <span className="text-xl">{icon}</span>
-              <div>
-                <h4 className="font-bold text-white">{title}</h4>
-                <p className="text-sm text-gray-400">{desc}</p>
-              </div>
-            </div>
-          ))}
+      <div className="p-6" style={{ borderRadius: "1rem" }}>
+        <div className="text-center mb-6">
+          <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${primary}15` }}>
+            <Award className="w-7 h-7" style={{ color: primary }} />
+          </div>
+          <h3 className="text-2xl font-bold" style={{ color: primary }}>Benefícios Exclusivos</h3>
+          <p className="text-gray-400 text-sm mt-1">Vantagens do seu plano <strong className="text-white">{subscription?.plan?.name}</strong></p>
         </div>
-        <button onClick={() => closeModal()} className="w-full mt-8 py-3 font-semibold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entendido</button>
+        {/* Uso atual */}
+        <div className="p-4 rounded-xl mb-5 flex items-center gap-3" style={{ backgroundColor: '#2a2a2a' }}>
+          <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${primary}15` }}>
+            <Scissors className="w-5 h-5" style={{ color: primary }} />
+          </div>
+          <div>
+            <p className="text-xs text-gray-400">Utilização</p>
+            <p className="text-sm font-bold text-white">{usesInfo}</p>
+          </div>
+        </div>
+        {/* Benefícios dinâmicos do plano */}
+        {planBenefits.length > 0 && (
+          <div className="mb-5">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Benefícios do plano</p>
+            <div className="space-y-3">
+              {planBenefits.map((b: string, i: number) => (
+                <div key={i} className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5" style={{ backgroundColor: `${primary}15` }}>
+                    <Check className="w-3.5 h-3.5" style={{ color: primary }} />
+                  </div>
+                  <p className="text-sm text-gray-300">{b}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* Serviços com desconto */}
+        {planServicesList.length > 0 && (
+          <div className="mb-5">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Serviços com desconto</p>
+            <div className="space-y-2">
+              {planServicesList.map((s: any, i: number) => {
+                const svc = (services || []).find((sv: any) => sv.id === s.serviceId);
+                return svc ? (
+                  <div key={i} className="flex items-center justify-between p-3 rounded-lg" style={{ backgroundColor: '#2a2a2a' }}>
+                    <span className="text-sm text-white">{svc.name}</span>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${primary}20`, color: primary }}>{Number(s.discount)}% off</span>
+                  </div>
+                ) : null;
+              })}
+            </div>
+          </div>
+        )}
+        {/* Vantagens gerais */}
+        <div className="mb-6">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Vantagens gerais</p>
+          <div className="space-y-3">
+            {[
+              { Icon: Zap, title: "Agilidade e Conveniência", desc: "Agende seus horários de forma rápida e fácil." },
+              { Icon: Tag, title: "Descontos Exclusivos", desc: "Preços especiais em produtos e serviços selecionados." },
+              { Icon: ShieldCheck, title: "Prioridade no Atendimento", desc: "Tenha preferência na hora de agendar." },
+              { Icon: Star, title: "Acesso Antecipado", desc: "Seja o primeiro a saber de novidades e eventos." },
+            ].map(({ Icon, title, desc }) => (
+              <div key={title} className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${primary}15` }}>
+                  <Icon className="w-4 h-4" style={{ color: primary }} />
+                </div>
+                <div>
+                  <h4 className="font-bold text-white text-sm">{title}</h4>
+                  <p className="text-xs text-gray-400">{desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <button onClick={() => closeModal()} className="w-full py-3 font-semibold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entendido</button>
       </div>, "center"
     );
   }
@@ -3462,6 +3524,28 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
   }
 
   function showCancelarModal() {
+    // Calculate remaining period
+    const startDate = subscription?.startDate ? new Date(subscription.startDate) : null;
+    const recurrence = subscription?.plan?.recurrence || 'monthly';
+    const recMonths: Record<string, number> = { monthly: 1, quarterly: 3, semiannual: 6, annual: 12 };
+    let nextDueStr = '';
+    let daysRemaining = 0;
+    if (startDate) {
+      const start = new Date(startDate);
+      const now = new Date();
+      const months = recMonths[recurrence] || 1;
+      // Find the next due date after start, rolling forward
+      while (start <= now) { start.setMonth(start.getMonth() + months); }
+      nextDueStr = start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+      daysRemaining = Math.max(0, Math.ceil((start.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+    }
+    const maxUses = subscription?.plan?.maxUsesPerMonth || 0;
+    const usedThisMonth = subscription?.usesThisMonth || 0;
+    const remainingUses = maxUses ? Math.max(0, maxUses - usedThisMonth) : 0;
+    const planBenefitsList = subscription?.plan?.benefits
+      ? (typeof subscription.plan.benefits === 'string' ? JSON.parse(subscription.plan.benefits || '[]') : subscription.plan.benefits)
+      : [];
+
     const CancelFlow = () => {
       const [step, setStep] = useState(1);
       const [cancelling, setCancelling] = useState(false);
@@ -3471,21 +3555,51 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
           <XCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
           <h3 className="text-2xl font-bold mb-2 text-white">{step === 1 ? "Cancelar Assinatura?" : "Tem certeza absoluta?"}</h3>
           <p className="text-gray-400 mb-6">{step === 1
-            ? "Você perderá todos os benefícios do seu plano, incluindo descontos e prioridade no agendamento."
+            ? "Revise o que você ainda tem disponível antes de cancelar."
             : "Esta ação cancelará a cobrança recorrente. Você precisará assinar novamente caso queira retornar."
           }</p>
           {cancelError && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{cancelError}</div>}
           {step === 1 && (
-            <div className="p-4 rounded-lg mb-6 text-left" style={{ backgroundColor: "#2a2a2a" }}>
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-gray-400">Plano</span>
-                <span className="text-white font-semibold">{subscription?.plan?.name}</span>
+            <>
+              {/* Plano e valor */}
+              <div className="p-4 rounded-xl mb-4 text-left" style={{ backgroundColor: "#2a2a2a" }}>
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-gray-400">Plano</span>
+                  <span className="text-white font-semibold">{subscription?.plan?.name}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">Valor</span>
+                  <span className="text-white">R$ {Number(subscription?.plan?.price || 0).toFixed(2)}/mês</span>
+                </div>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Valor</span>
-                <span className="text-white">R$ {Number(subscription?.plan?.price || 0).toFixed(2)}/mês</span>
-              </div>
-            </div>
+              {/* Período restante */}
+              {nextDueStr && (
+                <div className="p-4 rounded-xl mb-4 text-left flex items-start gap-3" style={{ backgroundColor: '#22c55e10', border: '1px solid #22c55e25' }}>
+                  <Calendar className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#4ade80' }} />
+                  <div>
+                    <p className="text-sm font-bold text-green-400">Ainda disponível</p>
+                    <p className="text-xs text-gray-300 mt-1">Seu plano está pago até <strong className="text-white">{nextDueStr}</strong></p>
+                    {daysRemaining > 0 && <p className="text-xs text-gray-400 mt-0.5">{daysRemaining} dia{daysRemaining !== 1 ? 's' : ''} restante{daysRemaining !== 1 ? 's' : ''}</p>}
+                    {maxUses > 0 && (
+                      <p className="text-xs text-gray-300 mt-1">Ainda tem <strong className="text-white">{remainingUses} de {maxUses}</strong> usos disponíveis este mês</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              {/* Benefícios que serão perdidos */}
+              {planBenefitsList.length > 0 && (
+                <div className="p-4 rounded-xl mb-4 text-left" style={{ backgroundColor: '#ef444410', border: '1px solid #ef444420' }}>
+                  <p className="text-xs font-bold text-red-400 mb-2 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Você perderá</p>
+                  <ul className="space-y-1.5">
+                    {planBenefitsList.slice(0, 4).map((b: string, i: number) => (
+                      <li key={i} className="text-xs text-gray-400 flex items-start gap-2">
+                        <X className="w-3 h-3 text-red-500 flex-shrink-0 mt-0.5" />{b}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
           <div className="grid grid-cols-2 gap-3">
             <button onClick={() => { if (step === 1) closeModal(() => showGerenciarModal()); else setStep(1); }} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
@@ -3546,8 +3660,8 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
             <span className="text-gray-400">Cartão</span>
             <span className="text-white">{subscription.cardBrand} ****{subscription.cardLast4}</span>
           </div>}
-          {isPaused && <div className="mt-2 px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold text-center">⏸ Pausado</div>}
-          {isOverdue && <div className="mt-2 px-3 py-1.5 rounded-full bg-red-500/10 text-red-400 text-xs font-bold text-center">⚠️ Inadimplente</div>}
+          {isPaused && <div className="mt-2 px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold text-center flex items-center justify-center gap-1.5"><Pause className="w-3 h-3" /> Pausado</div>}
+          {isOverdue && <div className="mt-2 px-3 py-1.5 rounded-full bg-red-500/10 text-red-400 text-xs font-bold text-center flex items-center justify-center gap-1.5"><AlertTriangle className="w-3 h-3" /> Inadimplente</div>}
         </div>
         <div className="space-y-3">
           {canReactivate && (
@@ -3564,7 +3678,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
             <span className="flex items-center gap-3"><Receipt className="w-5 h-5" style={{ color: primary }} />Histórico de faturas</span>
             <ChevronRight className="w-4 h-4 text-gray-500" />
           </button>
-          {!isPaused && !isOverdue && subscription.gatewaySubscriptionId && (
+          {!isPaused && !isOverdue && (
             <>
               <button onClick={() => closeModal(() => showTrocarCartaoModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
                 <span className="flex items-center gap-3"><CreditCard className="w-5 h-5" style={{ color: primary }} />Trocar cartão</span>
