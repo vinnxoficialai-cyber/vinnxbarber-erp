@@ -473,6 +473,7 @@ export default async function handler(req, res) {
             status: 'cancelled',
             cancelledAt: new Date().toISOString(),
             cancellationReason: reason || 'Cancelado pelo cliente via site',
+            pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
             updatedAt: new Date().toISOString(),
           }),
           prefer: 'return=minimal',
@@ -514,6 +515,7 @@ export default async function handler(req, res) {
           body: JSON.stringify({
             status: 'paused',
             pausedAt: new Date().toISOString(),
+            pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
             updatedAt: new Date().toISOString(),
           }),
           prefer: 'return=minimal',
@@ -736,6 +738,7 @@ export default async function handler(req, res) {
             failedAttempts: 0,
             usesThisMonth: 0,
             startDate: new Date().toISOString(),
+            pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
             updatedAt: new Date().toISOString(),
           }),
           prefer: 'return=minimal',
@@ -754,7 +757,40 @@ export default async function handler(req, res) {
         });
       }
 
-      // ═══ Change Plan / Upgrade-Downgrade (F6) ═══
+      // ═══ Retry Payment (refresh overdue charges) ═══
+      case 'retryPayment': {
+        const rpSubRes = await sbQuery(
+          `subscriptions?clientId=eq.${client.id}&status=in.(overdue,pending_payment)&select=id,gatewaySubscriptionId,planId&order=createdAt.desc&limit=1`
+        );
+        const rpSubs = await rpSubRes.json();
+        const rpSub = rpSubs?.[0];
+        if (!rpSub) return res.status(400).json({ error: 'Nenhuma assinatura pendente encontrada.' });
+        if (!rpSub.gatewaySubscriptionId) {
+          return res.status(400).json({ error: 'Assinatura sem cobrança automática configurada.' });
+        }
+
+        const rpConfig = await getConfig();
+        if (!rpConfig) return res.status(500).json({ error: 'Gateway não configurado.' });
+
+        try {
+          // Get current ASAAS subscription to resend billingType
+          const asaasSub = await asaasRequest(rpConfig, `/subscriptions/${rpSub.gatewaySubscriptionId}`, 'GET');
+          // Refresh subscription — forces ASAAS to update pending/overdue charges
+          await asaasRequest(rpConfig, `/subscriptions/${rpSub.gatewaySubscriptionId}`, 'PUT', {
+            billingType: asaasSub.billingType || 'CREDIT_CARD',
+            updatePendingPayments: true,
+          });
+        } catch (e) {
+          return res.status(400).json({
+            error: e.message || 'Erro ao solicitar nova tentativa de cobrança.',
+            errorCode: 'RETRY_FAILED',
+          });
+        }
+
+        return res.status(200).json({ success: true });
+      }
+
+      // ═══ Change Plan / Upgrade-Downgrade (SCHEDULED) ═══
       case 'changePlan': {
         const { newPlanId } = data || {};
         if (!newPlanId) return res.status(400).json({ error: 'ID do novo plano é obrigatório.' });
@@ -769,7 +805,7 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'Nenhuma assinatura ativa encontrada.' });
         }
 
-        // Get new plan
+        // Get new plan (must be active + available for sale)
         const planRes = await sbQuery(`subscription_plans?id=eq.${newPlanId}&active=eq.true&availableForSale=eq.true&select=*&limit=1`);
         const plans = await planRes.json();
         const newPlan = plans?.[0];
@@ -779,32 +815,53 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'Você já está neste plano.' });
         }
 
-        const config = await getConfig();
-        if (!config) return res.status(500).json({ error: 'Gateway não configurado.' });
+        // Check if already scheduling change to same plan
+        if (sub.pendingPlanId === newPlanId) {
+          return res.status(400).json({ error: 'Troca para este plano já está agendada.' });
+        }
 
-        // Update subscription value in ASAAS (only if we have a gateway subscription)
+        // Calculate scheduled date (next billing cycle)
+        let scheduledDate;
+        if (sub.nextPaymentDate) {
+          scheduledDate = sub.nextPaymentDate;
+        } else {
+          // Manual subs: calculate from startDate + plan recurrence
+          const currentPlanRes = await sbQuery(
+            `subscription_plans?id=eq.${sub.planId}&select=recurrence&limit=1`
+          );
+          const currentPlans = await currentPlanRes.json();
+          const currentPlan = currentPlans?.[0];
+          const daysMap = { monthly: 30, quarterly: 90, semiannual: 180, yearly: 365 };
+          const days = daysMap[currentPlan?.recurrence] || 30;
+          const start = new Date(sub.startDate || sub.createdAt || new Date().toISOString());
+          const now = new Date();
+          // Find next cycle boundary after today
+          while (start <= now) start.setDate(start.getDate() + days);
+          scheduledDate = start.toISOString();
+        }
+
+        // Update ASAAS value immediately (safe: only affects future payments)
         const newPrice = Number(newPlan.creditPrice) || Number(newPlan.price) || 0;
-        if (sub.gatewaySubscriptionId) {
+        const config = await getConfig();
+        if (sub.gatewaySubscriptionId && config) {
           try {
             await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'PUT', {
               value: newPrice,
               description: `Assinatura ${newPlan.name}`,
-              updatePendingPayments: true,
+              // updatePendingPayments NOT set (default false) — only future bills affected
             });
           } catch (asaasErr) {
-            return res.status(400).json({
-              error: asaasErr.message || 'Erro ao atualizar plano no gateway.',
-              errorCode: 'PLAN_CHANGE_FAILED',
-            });
+            console.warn('[asaas-public] ASAAS value update failed (non-fatal):', asaasErr.message);
           }
         }
 
-        // Update local subscription
+        // Store pending change (NOT applying planId yet — user keeps current benefits until cycle ends)
         await sbQuery(`subscriptions?id=eq.${sub.id}`, {
           method: 'PATCH',
           body: JSON.stringify({
-            planId: newPlanId,
-            usesThisMonth: 0,
+            pendingPlanId: newPlanId,
+            pendingPlanName: newPlan.name,
+            planChangeScheduledAt: scheduledDate,
             updatedAt: new Date().toISOString(),
           }),
           prefer: 'return=minimal',
@@ -812,11 +869,57 @@ export default async function handler(req, res) {
 
         return res.status(200).json({
           success: true,
+          scheduled: true,
+          scheduledDate,
           oldPlanId: sub.planId,
           newPlanId,
           newPlanName: newPlan.name,
-          newPrice,
         });
+      }
+
+      // ═══ Cancel Pending Plan Change ═══
+      case 'cancelPendingPlanChange': {
+        const cpSubRes = await sbQuery(
+          `subscriptions?clientId=eq.${client.id}&status=in.(active,pending_payment)&pendingPlanId=not.is.null&select=id,planId,gatewaySubscriptionId&limit=1`
+        );
+        const cpSubs = await cpSubRes.json();
+        if (!cpSubs?.length) return res.status(400).json({ error: 'Nenhuma troca pendente.' });
+        const cpSub = cpSubs[0];
+
+        // Revert ASAAS value to current plan price
+        if (cpSub.gatewaySubscriptionId) {
+          const cpConfig = await getConfig();
+          if (cpConfig) {
+            const curPlanRes = await sbQuery(
+              `subscription_plans?id=eq.${cpSub.planId}&select=name,price,creditPrice&limit=1`
+            );
+            const curPlans = await curPlanRes.json();
+            const curPlan = curPlans?.[0];
+            if (curPlan) {
+              const curPrice = Number(curPlan.creditPrice) || Number(curPlan.price) || 0;
+              try {
+                await asaasRequest(cpConfig, `/subscriptions/${cpSub.gatewaySubscriptionId}`, 'PUT', {
+                  value: curPrice,
+                  description: `Assinatura ${curPlan.name}`,
+                  updatePendingPayments: true, // Also fix any pending invoices with wrong value
+                });
+              } catch (e) {
+                console.warn('[asaas-public] ASAAS revert failed (non-fatal):', e.message);
+              }
+            }
+          }
+        }
+
+        // Clear pending fields
+        await sbQuery(`subscriptions?id=eq.${cpSub.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
+            updatedAt: new Date().toISOString(),
+          }),
+          prefer: 'return=minimal',
+        });
+        return res.status(200).json({ success: true });
       }
 
       default:

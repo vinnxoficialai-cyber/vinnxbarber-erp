@@ -2,7 +2,7 @@
     "crons": [
         {
             "path": "/api/subscription-cron",
-            "schedule": "0 3 1 * *"
+            "schedule": "0 3 * * *"
         },
         {
             "path": "/api/push-cron-daily",

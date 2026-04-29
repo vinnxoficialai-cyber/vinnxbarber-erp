@@ -973,6 +973,11 @@ export interface Subscription {
   pausedAt?: string;
   cancelledAt?: string;
 
+  // Scheduled plan change
+  pendingPlanId?: string;
+  pendingPlanName?: string;
+  planChangeScheduledAt?: string;
+
   createdAt?: string;
   updatedAt?: string;
   plan?: SubscriptionPlan;        // Joined data

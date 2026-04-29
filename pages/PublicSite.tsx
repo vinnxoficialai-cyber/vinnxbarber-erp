@@ -13,7 +13,7 @@ import {
 import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscription } from "../types";
 import { usePlatform } from "../hooks/usePlatform";
 import { safeParseJsonArray } from "../lib/utils";
-import { subscribeToPlan, cancelMySubscription, pauseMySubscription, getMyPaymentHistory, updatePaymentMethod, reactivateSubscription, changePlan, setAsaasPublicTokenProvider } from "../lib/asaasPublicService";
+import { subscribeToPlan, cancelMySubscription, pauseMySubscription, getMyPaymentHistory, updatePaymentMethod, reactivateSubscription, changePlan, cancelPendingPlanChange, retryPayment, setAsaasPublicTokenProvider, setAsaasPublicRefreshCallback } from "../lib/asaasPublicService";
 
 // ============================================================
 // DEDICATED Supabase client for PublicSite
@@ -26,6 +26,7 @@ import { subscribeToPlan, cancelMySubscription, pauseMySubscription, getMyPaymen
 let _psAccessToken: string | null = null;
 // Wire the token into asaasPublicService so API calls use PS session
 setAsaasPublicTokenProvider(() => _psAccessToken);
+setAsaasPublicRefreshCallback(() => ensureFreshToken());
 // Flag to prevent loadClientProfile auto-create during migration claim
 let _migrationClaimInProgress = false;
 
@@ -53,6 +54,14 @@ function isTokenExpired(token: string): boolean {
   } catch { return true; }
 }
 
+// Check if token expires within 60 seconds (proactive refresh)
+function isTokenNearExpiry(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.exp * 1000 < Date.now() + 60_000; // 60s margin
+  } catch { return true; }
+}
+
 // Silent refresh — direct HTTP to GoTrue (bypasses SDK event system)
 async function silentRefresh(refreshToken: string): Promise<{ access_token: string; refresh_token: string } | null> {
   try {
@@ -74,6 +83,42 @@ async function silentRefresh(refreshToken: string): Promise<{ access_token: stri
   } catch { return null; }
 }
 
+// ── Proactive JWT refresh with mutex ──
+let _refreshing: Promise<boolean> | null = null;
+async function ensureFreshToken(): Promise<boolean> {
+  // No token → nothing to refresh
+  if (!_psAccessToken) return false;
+  // Token still valid (>60s left) → no-op
+  if (!isTokenNearExpiry(_psAccessToken)) return true;
+  // Mutex: if already refreshing, wait for that result
+  if (_refreshing) return _refreshing;
+  _refreshing = (async () => {
+    try {
+      const stored = localStorage.getItem("vinnx_ps_user");
+      if (!stored) return false;
+      const parsed = JSON.parse(stored);
+      const rt = parsed.refreshToken || parsed.refresh_token;
+      if (!rt) return false;
+      const newTokens = await silentRefresh(rt);
+      if (!newTokens) return false;
+      // Update module-level token
+      _psAccessToken = newTokens.access_token;
+      // Persist new tokens back to the same backup key
+      parsed.token = newTokens.access_token;
+      parsed.refreshToken = newTokens.refresh_token;
+      localStorage.setItem("vinnx_ps_user", JSON.stringify(parsed));
+      console.log("[ensureFreshToken] Token refreshed silently");
+      return true;
+    } catch (e) {
+      console.error("[ensureFreshToken] Refresh failed:", e);
+      return false;
+    } finally {
+      _refreshing = null;
+    }
+  })();
+  return _refreshing;
+}
+
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
@@ -85,9 +130,10 @@ const supabase = createClient(
       storageKey: "vinnx-ps-auth", // Isolate from ERP's GoTrueClient BroadcastChannel
     },
     global: {
-      fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-        // Inject access token for REST API and Storage calls (RLS-protected)
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        // Proactively refresh token before RLS-protected calls
         if (_psAccessToken && typeof input === "string" && (input.includes("/rest/v1/") || input.includes("/storage/v1/"))) {
+          await ensureFreshToken();
           const headers = new Headers(init?.headers);
           headers.set("Authorization", `Bearer ${_psAccessToken}`);
           return fetch(input, { ...init, headers });
@@ -1274,7 +1320,7 @@ function PublicSiteApp() {
           usedInPlan: (subDisc || 0) > 0,
           updatedAt: now,
         };
-        const { error } = await supabase.from("calendar_events").insert(newEvent);
+        const { error } = await (async () => { await ensureFreshToken(); return supabase.from("calendar_events").insert(newEvent); })();
         if (error) {
           console.error("Error saving event:", error);
           showToast(`Erro ao agendar: ${error.message}`, "error");
@@ -1497,7 +1543,7 @@ function PublicSiteApp() {
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
             btnBg={btnBg} btnText={btnText}
             plans={plans} subscription={clientSubscription} services={services}
-            authUser={authUser} clientProfile={clientProfile}
+            authUser={authUser} clientProfile={clientProfile} units={units}
             onLogin={() => showLoginModal()} openModal={openModal} closeModal={closeModal}
             onRefresh={refreshEvents} setActiveView={setActiveView}
             onSubscriptionChange={setClientSubscription}
@@ -2388,9 +2434,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
           </span>
           <span className="text-green-400">- R$ {planDiscountAmount.toFixed(2)}</span>
         </div>
-        <div className="p-3 rounded-r-lg text-sm mt-2 border-l-4" style={{ backgroundColor: `${primary}15`, borderColor: primary, color: primary }}>
-          <p className="font-bold">Desconto exclusivo do seu plano de assinatura ✨</p>
-        </div>
+
       </>
     );
   } else {
@@ -3103,12 +3147,35 @@ function AvaliacaoModal({ ev, primary, bgColor, onClose, onSubmit, g }: any) {
 // ============================================================
 // ASSINAR MODAL (Self-Service Subscription Activation)
 // ============================================================
-function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSuccess, services, isReactivation }: any) {
+function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSuccess, services, isReactivation, units, g, openTermosModal }: any) {
   const [step, setStep] = useState<'form' | 'processing' | 'result'>('form');
-  const [formSection, setFormSection] = useState(0); // 0=personal, 1=card, 2=review
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<any>(null);
+
+  // Unit selection
+  const availableUnits = useMemo(() => {
+    if (!units || units.length === 0) return [];
+    const allowed = typeof plan.allowedUnitIds === 'string' ? (() => { try { return JSON.parse(plan.allowedUnitIds); } catch { return []; } })() : (plan.allowedUnitIds || []);
+    if (plan.unitScope === 'specific' && Array.isArray(allowed) && allowed.length > 0) {
+      return units.filter((u: any) => allowed.includes(u.id));
+    }
+    return units;
+  }, [units, plan]);
+  const needsUnitPick = !isReactivation && availableUnits.length > 1;
+  const [selectedUnitId, setSelectedUnitId] = useState(() => {
+    if (isReactivation) return '';
+    if (availableUnits.length === 1) return availableUnits[0].id;
+    return '';
+  });
+
+  // Dynamic form sections: unit step only when needed
+  const SECTION_UNIT = needsUnitPick ? 0 : -1;
+  const SECTION_PERSONAL = needsUnitPick ? 1 : 0;
+  const SECTION_CARD = needsUnitPick ? 2 : 1;
+  const SECTION_REVIEW = needsUnitPick ? 3 : 2;
+  const sections = needsUnitPick ? ['Unidade', 'Seus Dados', 'Pagamento', 'Confirmar'] : ['Seus Dados', 'Pagamento', 'Confirmar'];
+  const [formSection, setFormSection] = useState(needsUnitPick ? 0 : 0);
 
   // Personal data
   const [cpf, setCpf] = useState((clientProfile?.cpfCnpj || clientProfile?.cpf || '').replace(/\D/g, ''));
@@ -3148,8 +3215,10 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
   const cardBrand = detectBrand(cardNumber);
   const cardLast4 = cardNumber.replace(/\s/g, '').slice(-4);
 
+  const canProceedUnit = !!selectedUnitId;
   const canProceedPersonal = cpf.replace(/\D/g, '').length >= 11 && email.includes('@') && phone.replace(/\D/g, '').length >= 10;
   const canProceedCard = cardNumber.replace(/\s/g, '').length >= 13 && cardName && cardMonth && cardYear && cardCvv.length >= 3 && (sameHolder || holderCpf.replace(/\D/g, '').length >= 11) && cep.replace(/\D/g, '').length >= 8 && addrNumber;
+  const selectedUnit = availableUnits.find((u: any) => u.id === selectedUnitId);
 
   async function handleSubmit() {
     if (!acceptTerms || loading) return;
@@ -3162,6 +3231,7 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
       setProcessingMsg('Verificando cartão de crédito...');
       const apiPayload = {
         planId: plan.id,
+        ...(selectedUnitId ? { unitId: selectedUnitId } : {}),
         creditCard: { holderName: cardName, number: cardNumber.replace(/\s/g, ''), expiryMonth: cardMonth, expiryYear: cardYear, ccv: cardCvv },
         holderInfo: { cpfCnpj: (sameHolder ? cpf : holderCpf).replace(/\D/g, ''), postalCode: cep.replace(/\D/g, ''), addressNumber: addrNumber, phone: phone.replace(/\D/g, ''), email },
       };
@@ -3174,7 +3244,7 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
     } catch (err: any) {
       setError(err.message || 'Erro ao processar. Tente novamente.');
       setStep('form');
-      setFormSection(1); // back to card section
+      setFormSection(SECTION_CARD); // back to card section
       setLoading(false);
     }
   }
@@ -3223,7 +3293,7 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
         </div>
         <div className="space-y-3">
           {isOverdue ? (
-            <button onClick={() => { setStep('form'); setFormSection(1); setError('Cartão recusado. Tente outro cartão.'); }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
+            <button onClick={() => { setStep('form'); setFormSection(SECTION_CARD); setError('Cartão recusado. Tente outro cartão.'); }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
               Tentar Novamente
             </button>
           ) : (
@@ -3236,8 +3306,7 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
     );
   }
 
-  // Form screen (3 sections)
-  const sections = ['Seus Dados', 'Pagamento', 'Confirmar'];
+  // Form screen
   return (
     <div className="p-6" style={{ borderRadius: '1rem' }}>
       <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Assinar Plano</h3>
@@ -3281,18 +3350,57 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
       </div>
 
       {/* Step indicators */}
-      <div className="flex gap-1 mb-5">{sections.map((s, i) => (
-        <button key={i} onClick={() => { if (i === 0 || (i === 1 && canProceedPersonal) || (i === 2 && canProceedPersonal && canProceedCard)) setFormSection(i); }}
-          className="flex-1 text-center">
-          <div className="h-1 rounded-full mb-1" style={{ backgroundColor: formSection >= i ? primary : '#444' }} />
-          <span className="text-[10px]" style={{ color: formSection >= i ? primary : '#666' }}>{s}</span>
-        </button>
-      ))}</div>
+      <div className="flex gap-1 mb-5">{sections.map((s, i) => {
+        const canClick = i === 0
+          || (i === SECTION_PERSONAL && (needsUnitPick ? canProceedUnit : true))
+          || (i === SECTION_CARD && canProceedPersonal && (needsUnitPick ? canProceedUnit : true))
+          || (i === SECTION_REVIEW && canProceedPersonal && canProceedCard && (needsUnitPick ? canProceedUnit : true));
+        return (
+          <button key={i} onClick={() => { if (canClick) setFormSection(i); }} className="flex-1 text-center">
+            <div className="h-1 rounded-full mb-1" style={{ backgroundColor: formSection >= i ? primary : '#444' }} />
+            <span className="text-[10px]" style={{ color: formSection >= i ? primary : '#666' }}>{s}</span>
+          </button>
+        );
+      })}</div>
 
       {error && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{error}</div>}
 
-      {/* Section 0: Personal */}
-      {formSection === 0 && (
+      {/* Section: Unit Selection */}
+      {needsUnitPick && formSection === SECTION_UNIT && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <MapPin className="w-4 h-4" style={{ color: primary }} />
+            <p className="text-sm text-gray-300">Sua assinatura será válida apenas na unidade selecionada.</p>
+          </div>
+          <div className="space-y-3">
+            {availableUnits.map((u: any) => (
+              <button key={u.id} onClick={() => setSelectedUnitId(u.id)}
+                className="w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all"
+                style={{
+                  backgroundColor: selectedUnitId === u.id ? `${primary}15` : '#1e1e1e',
+                  border: selectedUnitId === u.id ? `2px solid ${primary}` : '2px solid #333',
+                }}>
+                <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: selectedUnitId === u.id ? `${primary}20` : '#2a2a2a' }}>
+                  <Store className="w-5 h-5" style={{ color: selectedUnitId === u.id ? primary : '#666' }} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-white font-bold text-sm truncate">{u.tradeName || u.name}</p>
+                  {u.address && <p className="text-xs text-gray-500 truncate">{u.address}{u.city ? `, ${u.city}` : ''}{u.state ? ` - ${u.state}` : ''}</p>}
+                </div>
+                {selectedUnitId === u.id && <Check className="w-5 h-5 ml-auto flex-shrink-0" style={{ color: primary }} />}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setFormSection(SECTION_PERSONAL)} disabled={!canProceedUnit}
+            className={`w-full py-3 font-bold rounded-lg ${canProceedUnit ? '' : 'opacity-40'}`} style={{ backgroundColor: primary, color: bgColor }}>
+            Continuar
+          </button>
+        </div>
+      )}
+
+      {/* Section: Personal */}
+      {formSection === SECTION_PERSONAL && (
         <div className="space-y-4">
           <div><label className="text-xs text-gray-400 mb-1 block">CPF *</label>
             <input value={formatCpfInput(cpf)} onChange={e => setCpf(e.target.value.replace(/\D/g, ''))} placeholder="000.000.000-00" maxLength={14} inputMode="numeric"
@@ -3303,13 +3411,13 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
           <div><label className="text-xs text-gray-400 mb-1 block">Telefone *</label>
             <input value={formatPhone(phone)} onChange={e => setPhone(e.target.value.replace(/\D/g, ''))} placeholder="(11) 99999-9999" maxLength={15} inputMode="tel"
               className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>
-          <button onClick={() => setFormSection(1)} disabled={!canProceedPersonal}
+          <button onClick={() => setFormSection(SECTION_CARD)} disabled={!canProceedPersonal}
             className={`w-full py-3 font-bold rounded-lg ${canProceedPersonal ? '' : 'opacity-40'}`} style={{ backgroundColor: primary, color: bgColor }}>Próximo</button>
         </div>
       )}
 
-      {/* Section 1: Credit Card */}
-      {formSection === 1 && (
+      {/* Section: Credit Card */}
+      {formSection === SECTION_CARD && (
         <div className="space-y-3">
           <div><label className="text-xs text-gray-400 mb-1 block">Número do cartão *</label>
             <div className="relative">
@@ -3346,21 +3454,22 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
                 className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>
           </div>
           <div className="grid grid-cols-2 gap-3 pt-2">
-            <button onClick={() => setFormSection(0)} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: '#1a1a1a', color: '#fff' }}>Voltar</button>
-            <button onClick={() => setFormSection(2)} disabled={!canProceedCard}
+            <button onClick={() => setFormSection(SECTION_PERSONAL)} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: '#1a1a1a', color: '#fff' }}>Voltar</button>
+            <button onClick={() => setFormSection(SECTION_REVIEW)} disabled={!canProceedCard}
               className={`py-3 font-bold rounded-lg ${canProceedCard ? '' : 'opacity-40'}`} style={{ backgroundColor: primary, color: bgColor }}>Próximo</button>
           </div>
         </div>
       )}
 
-      {/* Section 2: Review & Confirm */}
-      {formSection === 2 && (
+      {/* Section: Review & Confirm */}
+      {formSection === SECTION_REVIEW && (
         <div className="space-y-4">
           <div className="p-4 rounded-xl" style={{ backgroundColor: '#1e1e1e' }}>
             <p className="text-xs text-gray-500 uppercase tracking-wide mb-3 font-semibold">Resumo da Assinatura</p>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-gray-400">Plano</span><span className="text-white font-semibold">{plan.name}</span></div>
               <div className="flex justify-between"><span className="text-gray-400">Valor</span><span className="font-bold" style={{ color: primary }}>R$ {planPrice.toFixed(2)}{recLabel[plan.recurrence] || '/mês'}</span></div>
+              {selectedUnit && <div className="flex justify-between"><span className="text-gray-400">Unidade</span><span className="text-white">{selectedUnit.tradeName || selectedUnit.name}</span></div>}
               <div className="flex justify-between"><span className="text-gray-400">Cartão</span><span className="text-white">{cardBrand} •••• {cardLast4}</span></div>
               <div className="flex justify-between"><span className="text-gray-400">Titular</span><span className="text-white">{cardName}</span></div>
             </div>
@@ -3371,10 +3480,14 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
           </div>
           <label className="flex items-start gap-3 cursor-pointer">
             <input type="checkbox" checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} className="accent-primary w-4 h-4 mt-0.5" />
-            <span className="text-xs text-gray-400">Eu concordo com os termos de uso e autorizo a cobrança recorrente no meu cartão de crédito.</span>
+            <span className="text-xs text-gray-400">Li e concordo com os{' '}
+              <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (openTermosModal) openTermosModal(); }}
+                className="underline font-semibold" style={{ color: primary }}>Termos e Condições de Uso</button>
+              {' '}e autorizo a cobrança recorrente no meu cartão de crédito.
+            </span>
           </label>
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => setFormSection(1)} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: '#1a1a1a', color: '#fff' }}>Voltar</button>
+            <button onClick={() => setFormSection(SECTION_CARD)} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: '#1a1a1a', color: '#fff' }}>Voltar</button>
             <button onClick={handleSubmit} disabled={!acceptTerms || loading}
               className={`py-3 font-bold rounded-lg flex items-center justify-center gap-2 ${acceptTerms ? '' : 'opacity-40'}`} style={{ backgroundColor: primary, color: bgColor }}>
               {loading ? <Loader2 className="w-5 h-5 booking-spin" /> : <><CreditCard className="w-4 h-4" />Confirmar</>}
@@ -3392,7 +3505,7 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
 // ============================================================
 // PLANOS VIEW
 // ============================================================
-function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services, authUser, clientProfile, onLogin, openModal, closeModal, onRefresh, setActiveView, onSubscriptionChange }: any) {
+function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services, authUser, clientProfile, onLogin, openModal, closeModal, onRefresh, setActiveView, onSubscriptionChange, units }: any) {
 
   function showBeneficiosModal() {
     const planBenefits = subscription?.plan?.benefits
@@ -3607,10 +3720,11 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
               {/* Período restante */}
               {nextDueStr && (
                 <div className="p-4 rounded-xl mb-4 text-left flex items-start gap-3" style={{ backgroundColor: '#22c55e10', border: '1px solid #22c55e25' }}>
-                  <Calendar className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#4ade80' }} />
+                  <Calendar className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#4ade80' }} />
                   <div>
                     <p className="text-sm font-bold text-green-400">Ainda disponível</p>
-                    <p className="text-xs text-gray-300 mt-1">Seu plano está pago até <strong className="text-white">{nextDueStr}</strong></p>
+                    <p className="text-[11px] text-gray-500 mb-1.5">Benefícios que você ainda pode usar</p>
+                    <p className="text-xs text-gray-300">Seu plano está pago até <strong className="text-white">{nextDueStr}</strong></p>
                     {daysRemaining > 0 && <p className="text-xs text-gray-400 mt-0.5">{daysRemaining} dia{daysRemaining !== 1 ? 's' : ''} restante{daysRemaining !== 1 ? 's' : ''}</p>}
                     {maxUses > 0 && (
                       <p className="text-xs text-gray-300 mt-1">Ainda tem <strong className="text-white">{remainingUses} de {maxUses}</strong> usos disponíveis este mês</p>
@@ -3620,15 +3734,19 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
               )}
               {/* Benefícios que serão perdidos */}
               {planBenefitsList.length > 0 && (
-                <div className="p-4 rounded-xl mb-4 text-left" style={{ backgroundColor: '#ef444410', border: '1px solid #ef444420' }}>
-                  <p className="text-xs font-bold text-red-400 mb-2 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Você perderá</p>
-                  <ul className="space-y-1.5">
-                    {planBenefitsList.slice(0, 4).map((b: string, i: number) => (
-                      <li key={i} className="text-xs text-gray-400 flex items-start gap-2">
-                        <X className="w-3 h-3 text-red-500 flex-shrink-0 mt-0.5" />{b}
-                      </li>
-                    ))}
-                  </ul>
+                <div className="p-4 rounded-xl mb-4 text-left flex items-start gap-3" style={{ backgroundColor: '#ef444410', border: '1px solid #ef444420' }}>
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-red-400" />
+                  <div>
+                    <p className="text-sm font-bold text-red-400">Você perderá</p>
+                    <p className="text-[11px] text-gray-500 mb-1.5">Ao cancelar, esses benefícios serão perdidos</p>
+                    <ul className="space-y-1.5">
+                      {planBenefitsList.slice(0, 4).map((b: string, i: number) => (
+                        <li key={i} className="text-xs text-gray-400 flex items-start gap-2">
+                          <X className="w-3 h-3 text-red-500 flex-shrink-0 mt-0.5" />{b}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               )}
             </>
@@ -3658,9 +3776,111 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     openModal(<CancelFlow />, "center");
   }
 
+  function showTermosModal() {
+    const storeName = g("store_name", "o Estabelecimento");
+    const whatsapp = g("contact.whatsapp", "") || g("footer.whatsapp", "") || g("extras.whatsapp_number", "");
+    openModal(
+      <div className="p-6 max-h-[75vh] overflow-y-auto booking-scrollbar" style={{ borderRadius: '1rem' }}>
+        <h3 className="text-xl font-bold text-center mb-6" style={{ color: primary }}>Termos e Condições de Uso</h3>
+        <div className="space-y-5 text-sm text-gray-300 leading-relaxed">
+
+          <div>
+            <h4 className="text-white font-bold mb-2">1. OBJETIVO</h4>
+            <p>Estabelecer as regras para o fornecimento de serviços de barbearia, promoções e conteúdo da <strong className="text-white">{storeName}</strong> através de assinatura recorrente.</p>
+          </div>
+
+          <div>
+            <h4 className="text-white font-bold mb-2">2. DEFINIÇÕES PRINCIPAIS</h4>
+            <ul className="list-disc list-inside space-y-1">
+              <li><strong className="text-white">Assinatura:</strong> Pagamento recorrente do assinante pelos serviços contratados.</li>
+              <li><strong className="text-white">Produtos:</strong> Cosméticos (pomadas, cremes, óleos) fornecidos em kits, quando disponíveis.</li>
+              <li><strong className="text-white">Cupons de Desconto:</strong> Oferecidos por parceiros para compra de produtos/serviços com desconto.</li>
+              <li><strong className="text-white">Serviços:</strong> Conteúdo, consultoria e promoções oferecidas periodicamente ao assinante.</li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-white font-bold mb-2">3. ADESÃO E ACEITAÇÃO</h4>
+            <p>Ao realizar o pagamento pela assinatura, o assinante declara ter lido e aceita integralmente estes Termos de Uso e a Política de Privacidade, em conformidade com o Marco Civil da Internet (Lei 12.965/2014) e o Código de Defesa do Consumidor (Lei 8.078/1990).</p>
+            <p className="mt-2">O pagamento pode ser realizado via cartão de crédito, boleto bancário ou Pix, com renovação automática conforme a periodicidade do plano escolhido.</p>
+            <p className="mt-2">A <strong className="text-white">{storeName}</strong> pode alterar estes termos com aviso prévio de 30 (trinta) dias, sendo responsabilidade do assinante revisar periodicamente as mudanças.</p>
+          </div>
+
+          <div>
+            <h4 className="text-white font-bold mb-2">4. PREÇO E CONDIÇÕES DE PAGAMENTO</h4>
+            <ul className="list-disc list-inside space-y-1">
+              <li><strong className="text-white">Pagamento Recorrente:</strong> Assinatura cobrada automaticamente conforme o meio de pagamento escolhido.</li>
+              <li><strong className="text-white">Reajustes:</strong> Eventuais alterações de valor serão comunicadas com aviso prévio de 30 dias.</li>
+              <li><strong className="text-white">Compras Avulsas:</strong> Produtos ou serviços adicionais podem ser cobrados separadamente, com autorização prévia.</li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-white font-bold mb-2">5. CANCELAMENTO E PAUSA</h4>
+            <ul className="list-disc list-inside space-y-1">
+              <li><strong className="text-white">Direito de Arrependimento (7 dias):</strong> Conforme o Art. 49 do CDC, o assinante pode cancelar em até 7 dias após a contratação, com reembolso integral, desde que nenhum serviço tenha sido utilizado.</li>
+              <li><strong className="text-white">Pausa:</strong> O assinante pode solicitar pausa temporária da assinatura sem custos adicionais.</li>
+              <li><strong className="text-white">Cancelamento Definitivo:</strong> Não haverá reembolso após utilização dos serviços ou se cancelado fora do prazo de arrependimento. Os benefícios permanecem ativos até o fim do período já pago.</li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-white font-bold mb-2">6. OBRIGAÇÕES</h4>
+            <p className="font-semibold text-white mt-2">Da {storeName}:</p>
+            <ul className="list-disc list-inside space-y-1">
+              <li>Prestar serviços com qualidade e em conformidade com a legislação vigente.</li>
+              <li>Garantir a proteção dos dados pessoais do assinante, conforme a Lei Geral de Proteção de Dados (Lei 13.709/2018).</li>
+            </ul>
+            <p className="font-semibold text-white mt-3">Do Assinante:</p>
+            <ul className="list-disc list-inside space-y-1">
+              <li>Em caso de inadimplência, o assinante não poderá utilizar os serviços como membro do clube até a regularização.</li>
+              <li>O assinante inadimplente poderá utilizar serviços de forma avulsa ou regularizar a assinatura no momento do atendimento.</li>
+              <li>Manter os dados cadastrais atualizados e realizar os pagamentos em dia.</li>
+              <li>O não pagamento resultará na suspensão imediata dos benefícios da assinatura.</li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-white font-bold mb-2">7. VINCULAÇÃO À UNIDADE</h4>
+            <p>A assinatura é válida exclusivamente na unidade selecionada no momento da contratação. A utilização dos benefícios em outras unidades não está contemplada, salvo disposição expressa em contrário pela {storeName}.</p>
+          </div>
+
+          <div>
+            <h4 className="text-white font-bold mb-2">8. LIMITAÇÕES DOS SERVIÇOS</h4>
+            <ul className="list-disc list-inside space-y-1">
+              <li>É proibida a transferência de serviços para terceiros. A assinatura é pessoal e intransferível.</li>
+              <li>As regras de uso (quantidade de serviços, periodicidade) variam conforme o plano contratado.</li>
+              <li>Em caso de ausência sem aviso prévio a um agendamento confirmado, o serviço poderá ser considerado utilizado conforme políticas do estabelecimento.</li>
+            </ul>
+          </div>
+
+          {whatsapp && (
+            <div>
+              <h4 className="text-white font-bold mb-2">9. ATENDIMENTO AO ASSINANTE</h4>
+              <p>Suporte disponível via WhatsApp: <strong className="text-white">{whatsapp}</strong>, nos horários de funcionamento do estabelecimento.</p>
+            </div>
+          )}
+
+          <div>
+            <h4 className="text-white font-bold mb-2">{whatsapp ? '10' : '9'}. DADOS PESSOAIS</h4>
+            <p>Os dados pessoais coletados serão tratados em conformidade com a Lei Geral de Proteção de Dados (LGPD - Lei 13.709/2018), com finalidade exclusiva de prestação de serviço, cobrança e comunicação com o assinante.</p>
+          </div>
+
+          <div>
+            <h4 className="text-white font-bold mb-2">{whatsapp ? '11' : '10'}. DISPOSIÇÕES FINAIS</h4>
+            <p>Fica eleito o foro da comarca do domicílio do consumidor para dirimir quaisquer questões oriundas deste contrato, conforme Art. 101, I do Código de Defesa do Consumidor.</p>
+          </div>
+
+        </div>
+        <button onClick={() => closeModal()} className="w-full py-3 mt-6 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entendi</button>
+      </div>, "center"
+    );
+  }
+
   function showAssinarModal(plan: SubscriptionPlan) {
     openModal(
       <AssinarModal plan={plan} primary={primary} bgColor={bgColor} clientProfile={clientProfile} services={services}
+        units={units} g={g} openTermosModal={showTermosModal}
         onClose={() => closeModal()}
         onSuccess={async (result: any) => {
           // Reload subscription data
@@ -3691,11 +3911,12 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
             <p className="text-sm font-bold text-white">R$ {Number(subscription.plan.price).toFixed(2)}<span className="text-xs text-gray-500 font-normal">/mês</span></p>
             {isPaused && <span className="text-[10px] font-bold text-amber-400 flex items-center justify-end gap-1 mt-0.5"><Pause className="w-2.5 h-2.5" />Pausado</span>}
             {isOverdue && <span className="text-[10px] font-bold text-red-400 flex items-center justify-end gap-1 mt-0.5"><AlertTriangle className="w-2.5 h-2.5" />Inadimplente</span>}
+            {subscription.pendingPlanId && <span className="text-[10px] font-bold text-blue-400 flex items-center justify-end gap-1 mt-0.5"><ArrowUpDown className="w-2.5 h-2.5" />Troca agendada → {subscription.pendingPlanName}</span>}
           </div>
         </div>
         <div className="space-y-3">
           {canReactivate && (
-            <button onClick={() => closeModal(() => showReativarModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+            <button onClick={() => closeModal(() => isOverdue ? showRegularizarModal() : showReativarModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
               <span className="flex items-center gap-3" style={{ color: '#22c55e' }}><RefreshCw className="w-5 h-5" />{isOverdue ? 'Regularizar assinatura' : 'Reativar assinatura'}</span>
               <ChevronRight className="w-4 h-4 text-gray-500" />
             </button>
@@ -3718,6 +3939,12 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                 <span className="flex items-center gap-3"><ArrowUpDown className="w-5 h-5" style={{ color: primary }} />Trocar plano</span>
                 <ChevronRight className="w-4 h-4 text-gray-500" />
               </button>
+              {subscription.pendingPlanId && (
+                <button onClick={async () => { try { await cancelPendingPlanChange(); const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single(); if (s && onSubscriptionChange) onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined }); closeModal(); } catch(e: any) { alert(e.message || 'Erro'); } }} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+                  <span className="flex items-center gap-3 text-amber-400"><XCircle className="w-5 h-5" />Cancelar troca agendada ({subscription.pendingPlanName})</span>
+                  <ChevronRight className="w-4 h-4 text-gray-500" />
+                </button>
+              )}
               <button onClick={() => closeModal(() => showPausarModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
                 <span className="flex items-center gap-3"><Pause className="w-5 h-5" style={{ color: primary }} />Pausar assinatura</span>
                 <ChevronRight className="w-4 h-4 text-gray-500" />
@@ -3839,7 +4066,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState('');
       const [selectedPlanId, setSelectedPlanId] = useState('');
-      const availablePlans = (plans || []).filter((p: SubscriptionPlan) => p.active && p.availableForSale && p.id !== subscription?.planId);
+      const availablePlans = (plans || []).filter((p: SubscriptionPlan) => p.active && p.availableForSale && p.id !== subscription?.planId && p.id !== subscription?.pendingPlanId);
       const handleChange = async () => {
         if (!selectedPlanId) { setError('Selecione um plano.'); return; }
         setLoading(true); setError('');
@@ -3848,7 +4075,15 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
           // Reload subscription
           const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single();
           if (s && onSubscriptionChange) onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined });
-          closeModal();
+          const fmtDate = result.scheduledDate ? new Date(result.scheduledDate).toLocaleDateString('pt-BR') : '';
+          closeModal(() => openModal(
+            <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+              <Check className="w-14 h-14 mx-auto mb-4" style={{ color: primary }} />
+              <h3 className="text-2xl font-bold mb-2" style={{ color: primary }}>Troca Agendada!</h3>
+              <p className="text-gray-400 mb-6">Seu plano será alterado para <strong className="text-white">{result.newPlanName}</strong> a partir de <strong className="text-white">{fmtDate}</strong>.</p>
+              <button onClick={() => closeModal()} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entendido</button>
+            </div>, "center"
+          ));
         } catch (err: any) { setError(err.message || 'Erro ao trocar plano.'); setLoading(false); }
       };
       return (
@@ -3901,23 +4136,26 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState('');
       const [confirmed, setConfirmed] = useState(false);
+      const [scheduledDate, setScheduledDate] = useState('');
 
       const handleSwitch = async () => {
         setLoading(true); setError('');
         try {
-          await changePlan(targetPlan.id);
+          const result = await changePlan(targetPlan.id);
           const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single();
           if (s && onSubscriptionChange) onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined });
+          setScheduledDate(result.scheduledDate || '');
           setConfirmed(true);
         } catch (err: any) { setError(err.message || 'Erro ao trocar plano.'); setLoading(false); }
       };
 
       if (confirmed) {
+        const fmtDate = scheduledDate ? new Date(scheduledDate).toLocaleDateString('pt-BR') : '';
         return (
           <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
             <Check className="w-14 h-14 mx-auto mb-4" style={{ color: primary }} />
-            <h3 className="text-2xl font-bold mb-2" style={{ color: primary }}>Plano Alterado!</h3>
-            <p className="text-gray-400 mb-6">Seu plano foi alterado para <strong className="text-white">{targetPlan.name}</strong>. A alteração será aplicada na próxima cobrança.</p>
+            <h3 className="text-2xl font-bold mb-2" style={{ color: primary }}>Troca Agendada!</h3>
+            <p className="text-gray-400 mb-6">Seu plano será alterado para <strong className="text-white">{targetPlan.name}</strong> a partir de <strong className="text-white">{fmtDate}</strong>.</p>
             <button onClick={() => closeModal()} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entendido</button>
           </div>
         );
@@ -4010,12 +4248,103 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     openModal(<CompareFlow />, "center");
   }
 
+  // ═══ REGULARIZAR ASSINATURA (overdue) ═══
+  function showRegularizarModal() {
+    if (!subscription?.plan) return;
+    const whatsappNumber = g("footer.whatsapp", "") || g("extras.whatsapp_number", "");
+
+    const RegularizarFlow = () => {
+      const [retrying, setRetrying] = useState(false);
+      const [retryDone, setRetryDone] = useState(false);
+      const [retryError, setRetryError] = useState('');
+
+      const handleRetry = async () => {
+        setRetrying(true); setRetryError('');
+        try {
+          await retryPayment();
+          setRetryDone(true);
+        } catch (err: any) {
+          setRetryError(err.message || 'Erro ao solicitar nova cobrança.');
+        } finally { setRetrying(false); }
+      };
+
+      if (retryDone) {
+        return (
+          <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+            <Check className="w-14 h-14 mx-auto mb-4 text-green-400" />
+            <h3 className="text-xl font-bold mb-2 text-white">Cobrança solicitada!</h3>
+            <p className="text-gray-400 text-sm mb-6">Solicitamos uma nova tentativa de cobrança no seu cartão. Você será notificado quando o pagamento for processado.</p>
+            <button onClick={() => closeModal()} className="w-full py-2.5 text-sm font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entendido</button>
+          </div>
+        );
+      }
+
+      return (
+        <div className="p-6" style={{ borderRadius: "1rem" }}>
+          <h3 className="text-xl font-bold text-center mb-1" style={{ color: primary }}>Regularizar Assinatura</h3>
+          <p className="text-gray-400 text-center text-sm mb-6">Escolha como deseja resolver o pagamento pendente</p>
+          {retryError && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{retryError}</div>}
+          <div className="space-y-3">
+            {/* Option 1: Retry payment */}
+            {subscription.gatewaySubscriptionId && (
+              <button disabled={retrying} onClick={handleRetry} className="w-full text-left p-4 rounded-xl flex items-center gap-4 hover:opacity-80 transition-opacity" style={{ backgroundColor: '#22c55e15', border: '1px solid #22c55e30' }}>
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#22c55e25' }}>
+                  {retrying ? <Loader2 className="w-5 h-5 text-green-400 booking-spin" /> : <RefreshCw className="w-5 h-5 text-green-400" />}
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-white">Tentar nova cobrança</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Solicitar nova tentativa no cartão cadastrado</p>
+                </div>
+              </button>
+            )}
+            {/* Option 2: Change card */}
+            <button onClick={() => closeModal(() => showReativarModal())} className="w-full text-left p-4 rounded-xl flex items-center gap-4 hover:opacity-80 transition-opacity" style={{ backgroundColor: '#2a2a2a' }}>
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${primary}15` }}>
+                <CreditCard className="w-5 h-5" style={{ color: primary }} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-white">Trocar cartão e pagar</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">Cadastrar novo cartão para regularizar</p>
+              </div>
+            </button>
+            {/* Option 3: Contact */}
+            {whatsappNumber ? (
+              <a href={`https://wa.me/${whatsappNumber.replace(/\D/g, "")}?text=${encodeURIComponent("Olá! Preciso de ajuda para regularizar minha assinatura.")}`} target="_blank" rel="noopener noreferrer"
+                className="w-full text-left p-4 rounded-xl flex items-center gap-4 hover:opacity-80 transition-opacity block" style={{ backgroundColor: '#2a2a2a' }}>
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#25D36615' }}>
+                  <Phone className="w-5 h-5 text-green-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-white">Entrar em contato</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Falar com a barbearia via WhatsApp</p>
+                </div>
+              </a>
+            ) : (
+              <div className="w-full text-left p-4 rounded-xl flex items-center gap-4" style={{ backgroundColor: '#2a2a2a' }}>
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${primary}15` }}>
+                  <Phone className="w-5 h-5" style={{ color: primary }} />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-white">Entrar em contato</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Entre em contato com a barbearia para regularizar</p>
+                </div>
+              </div>
+            )}
+          </div>
+          <button onClick={() => closeModal()} className="w-full py-2.5 text-sm font-semibold rounded-lg border border-gray-600 mt-6" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        </div>
+      );
+    };
+    openModal(<RegularizarFlow />, "center");
+  }
+
   // ═══ REATIVAR ASSINATURA (F1) ═══
   function showReativarModal() {
     if (!subscription?.plan) return;
     // Reuse AssinarModal flow — user needs to enter card info again
     openModal(
       <AssinarModal plan={subscription.plan as SubscriptionPlan} primary={primary} bgColor={bgColor} clientProfile={clientProfile} services={services}
+        units={units} g={g} openTermosModal={showTermosModal}
         onClose={() => closeModal()}
         isReactivation={true}
         onSuccess={async (result: any) => {
@@ -4068,7 +4397,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                 </div>
               </div>
             )}
-            <div className="space-y-4">
+            <div className="mt-4 space-y-4">
               {subscription.plan.maxUsesPerMonth ? (
                 <>
                   <div className="grid grid-cols-4 gap-3">
@@ -4117,12 +4446,20 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
               </div>
             )}
             {/* ═══ CTA direto para overdue/paused ═══ */}
-            {(subscription.status === 'overdue' || subscription.status === 'paused') && (
+            {subscription.status === 'paused' && (
               <button onClick={showReativarModal}
-                className="w-full py-3 font-bold rounded-lg mt-4 flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
-                style={{ backgroundColor: subscription.status === 'overdue' ? '#22c55e' : primary, color: subscription.status === 'overdue' ? '#fff' : bgColor }}>
+                className="w-full py-2.5 text-sm font-bold rounded-lg mt-4 flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
+                style={{ backgroundColor: primary, color: bgColor }}>
                 <RefreshCw className="w-4 h-4" />
-                {subscription.status === 'overdue' ? 'Regularizar Assinatura' : 'Reativar Assinatura'}
+                Reativar Assinatura
+              </button>
+            )}
+            {subscription.status === 'overdue' && (
+              <button onClick={showRegularizarModal}
+                className="w-full py-2.5 text-sm font-bold rounded-lg mt-4 flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
+                style={{ backgroundColor: '#22c55e', color: '#fff' }}>
+                <RefreshCw className="w-4 h-4" />
+                Regularizar Assinatura
               </button>
             )}
             <div className="border-t border-gray-700 my-5" />
@@ -4143,6 +4480,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
       <div className="space-y-6">
         {plans.filter((p: SubscriptionPlan) => p.availableForSale !== false).map((plan: SubscriptionPlan) => {
           const isCurrent = subscription?.planId === plan.id;
+          const isPending = subscription?.pendingPlanId === plan.id;
           return (
             <div key={plan.id} className="booking-plan-card rounded-xl overflow-hidden" style={{ backgroundColor: "#000", borderColor: isCurrent ? primary : "#444" }}>
               {isCurrent && <div className="text-center py-1.5 font-bold text-sm" style={{ backgroundColor: primary, color: bgColor }}>SEU PLANO ATUAL</div>}
@@ -4158,14 +4496,14 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                   ))}
                 </ul>
                 {isCurrent && (subscription?.status === 'overdue' || subscription?.status === 'paused') ? (
-                  <button onClick={() => showReativarModal()}
-                    className="w-full py-3 font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+                  <button onClick={() => subscription.status === 'overdue' ? showRegularizarModal() : showReativarModal()}
+                    className="w-full py-2.5 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
                     style={{ backgroundColor: '#22c55e', color: '#fff' }}>
                     <RefreshCw className="w-4 h-4" />
                     {subscription.status === 'overdue' ? 'Regularizar' : 'Reativar'}
                   </button>
                 ) : (
-                  <button disabled={isCurrent}
+                  <button disabled={isCurrent || isPending}
                     onClick={() => {
                       if (!authUser) { onLogin(); return; }
                       if (subscription && subscription.status !== 'cancelled') {
@@ -4175,8 +4513,8 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                       }
                     }}
                     className="w-full py-3 font-bold rounded-lg transition-colors"
-                    style={{ backgroundColor: isCurrent ? "#4a4a4a" : primary, color: isCurrent ? "#888" : bgColor, cursor: isCurrent ? "not-allowed" : "pointer" }}>
-                    {isCurrent ? "Seu Plano Atual" : subscription ? "Trocar para este Plano" : "Assinar Plano"}
+                    style={{ backgroundColor: isCurrent || isPending ? "#4a4a4a" : primary, color: isCurrent || isPending ? "#888" : bgColor, cursor: isCurrent || isPending ? "not-allowed" : "pointer" }}>
+                    {isCurrent ? "Seu Plano Atual" : isPending ? "Troca Agendada ✓" : subscription ? "Trocar para este Plano" : "Assinar Plano"}
                   </button>
                 )}
               </div>
@@ -4191,10 +4529,13 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
         <div className="space-y-4">
           <button onClick={() => setActiveView("agendar")} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Agendar Horário</button>
           <button onClick={() => {
-            const whatsapp = g("contact.whatsapp", "");
+            const whatsapp = g("contact.whatsapp", "") || g("footer.whatsapp", "") || g("extras.whatsapp_number", "");
             if (whatsapp) window.open(`https://wa.me/${whatsapp.replace(/\D/g, "")}`, "_blank");
-          }} className="w-full py-3 font-bold rounded-lg border-2 transition-colors" style={{ borderColor: primary, color: primary, backgroundColor: "transparent" }}>Fale Conosco</button>
-          <button className="w-full py-2.5 text-sm font-medium rounded-lg transition-colors" style={{ backgroundColor: "#222", color: "#9ca3af" }}>Termos e Serviços</button>
+          }} className="w-full py-3 font-bold rounded-lg flex items-center justify-center gap-2 transition-colors" style={{ backgroundColor: '#25D366', color: '#fff' }}>
+            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+            Fale Conosco
+          </button>
+          <button onClick={() => showTermosModal()} className="w-full py-3 font-bold rounded-lg transition-colors" style={{ backgroundColor: '#222', color: '#9ca3af', border: '1px solid #333' }}>Termos e Serviços</button>
         </div>
       </div>
     </div>

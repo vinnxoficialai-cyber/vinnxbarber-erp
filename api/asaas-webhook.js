@@ -131,6 +131,18 @@ export default async function handler(req, res) {
           updates.lastPaymentDate = payment.paymentDate || new Date().toISOString();
           updates.failedAttempts = 0;
           updates.currentInvoiceUrl = payment.invoiceUrl || subscription.currentInvoiceUrl;
+          // Apply pending plan change if scheduled date has passed
+          if (subscription.pendingPlanId && subscription.planChangeScheduledAt) {
+            const scheduled = new Date(subscription.planChangeScheduledAt);
+            if (scheduled <= new Date()) {
+              updates.planId = subscription.pendingPlanId;
+              updates.pendingPlanId = null;
+              updates.pendingPlanName = null;
+              updates.planChangeScheduledAt = null;
+              updates.usesThisMonth = 0;
+              console.log(`[asaas-webhook] Applied pending plan change for sub ${subscription.id}`);
+            }
+          }
           break;
 
         case 'PAYMENT_OVERDUE':
