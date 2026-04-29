@@ -96,7 +96,7 @@ export async function getMySubscription(): Promise<any> {
     return result.subscription;
 }
 
-export async function cancelMySubscription(reason?: string): Promise<{ success: boolean }> {
+export async function cancelMySubscription(reason?: string): Promise<{ success: boolean; endDate?: string }> {
     return callApi('cancelMySubscription', { reason });
 }
 

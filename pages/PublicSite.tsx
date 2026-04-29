@@ -1339,12 +1339,16 @@ function PublicSiteApp() {
         if ((subDisc || 0) > 0 && clientSubscription?.id) {
           try {
             const newUses = (clientSubscription.usesThisMonth || 0) + 1;
-            await supabase.from("subscriptions").update({
+            const { error: updErr } = await supabase.from("subscriptions").update({
               usesThisMonth: newUses,
               updatedAt: new Date().toISOString(),
             }).eq("id", clientSubscription.id);
-            // Update local state so next booking in same session sees updated quota
-            setClientSubscription((prev: any) => prev ? { ...prev, usesThisMonth: newUses } : prev);
+            if (updErr) {
+              console.error('[Booking] Subscription usage update error:', updErr);
+            } else {
+              // Update local state so next booking in same session sees updated quota
+              setClientSubscription((prev: any) => prev ? { ...prev, usesThisMonth: newUses } : prev);
+            }
           } catch (e) {
             console.error('[Booking] Failed to increment subscription uses:', e);
           }
@@ -2785,11 +2789,15 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
           if ((ev as any).usedInPlan && clientSubscription?.id && (clientSubscription.usesThisMonth || 0) > 0) {
             try {
               const newUses = Math.max(0, (clientSubscription.usesThisMonth || 0) - 1);
-              await supabase.from("subscriptions").update({
+              const { error: updErr } = await supabase.from("subscriptions").update({
                 usesThisMonth: newUses,
                 updatedAt: new Date().toISOString(),
               }).eq("id", clientSubscription.id);
-              setClientSubscription((prev: any) => prev ? { ...prev, usesThisMonth: newUses } : prev);
+              if (!updErr) {
+                setClientSubscription((prev: any) => prev ? { ...prev, usesThisMonth: newUses } : prev);
+              } else {
+                console.error('[Cancel] Subscription usage update error:', updErr);
+              }
             } catch (e) {
               console.error('[Cancel] Failed to decrement subscription uses:', e);
             }
@@ -3806,7 +3814,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                     ...subscription,
                     status: 'cancelled',
                     cancelledAt: new Date().toISOString(),
-                    endDate: (result as any)?.endDate || subscription.nextPaymentDate || subscription.endDate || new Date().toISOString(),
+                    endDate: result?.endDate || subscription.nextPaymentDate || subscription.endDate || new Date().toISOString(),
                   });
                 }
                 closeModal();
