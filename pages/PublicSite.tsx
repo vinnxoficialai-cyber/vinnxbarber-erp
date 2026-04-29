@@ -4569,15 +4569,15 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                     <li key={i} className="flex items-start"><Check className="w-4 h-4 mr-3 mt-0.5 flex-shrink-0" style={{ color: primary }} /><span>{b}</span></li>
                   ))}
                 </ul>
-                {isCurrent && (subscription?.status === 'overdue' || subscription?.status === 'paused') ? (
-                  <button onClick={() => subscription.status === 'overdue' ? showRegularizarModal() : showReativarModal()}
+                {isCurrent && (subscription?.status === 'overdue' || subscription?.status === 'paused' || subscription?.status === 'cancelled') ? (
+                  <button onClick={() => subscription.status === 'cancelled' ? showReativarModal() : subscription.status === 'overdue' ? showRegularizarModal() : showReativarModal()}
                     className="w-full py-2.5 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
-                    style={{ backgroundColor: '#22c55e', color: '#fff' }}>
+                    style={{ backgroundColor: subscription.status === 'cancelled' ? primary : '#22c55e', color: subscription.status === 'cancelled' ? bgColor : '#fff' }}>
                     <RefreshCw className="w-4 h-4" />
-                    {subscription.status === 'overdue' ? 'Regularizar' : 'Reativar'}
+                    {subscription.status === 'overdue' ? 'Regularizar' : subscription.status === 'cancelled' ? 'Reassinar Plano' : 'Reativar'}
                   </button>
                 ) : (
-                  <button disabled={isCurrent || isPending}
+                  <button disabled={(isCurrent && subscription?.status !== 'cancelled') || isPending}
                     onClick={() => {
                       if (!authUser) { onLogin(); return; }
                       if (subscription && subscription.status !== 'cancelled') {
@@ -4587,8 +4587,8 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                       }
                     }}
                     className="w-full py-3 font-bold rounded-lg transition-colors"
-                    style={{ backgroundColor: isCurrent || isPending ? "#4a4a4a" : primary, color: isCurrent || isPending ? "#888" : bgColor, cursor: isCurrent || isPending ? "not-allowed" : "pointer" }}>
-                    {isCurrent ? "Seu Plano Atual" : isPending ? "Troca Agendada ✓" : subscription ? "Trocar para este Plano" : "Assinar Plano"}
+                    style={{ backgroundColor: (isCurrent && subscription?.status !== 'cancelled') || isPending ? "#4a4a4a" : primary, color: (isCurrent && subscription?.status !== 'cancelled') || isPending ? "#888" : bgColor, cursor: (isCurrent && subscription?.status !== 'cancelled') || isPending ? "not-allowed" : "pointer" }}>
+                    {(isCurrent && subscription?.status !== 'cancelled') ? "Seu Plano Atual" : isPending ? "Troca Agendada ✓" : (subscription && subscription.status !== 'cancelled') ? "Trocar para este Plano" : "Assinar Plano"}
                   </button>
                 )}
               </div>
