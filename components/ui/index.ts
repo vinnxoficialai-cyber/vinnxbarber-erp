@@ -5,3 +5,4 @@ export { Button } from './Button';
 export { Switch } from './Switch';
 export { Separator } from './Separator';
 export { Select } from './Select';
+export { Modal } from './Modal';

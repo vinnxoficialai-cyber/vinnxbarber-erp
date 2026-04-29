@@ -3,6 +3,7 @@ import { Client, Contract, TeamMember, Transaction, PaymentRecord } from '../typ
 import { ProfessionalFiscalData, InvoiceEmitter, Invoice, FiscalSettings } from '../types';
 import { BillingGatewayConfig, BillingEvent, SubscriptionUsageLog } from '../types';
 import { SubscriptionPlan, Subscription } from '../types';
+import { safeParseJsonArray } from './utils';
 
 // ============================================
 // TEAM MEMBERS (Users/Colaboradores)
@@ -1940,11 +1941,7 @@ export async function createComandaFromAppointment(
 
         // ── Subscription Discount Logic ──────────────────────────
         // Safely parse JSONB fields that may arrive as JSON strings
-        const safeParse = (val: any): any[] => {
-            if (Array.isArray(val)) return val;
-            if (typeof val === 'string') { try { const p = JSON.parse(val); return Array.isArray(p) ? p : []; } catch { return []; } }
-            return [];
-        };
+        const safeParse = safeParseJsonArray;
 
         // Determine if subscription discount applies
         let discountRules: Record<string, number> = {}; // serviceId → discount %
@@ -2340,7 +2337,7 @@ export async function getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
         return (data || []).map((p: any) => ({
             ...p,
             price: Number(p.price) || 0,
-            servicesIncluded: p.servicesIncluded || [],
+            servicesIncluded: safeParseJsonArray(p.servicesIncluded),
             durationDays: Number(p.durationDays) || 30,
             active: p.active ?? true,
             recurrence: p.recurrence || 'monthly',
@@ -2349,11 +2346,12 @@ export async function getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
             creditPrice: p.creditPrice != null ? Number(p.creditPrice) : undefined,
             boletoEnabled: p.boletoEnabled ?? false,
             boletoPrice: p.boletoPrice != null ? Number(p.boletoPrice) : undefined,
-            benefits: p.benefits || [],
-            planServices: typeof p.planServices === 'string' ? JSON.parse(p.planServices) : (p.planServices || []),
-            planProducts: typeof p.planProducts === 'string' ? JSON.parse(p.planProducts) : (p.planProducts || []),
-            disabledDays: p.disabledDays || [],
-            excludedProfessionals: p.excludedProfessionals || [],
+            benefits: safeParseJsonArray(p.benefits),
+            planServices: safeParseJsonArray(p.planServices),
+            planProducts: safeParseJsonArray(p.planProducts),
+            disabledDays: safeParseJsonArray(p.disabledDays),
+            excludedProfessionals: safeParseJsonArray(p.excludedProfessionals),
+            allowedUnitIds: safeParseJsonArray(p.allowedUnitIds),
         })) as SubscriptionPlan[];
     } catch (err) {
         console.error('Error fetching subscription plans:', err);
@@ -2458,13 +2456,15 @@ export async function getSubscriptions(): Promise<Subscription[]> {
             plan: s.subscription_plans ? {
                 ...s.subscription_plans,
                 price: Number(s.subscription_plans.price) || 0,
-                servicesIncluded: s.subscription_plans.servicesIncluded || [],
+                servicesIncluded: safeParseJsonArray(s.subscription_plans.servicesIncluded),
                 durationDays: Number(s.subscription_plans.durationDays) || 30,
-                planServices: s.subscription_plans.planServices || [],
-                planProducts: s.subscription_plans.planProducts || [],
-                benefits: s.subscription_plans.benefits || [],
+                planServices: safeParseJsonArray(s.subscription_plans.planServices),
+                planProducts: safeParseJsonArray(s.subscription_plans.planProducts),
+                benefits: safeParseJsonArray(s.subscription_plans.benefits),
                 unitScope: s.subscription_plans.unitScope || 'all',
-                allowedUnitIds: s.subscription_plans.allowedUnitIds || [],
+                allowedUnitIds: safeParseJsonArray(s.subscription_plans.allowedUnitIds),
+                disabledDays: safeParseJsonArray(s.subscription_plans.disabledDays),
+                excludedProfessionals: safeParseJsonArray(s.subscription_plans.excludedProfessionals),
             } : undefined,
         })) as Subscription[];
     } catch (err) {
@@ -2921,10 +2921,11 @@ export async function getInvoices(): Promise<Invoice[]> {
             .select('*')
             .order('createdAt', { ascending: false });
         if (error) throw error;
+        const safeParse = safeParseJsonArray;
         return (data || []).map((inv: any) => ({
             ...inv,
-            items: typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items || [],
-            events: typeof inv.events === 'string' ? JSON.parse(inv.events) : inv.events || [],
+            items: safeParse(inv.items),
+            events: safeParse(inv.events),
             totalServices: Number(inv.totalServices || 0),
             totalProducts: Number(inv.totalProducts || 0),
             totalAmount: Number(inv.totalAmount || 0),
@@ -3278,3 +3279,63 @@ export async function incrementSubscriptionUses(subscriptionId: string, delta: n
     }
 }
 
+// ============================================
+// SUBSCRIPTION INTERESTS (Leads)
+// ============================================
+
+export interface SubscriptionInterest {
+    id: string;
+    clientId: string;
+    clientName?: string;
+    planId?: string;
+    planName?: string;
+    status: 'pending' | 'contacted' | 'converted' | 'dismissed';
+    createdAt?: string;
+}
+
+export async function getSubscriptionInterests(): Promise<SubscriptionInterest[]> {
+    try {
+        const { data, error } = await supabase
+            .from('subscription_interests')
+            .select('*')
+            .order('createdAt', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    } catch (err) {
+        console.error('Error fetching subscription interests:', err);
+        return [];
+    }
+}
+
+export async function updateSubscriptionInterestStatus(
+    id: string,
+    status: SubscriptionInterest['status']
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const { error } = await supabase
+            .from('subscription_interests')
+            .update({ status })
+            .eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error updating subscription interest:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+export async function deleteSubscriptionInterest(
+    id: string
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const { error } = await supabase
+            .from('subscription_interests')
+            .delete()
+            .eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error deleting subscription interest:', err);
+        return { success: false, error: err.message };
+    }
+}

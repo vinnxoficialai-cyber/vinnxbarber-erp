@@ -136,6 +136,70 @@ export default async function handler(req, res) {
         case 'PAYMENT_OVERDUE':
           updates.status = 'overdue';
           updates.failedAttempts = (subscription.failedAttempts || 0) + 1;
+
+          // ── Push notification for failed payment ──
+          if (subscription.clientId) {
+            try {
+              const pushRes = await sbQuery(
+                `push_subscriptions?clientId=eq.${subscription.clientId}&select=endpoint,keys&limit=5`,
+                { headers: { Prefer: 'return=representation' } }
+              );
+              const pushSubs = await pushRes.json();
+              if (pushSubs?.length > 0) {
+                const VAPID_PUBLIC = process.env.VITE_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY;
+                const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
+                if (VAPID_PUBLIC && VAPID_PRIVATE) {
+                  const webpush = await import('web-push');
+                  webpush.default.setVapidDetails('mailto:noreply@vinnxbarber.com', VAPID_PUBLIC, VAPID_PRIVATE);
+                  const amount = Number(payment.value || 0).toFixed(2);
+                  const notifPayload = JSON.stringify({
+                    title: '⚠️ Pagamento recusado',
+                    body: `Sua cobrança de R$ ${amount} não foi processada. Atualize seu cartão para manter seus benefícios.`,
+                    icon: '/pwa-192x192.png',
+                    tag: `overdue-${payment.id}`,
+                  });
+                  for (const ps of pushSubs) {
+                    try {
+                      await webpush.default.sendNotification({ endpoint: ps.endpoint, keys: ps.keys }, notifPayload);
+                    } catch (pushErr) {
+                      console.warn('[asaas-webhook] Overdue push failed:', pushErr.statusCode || pushErr.message);
+                    }
+                  }
+                  console.log(`[asaas-webhook] Overdue notification sent to ${pushSubs.length} devices`);
+                }
+              }
+            } catch (notifErr) {
+              console.warn('[asaas-webhook] Overdue notification error (non-fatal):', notifErr.message);
+            }
+          }
+
+          // ── Auto-cancel after 3 consecutive failures (S3) ──
+          if (updates.failedAttempts >= 3) {
+            console.log(`[asaas-webhook] Auto-cancelling subscription ${subscription.id} after ${updates.failedAttempts} failed attempts`);
+            updates.status = 'cancelled';
+            updates.cancelledAt = new Date().toISOString();
+            updates.cancellationReason = 'Cancelado automaticamente por inadimplência (3 tentativas de pagamento falharam)';
+            // Cancel in ASAAS gateway
+            if (subscription.gatewaySubscriptionId) {
+              try {
+                const configs = await sbQuery(
+                  `billing_gateway_config?active=eq.true&select=apiKey,environment&limit=1`,
+                  { headers: { Prefer: 'return=representation' } }
+                );
+                const config = (await configs.json())?.[0];
+                if (config) {
+                  const baseUrl = config.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://api-sandbox.asaas.com/v3';
+                  await fetch(`${baseUrl}/subscriptions/${subscription.gatewaySubscriptionId}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json', 'access_token': config.apiKey },
+                  });
+                  console.log(`[asaas-webhook] ASAAS subscription ${subscription.gatewaySubscriptionId} auto-cancelled`);
+                }
+              } catch (gwErr) {
+                console.warn('[asaas-webhook] ASAAS auto-cancel failed (non-fatal):', gwErr.message);
+              }
+            }
+          }
           break;
 
         case 'PAYMENT_DELETED':
@@ -149,11 +213,65 @@ export default async function handler(req, res) {
           updates.currentInvoiceUrl = payment.invoiceUrl || subscription.currentInvoiceUrl;
           updates.currentBankSlipUrl = payment.bankSlipUrl || subscription.currentBankSlipUrl;
           if (payment.dueDate) updates.nextPaymentDate = payment.dueDate;
+
+          // ── F2: Push notification for upcoming payment ──
+          if (event === 'PAYMENT_CREATED' && payment.dueDate && subscription.clientId) {
+            try {
+              const dueDate = new Date(payment.dueDate);
+              const now = new Date();
+              const daysUntilDue = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
+              if (daysUntilDue >= 0 && daysUntilDue <= 3) {
+                // Fetch client push subscriptions
+                const pushRes = await sbQuery(
+                  `push_subscriptions?clientId=eq.${subscription.clientId}&select=endpoint,keys&limit=5`,
+                  { headers: { Prefer: 'return=representation' } }
+                );
+                const pushSubs = await pushRes.json();
+                if (pushSubs?.length > 0) {
+                  const VAPID_PUBLIC = process.env.VITE_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY;
+                  const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
+                  if (VAPID_PUBLIC && VAPID_PRIVATE) {
+                    const webpush = await import('web-push');
+                    webpush.default.setVapidDetails('mailto:noreply@vinnxbarber.com', VAPID_PUBLIC, VAPID_PRIVATE);
+                    const amount = Number(payment.value || 0).toFixed(2);
+                    const dayLabel = daysUntilDue === 0 ? 'hoje' : daysUntilDue === 1 ? 'amanhã' : `em ${daysUntilDue} dias`;
+                    const notifPayload = JSON.stringify({
+                      title: '💳 Cobrança próxima',
+                      body: `Sua assinatura de R$ ${amount} será cobrada ${dayLabel}.`,
+                      icon: '/pwa-192x192.png',
+                      tag: `payment-${payment.id}`,
+                    });
+                    for (const ps of pushSubs) {
+                      try {
+                        await webpush.default.sendNotification({ endpoint: ps.endpoint, keys: ps.keys }, notifPayload);
+                      } catch (pushErr) {
+                        console.warn('[asaas-webhook] Push failed:', pushErr.statusCode || pushErr.message);
+                      }
+                    }
+                    console.log(`[asaas-webhook] Payment reminder sent to ${pushSubs.length} devices (due ${dayLabel})`);
+                  }
+                }
+              }
+            } catch (notifErr) {
+              console.warn('[asaas-webhook] Notification error (non-fatal):', notifErr.message);
+            }
+          }
           break;
 
         case 'PAYMENT_RECEIVED_IN_CASH_UNDONE':
           updates.status = 'overdue';
           updates.failedAttempts = (subscription.failedAttempts || 0) + 1;
+          break;
+
+        case 'PAYMENT_RESTORED':
+          // Cobrança restaurada após remoção — reativar
+          // Guard: não reativar subs já canceladas (auto-cancel por inadimplência)
+          if (subscription.status !== 'cancelled') {
+            updates.status = 'active';
+            updates.failedAttempts = 0;
+          } else {
+            console.log(`[asaas-webhook] PAYMENT_RESTORED ignored — subscription ${subscription.id} is cancelled`);
+          }
           break;
 
         default:

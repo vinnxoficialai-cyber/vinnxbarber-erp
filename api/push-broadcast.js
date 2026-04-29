@@ -124,17 +124,22 @@ export default async function handler(req, res) {
       });
     }
 
-    // Log
-    await sbFetch('push_log', {
-      method: 'POST',
-      body: JSON.stringify({
-        campaignId: campaignId || null,
-        type: 'broadcast',
-        title,
-        body: body || '',
-        status: failed === subscriptions.length ? 'failed' : 'sent',
-      }),
-    });
+    // Log (non-blocking — don't crash if log fails)
+    try {
+      await sbFetch('push_log', {
+        method: 'POST',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          campaignId: campaignId || null,
+          type: 'broadcast',
+          title,
+          body: body || '',
+          status: failed === subscriptions.length ? 'failed' : 'sent',
+        }),
+      });
+    } catch (logErr) {
+      console.error('[push-broadcast] Log insert failed:', logErr.message);
+    }
 
     return res.status(200).json({ sent, failed, total: subscriptions.length });
   } catch (error) {

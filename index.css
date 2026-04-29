@@ -1,4 +1,4 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -13,8 +13,14 @@
     --foreground: 240 10% 4%;
     --card: 0 0% 100%;
     --card-foreground: 240 10% 4%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 4%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 10%;
     --muted: 240 5% 96%;
     --muted-foreground: 240 4% 46%;
+    --accent: 240 5% 96%;
+    --accent-foreground: 240 6% 10%;
     --border: 240 6% 90%;
     --input: 240 6% 90%;
     --ring: 240 5% 65%;
@@ -27,8 +33,14 @@
     --foreground: 0 0% 93%;
     --card: 240 5% 7%;
     --card-foreground: 0 0% 93%;
+    --popover: 240 5% 9%;
+    --popover-foreground: 0 0% 93%;
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 0 0% 90%;
     --muted: 240 4% 16%;
     --muted-foreground: 240 5% 55%;
+    --accent: 240 4% 16%;
+    --accent-foreground: 0 0% 93%;
     --border: 240 4% 16%;
     --input: 240 4% 16%;
     --ring: 240 5% 35%;
@@ -36,6 +48,45 @@
     --destructive-foreground: 0 0% 98%;
     --primary-foreground: 0 0% 100%;
   }
+}
+
+/* ======================================================
+   Global Scrollbar — semantic tokens (WooShoes pattern)
+   ====================================================== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.4);
+}
+
+/* Compact scrollbar for panels */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.15);
+  border-radius: 2px;
+}
+
+/* Hide scrollbar utility */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* StoreCustomizer animation utility */
@@ -543,6 +594,15 @@
   animation: bookingTada 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.5s both;
 }
 
+
+/* Avatar gradient ring */
+@keyframes avatarRingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.booking-avatar-ring {
+  animation: avatarRingPulse 3s ease-in-out infinite;
+}
 /* Underline expand animation */
 @keyframes bookingUnderlineExpand {
   from { transform: scaleX(0); }
@@ -1116,7 +1176,6 @@
 .booking-auth-or hr {
   flex: 1;
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 .booking-auth-or span {
   font-size: 0.7rem;
@@ -1222,9 +1281,8 @@
 /* Footer section */
 .booking-footer {
   padding: 2rem 1.5rem;
-  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+  padding-bottom: calc(8rem + env(safe-area-inset-bottom));
   text-align: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 .booking-footer a {
   display: inline-flex;

@@ -26,13 +26,13 @@ export const useConfirm = () => {
     return context.confirm;
 };
 
-// Provider Component
+// Provider Component — no longer requires isDarkMode prop
 interface ConfirmProviderProps {
     children: React.ReactNode;
-    isDarkMode: boolean;
+    isDarkMode?: boolean; // kept for backward-compat but ignored
 }
 
-export const ConfirmProvider: React.FC<ConfirmProviderProps> = ({ children, isDarkMode }) => {
+export const ConfirmProvider: React.FC<ConfirmProviderProps> = ({ children }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [options, setOptions] = useState<ConfirmOptions | null>(null);
     const [resolvePromise, setResolvePromise] = useState<((value: boolean) => void) | null>(null);
@@ -64,20 +64,20 @@ export const ConfirmProvider: React.FC<ConfirmProviderProps> = ({ children, isDa
             case 'danger':
                 return {
                     icon: <AlertTriangle size={24} className="text-red-500" />,
-                    iconBg: 'bg-red-100 dark:bg-red-900/30',
+                    iconBg: 'bg-red-500/15',
                     confirmBtn: 'bg-red-500 hover:bg-red-600 text-white',
                 };
             case 'warning':
                 return {
                     icon: <AlertCircle size={24} className="text-orange-500" />,
-                    iconBg: 'bg-orange-100 dark:bg-orange-900/30',
+                    iconBg: 'bg-orange-500/15',
                     confirmBtn: 'bg-orange-500 hover:bg-orange-600 text-white',
                 };
             case 'info':
             default:
                 return {
                     icon: <Info size={24} className="text-blue-500" />,
-                    iconBg: 'bg-blue-100 dark:bg-blue-900/30',
+                    iconBg: 'bg-blue-500/15',
                     confirmBtn: 'bg-primary hover:bg-primary-600 text-white',
                 };
         }
@@ -96,26 +96,26 @@ export const ConfirmProvider: React.FC<ConfirmProviderProps> = ({ children, isDa
                     onClick={handleCancel}
                 >
                     <div
-                        className={`${isDarkMode ? 'bg-dark-surface border-dark-border' : 'bg-white border-slate-200'} border rounded-xl shadow-2xl max-w-md w-full animate-in fade-in zoom-in-95 duration-200`}
+                        className="bg-card border border-border rounded-xl shadow-2xl max-w-md w-full animate-in fade-in zoom-in-95 duration-200"
                         onClick={e => e.stopPropagation()}
                     >
                         {/* Header */}
-                        <div className={`p-6 border-b ${isDarkMode ? 'border-dark-border' : 'border-slate-100'}`}>
+                        <div className="p-6 border-b border-border">
                             <div className="flex items-start gap-4">
                                 <div className={`p-3 rounded-xl ${styles.iconBg}`}>
                                     {styles.icon}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <h3 className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                                    <h3 className="text-lg font-bold text-foreground">
                                         {options.title}
                                     </h3>
-                                    <p className={`mt-1 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                                    <p className="mt-1 text-sm text-muted-foreground">
                                         {options.message}
                                     </p>
                                 </div>
                                 <button
                                     onClick={handleCancel}
-                                    className={`p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-dark transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}
+                                    className="p-1 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
                                 >
                                     <X size={20} />
                                 </button>
@@ -126,16 +126,13 @@ export const ConfirmProvider: React.FC<ConfirmProviderProps> = ({ children, isDa
                         <div className="p-4 flex gap-3">
                             <button
                                 onClick={handleCancel}
-                                className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-colors border ${isDarkMode
-                                        ? 'border-dark-border text-slate-300 hover:bg-dark'
-                                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                                    }`}
+                                className="flex-1 py-3 px-4 rounded-full font-semibold transition-colors border border-border text-foreground hover:bg-muted"
                             >
                                 {options.cancelLabel || 'Cancelar'}
                             </button>
                             <button
                                 onClick={handleConfirm}
-                                className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 ${styles.confirmBtn}`}
+                                className={`flex-1 py-3 px-4 rounded-full font-semibold transition-colors flex items-center justify-center gap-2 ${styles.confirmBtn}`}
                             >
                                 <Check size={18} />
                                 {options.confirmLabel || 'Confirmar'}

@@ -20,6 +20,7 @@ import { useFilteredData } from '../hooks/useFilteredData';
 import { CustomDropdown } from '../components/CustomDropdown';
 import { StatCard } from '../components/StatCard';
 import { formatCurrency as formatCurrencyUtil } from '../utils';
+import { safeParseJsonArray } from '../lib/utils';
 
 interface ComandaPageProps {
     isDarkMode: boolean;
@@ -299,7 +300,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
     const [notesValue, setNotesValue] = useState('');
 
     // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+    const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
 
     const formatElapsed = (openedAt: string) => {
         const diff = Math.floor((now.getTime() - new Date(openedAt).getTime()) / 60000);
@@ -507,6 +508,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
     // â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const handleCreateComanda = async () => {
+        if (!selectedBarberId) { toast.error('Selecione um profissional'); return; }
         const client = selectedClientId ? clients.find(c => c.id === selectedClientId) : null;
         const barber = members.find(m => m.id === selectedBarberId);
         const newComanda: Comanda = {
@@ -531,79 +533,84 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
     };
 
     const handleAddItem = async (comanda: Comanda, itemType: 'service' | 'product', item: Service | Product) => {
-        // Low stock warning
-        if (itemType === 'product' && (item as Product).stock <= (item as Product).minStock) {
-            toast.warning('Estoque baixo', `${item.name}: apenas ${(item as Product).stock} unidades restantes`);
-        }
-        const newItem: ComandaItem = {
-            id: crypto.randomUUID(), comandaId: comanda.id, type: itemType, itemId: item.id, name: item.name, quantity: 1,
-            unitPrice: itemType === 'service' ? (item as Service).price : (item as Product).sellPrice,
-            totalPrice: itemType === 'service' ? (item as Service).price : (item as Product).sellPrice,
-        };
+        try {
+            // Low stock warning
+            if (itemType === 'product' && (item as Product).stock <= (item as Product).minStock) {
+                toast.warning('Estoque baixo', `${item.name}: apenas ${(item as Product).stock} unidades restantes`);
+            }
+            const newItem: ComandaItem = {
+                id: crypto.randomUUID(), comandaId: comanda.id, type: itemType, itemId: item.id, name: item.name, quantity: 1,
+                unitPrice: itemType === 'service' ? (item as Service).price : (item as Product).sellPrice,
+                totalPrice: itemType === 'service' ? (item as Service).price : (item as Product).sellPrice,
+            };
 
-        // ═══ SUBSCRIPTION DISCOUNT LOGIC (Decisões #1, #5, #6, #8) ═══
-        const sub = getClientSubscription(comanda.clientId);
-        if (sub?.status === 'active' && sub.plan) {
-            const planAllowed = sub.plan.unitScope === 'all' ||
-                sub.plan.allowedUnitIds?.includes(selectedUnitId !== 'all' ? selectedUnitId : '');
+            // ═══ SUBSCRIPTION DISCOUNT LOGIC (Decisões #1, #5, #6, #8) ═══
+            const sub = getClientSubscription(comanda.clientId);
+            if (sub?.status === 'active' && sub.plan) {
+                const planAllowed = sub.plan.unitScope === 'all' ||
+                    safeParseJsonArray(sub.plan.allowedUnitIds).includes(selectedUnitId !== 'all' ? selectedUnitId : '');
 
-            if (planAllowed) {
-                const rules = itemType === 'service' ? sub.plan.planServices : sub.plan.planProducts;
-                const rule = rules?.find((r: any) =>
-                    itemType === 'service' ? r.serviceId === item.id : r.productId === item.id
-                );
+                if (planAllowed) {
+                    const rules = safeParseJsonArray(itemType === 'service' ? sub.plan.planServices : sub.plan.planProducts);
+                    const rule = rules.find((r: any) =>
+                        itemType === 'service' ? r.serviceId === item.id : r.productId === item.id
+                    );
 
-                if (rule && rule.discount > 0) {
-                    let shouldApplyDiscount = false;
-                    if (!rule.monthlyLimit) {
-                        shouldApplyDiscount = true;
-                    } else {
-                        const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
-                        const usageCount = await getServiceUsageCount(sub.id, item.id, monthStart);
-                        if (usageCount < rule.monthlyLimit) {
+                    if (rule && rule.discount > 0) {
+                        let shouldApplyDiscount = false;
+                        if (!rule.monthlyLimit) {
                             shouldApplyDiscount = true;
                         } else {
-                            toast.info('Limite atingido', `Uso ${usageCount}/${rule.monthlyLimit} neste mês. Cobrado preço integral.`);
+                            const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+                            const usageCount = await getServiceUsageCount(sub.id, item.id, monthStart);
+                            if (usageCount < rule.monthlyLimit) {
+                                shouldApplyDiscount = true;
+                            } else {
+                                toast.info('Limite atingido', `Uso ${usageCount}/${rule.monthlyLimit} neste mês. Cobrado preço integral.`);
+                            }
                         }
-                    }
-                    if (shouldApplyDiscount) {
-                        newItem.originalPrice = newItem.unitPrice;
-                        newItem.unitPrice = +(newItem.unitPrice * (1 - rule.discount / 100)).toFixed(2);
-                        newItem.totalPrice = newItem.unitPrice * newItem.quantity;
-                        newItem.subscriptionDiscount = rule.discount;
+                        if (shouldApplyDiscount) {
+                            newItem.originalPrice = newItem.unitPrice;
+                            newItem.unitPrice = +(newItem.unitPrice * (1 - rule.discount / 100)).toFixed(2);
+                            newItem.totalPrice = newItem.unitPrice * newItem.quantity;
+                            newItem.subscriptionDiscount = rule.discount;
+                        }
                     }
                 }
             }
-        }
 
-        const result = await saveComandaItem(newItem);
-        if (!result.success) { toast.error('Erro ao adicionar item', result.error || 'Erro desconhecido'); return; }
+            const result = await saveComandaItem(newItem);
+            if (!result.success) { toast.error('Erro ao adicionar item', result.error || 'Erro desconhecido'); return; }
 
-        // Register usage log + increment cache (Decisões #1, #6)
-        if (newItem.subscriptionDiscount && sub) {
-            await saveSubscriptionUsageLog({
-                id: crypto.randomUUID(),
-                subscriptionId: sub.id,
-                comandaId: comanda.id,
-                comandaItemId: newItem.id,
-                itemId: item.id,
-                type: itemType,
-                discountApplied: newItem.subscriptionDiscount,
-                originalPrice: newItem.originalPrice,
-                finalPrice: newItem.unitPrice,
-            });
-            await incrementSubscriptionUses(sub.id, 1);
-        }
-
-        setComandas(prev => prev.map(c => {
-            if (c.id === comanda.id) {
-                const items = [...(c.items || []), newItem];
-                const total = items.reduce((sum, i) => sum + i.totalPrice, 0);
-                return { ...c, items, totalAmount: total, finalAmount: total - (c.discountAmount || 0) };
+            // Register usage log + increment cache (Decisões #1, #6)
+            if (newItem.subscriptionDiscount && sub) {
+                await saveSubscriptionUsageLog({
+                    id: crypto.randomUUID(),
+                    subscriptionId: sub.id,
+                    comandaId: comanda.id,
+                    comandaItemId: newItem.id,
+                    itemId: item.id,
+                    type: itemType,
+                    discountApplied: newItem.subscriptionDiscount,
+                    originalPrice: newItem.originalPrice,
+                    finalPrice: newItem.unitPrice,
+                });
+                await incrementSubscriptionUses(sub.id, 1);
             }
-            return c;
-        }));
-        toast.success(`${item.name} adicionado!${newItem.subscriptionDiscount ? ` (${newItem.subscriptionDiscount}% desc. plano)` : ''}`);
+
+            setComandas(prev => prev.map(c => {
+                if (c.id === comanda.id) {
+                    const items = [...(c.items || []), newItem];
+                    const total = items.reduce((sum, i) => sum + i.totalPrice, 0);
+                    return { ...c, items, totalAmount: total, finalAmount: total - (c.discountAmount || 0) };
+                }
+                return c;
+            }));
+            toast.success(`${item.name} adicionado!${newItem.subscriptionDiscount ? ` (${newItem.subscriptionDiscount}% desc. plano)` : ''}`);
+        } catch (err: any) {
+            console.error('[handleAddItem] Error:', err);
+            toast.error('Erro ao adicionar item', err?.message || 'Erro inesperado');
+        }
     };
 
     const handleRemoveItem = async (comanda: Comanda, itemId: string) => {
@@ -704,32 +711,91 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
             {/* ===================== NEW COMANDA MODAL ===================== */}
             {isNewComandaOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                    <div className={`${bgCard} border ${borderCol} rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200`}>
-                        <div className={`p-4 border-b ${borderCol} flex justify-between items-center ${bgMuted}`}>
-                            <div className="flex items-center gap-2">
-                                <Store size={18} className="text-primary" />
-                                <h3 className={`font-semibold text-lg ${textMain}`}>Nova Comanda (Balcao)</h3>
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setIsNewComandaOpen(false)}>
+                    <div className={`${bgCard} border ${borderCol} rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200`} onClick={e => e.stopPropagation()}>
+                        {/* Header */}
+                        <div className={`px-6 py-4 border-b ${borderCol} ${bgMuted}`}>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                                        <Store size={20} className="text-primary" />
+                                    </div>
+                                    <div>
+                                        <h3 className={`font-bold text-base ${textMain}`}>Nova Comanda</h3>
+                                        <p className={`text-[11px] ${textSub}`}>Atendimento de balcao</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setIsNewComandaOpen(false)} className={`w-8 h-8 rounded-lg flex items-center justify-center ${textSub} hover:bg-red-500/10 hover:text-red-500 transition-colors`}>
+                                    <X size={18} />
+                                </button>
                             </div>
-                            <button onClick={() => setIsNewComandaOpen(false)} className={`${textSub} hover:${textMain}`}><X size={20} /></button>
                         </div>
-                        <div className="p-6 space-y-4">
+
+                        {/* Body */}
+                        <div className="px-6 py-5 space-y-5">
+                            {/* Barber */}
                             <div>
-                                <label className={`block text-xs font-medium ${textSub} mb-1 flex items-center gap-1`}><User size={12} /> Barbeiro</label>
-                                <CustomDropdown value={selectedBarberId} onChange={setSelectedBarberId} options={barbers.map(b => ({ value: b.id, label: b.name, icon: <User size={12} /> }))} isDarkMode={isDarkMode} placeholder="Selecionar barbeiro" />
+                                <label className={`block text-[11px] font-bold ${textSub} uppercase tracking-wider mb-2`}>
+                                    Profissional
+                                </label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {barbers.slice(0, 6).map(b => (
+                                        <button key={b.id} type="button" onClick={() => setSelectedBarberId(b.id)}
+                                            className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-center transition-all ${selectedBarberId === b.id ? 'border-primary bg-primary/5 shadow-sm' : `${borderCol} hover:border-primary/30`}`}>
+                                            {b.image ? (
+                                                <img src={b.image} alt="" className="w-9 h-9 rounded-full object-cover" />
+                                            ) : (
+                                                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${selectedBarberId === b.id ? 'bg-primary text-white' : `${bgMuted} text-primary`}`}>
+                                                    {b.name[0]}
+                                                </div>
+                                            )}
+                                            <span className={`text-[10px] font-semibold truncate w-full ${selectedBarberId === b.id ? 'text-primary' : textMain}`}>
+                                                {b.name.split(' ')[0]}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
+
+                            {/* Client */}
                             <div>
-                                <label className={`block text-xs font-medium ${textSub} mb-1 flex items-center gap-1`}><User size={12} /> Cliente (opcional)</label>
-                                <CustomDropdown value={selectedClientId} onChange={setSelectedClientId} options={[{ value: '', label: '-- Selecionar cliente --' }, ...clients.map(c => ({ value: c.id, label: c.name, icon: <User size={12} /> }))]} isDarkMode={isDarkMode} />
+                                <label className={`block text-[11px] font-bold ${textSub} uppercase tracking-wider mb-2`}>
+                                    Cliente <span className={`font-normal normal-case ${textSub}`}>(opcional)</span>
+                                </label>
+                                <CustomDropdown
+                                    value={selectedClientId}
+                                    onChange={setSelectedClientId}
+                                    options={[{ value: '', label: 'Sem cliente vinculado' }, ...clients.map(c => ({ value: c.id, label: c.name }))]}
+                                    isDarkMode={isDarkMode}
+                                    placeholder="Buscar cliente..."
+                                />
                             </div>
+
+                            {/* Walk-in name */}
                             {!selectedClientId && (
                                 <div>
-                                    <label className={`block text-xs font-medium ${textSub} mb-1`}>Nome Avulso</label>
-                                    <input type="text" value={walkInName} onChange={e => setWalkInName(e.target.value)} placeholder="Ex: Joao (cadeira 2)" className={`w-full ${bgInput} border ${borderCol} rounded-lg p-2.5 text-sm ${textMain} focus:ring-1 focus:ring-primary outline-none`} />
+                                    <label className={`block text-[11px] font-bold ${textSub} uppercase tracking-wider mb-2`}>
+                                        Identificacao
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={walkInName}
+                                        onChange={e => setWalkInName(e.target.value)}
+                                        placeholder="Ex: Joao (cadeira 2)"
+                                        className={`w-full h-10 ${bgInput} border ${borderCol} rounded-xl px-3 text-sm ${textMain} focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-all`}
+                                    />
                                 </div>
                             )}
-                            <button onClick={handleCreateComanda} className="w-full py-3 bg-primary hover:bg-primary-600 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2">
-                                <Store size={16} /> Abrir Comanda
+                        </div>
+
+                        {/* Footer */}
+                        <div className={`px-6 py-4 border-t ${borderCol} ${bgMuted}`}>
+                            <button
+                                onClick={handleCreateComanda}
+                                disabled={!selectedBarberId}
+                                className={`w-full h-12 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${selectedBarberId ? 'bg-primary hover:bg-primary-600 text-white' : `${bgMuted} ${textSub} cursor-not-allowed border ${borderCol}`}`}
+                            >
+                                <Plus size={18} /> Abrir Comanda
                             </button>
                         </div>
                     </div>
@@ -954,7 +1020,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                 {/* ===================== 2-COLUMN LAYOUT ===================== */}
                 <div className="flex-1 flex flex-col lg:flex-row gap-4 min-h-0 overflow-hidden">
 
-                    {/* â”€â”€â”€ LEFT: Comanda List â”€â”€â”€ */}
+                    {/* LEFT: Comanda List */}
                     <div className={`lg:w-[340px] xl:w-[380px] flex flex-col ${bgCard} rounded-xl border ${borderCol} overflow-hidden shrink-0`}>
                         <div className={`p-3 border-b ${borderCol} space-y-3`}>
                             <div className="relative">
@@ -988,19 +1054,31 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                                         </div>
                                                         <div className="min-w-0">
                                                             <p className={`font-semibold text-xs truncate ${textMain}`}>{c.clientName || 'Cliente Avulso'}</p>
-                                                            <p className={`text-[10px] ${textSub} truncate`}>{c.barberName}{elapsed ? ` - ${elapsed}` : ''}</p>
+                                                            <p className={`text-[10px] ${textSub} truncate`}>{c.barberName}</p>
                                                         </div>
                                                     </div>
-                                                    <div className="flex flex-col items-end shrink-0">
+                                                    <div className="flex flex-col items-end shrink-0 gap-1">
                                                         <span className={`font-bold text-xs ${c.status === 'closed' ? 'text-emerald-500' : textMain}`}>{formatCurrency(c.finalAmount || c.totalAmount)}</span>
+                                                        {elapsed && (
+                                                            <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold ${getTimerColor(c.openedAt)}`}>
+                                                                <Timer size={9} /> {elapsed}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center justify-between mt-2.5">
+                                                <div className="flex items-center justify-between mt-2">
                                                     <div className="flex items-center gap-2">
                                                         <OriginBadge origin={c.origin} />
                                                         {c.items && c.items.length > 0 && <span className={`text-[10px] ${textSub}`}>{c.items.length} {c.items.length === 1 ? 'item' : 'itens'}</span>}
                                                     </div>
-                                                    <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium border ${isDarkMode ? s.darkColor : s.color}`}>{s.label}</div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        {isComandaActive(c) && c.items && c.items.length > 0 && (
+                                                            <span onClick={(e) => { e.stopPropagation(); setSelectedComandaId(c.id); setShowCheckout(true); setCloseDiscount(0); setTipAmount(0); setSplitEnabled(false); }} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500 text-white cursor-pointer hover:bg-emerald-600 transition-colors">
+                                                                <Receipt size={8} /> Finalizar
+                                                            </span>
+                                                        )}
+                                                        <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium border ${isDarkMode ? s.darkColor : s.color}`}>{s.label}</div>
+                                                    </div>
                                                 </div>
                                             </button>
                                         );

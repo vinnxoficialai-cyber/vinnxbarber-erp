@@ -88,6 +88,13 @@ export const ComposerTab: React.FC<Props> = ({ isDarkMode, textMain, textSub, bg
         const token = session.data.session?.access_token;
         if (!token) { toast.error('Sessão', 'Faça login novamente'); setSending(false); return; }
 
+        // Safe JSON parser — prevents crash on empty/HTML responses
+        const safeJson = async (r: Response) => {
+          const text = await r.text();
+          if (!text) return {};
+          try { return JSON.parse(text); } catch { return { error: text.substring(0, 200) }; }
+        };
+
         if (sendMode === 'individual') {
           // Send to single client
           const res = await fetch('/api/push-send', {
@@ -95,11 +102,11 @@ export const ComposerTab: React.FC<Props> = ({ isDarkMode, textMain, textSub, bg
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ clientId: selectedClientId, title, body, image: imageUrl || undefined, url: targetUrl }),
           });
-          const data = await res.json();
+          const data = await safeJson(res);
           if (res.ok) {
             if (data.sent === 0 && data.message) { toast.warning ? toast.warning('Aviso', data.message) : toast.error('Aviso', data.message); }
-            else toast.success('Enviado!', `${data.sent} sucesso, ${data.failed || 0} falha(s)`);
-          } else toast.error('Erro', data.error || 'Falha');
+            else toast.success('Enviado!', `${data.sent ?? 0} sucesso, ${data.failed || 0} falha(s)`);
+          } else toast.error('Erro', data.error || `Falha (HTTP ${res.status})`);
         } else {
           // Broadcast (all or filtered)
           const filterCriteria = sendMode === 'filter' ? {
@@ -112,9 +119,9 @@ export const ComposerTab: React.FC<Props> = ({ isDarkMode, textMain, textSub, bg
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ title, body, image: imageUrl || undefined, url: targetUrl, filterCriteria }),
           });
-          const data = await res.json();
-          if (res.ok) toast.success('Enviado!', `${data.sent} sucesso, ${data.failed || 0} falha(s)`);
-          else toast.error('Erro', data.error || 'Falha');
+          const data = await safeJson(res);
+          if (res.ok) toast.success('Enviado!', `${data.sent ?? 0} sucesso, ${data.failed || 0} falha(s)`);
+          else toast.error('Erro', data.error || `Falha (HTTP ${res.status})`);
         }
       } else {
         // Save as campaign

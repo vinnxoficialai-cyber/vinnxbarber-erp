@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import Lottie from "lottie-react";
 import { createClient } from "@supabase/supabase-js";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import {
@@ -6,10 +7,13 @@ import {
   MapPin, Scissors, Store, Loader2, LogOut, Check, X, AlertTriangle,
   Gift, Share2, Bell, Edit3, Lock, Eye, EyeOff, Camera, CreditCard,
   Phone, Mail, Award, Heart, Settings, ChevronDown, ChevronUp,
-  MessageCircle, Copy, ExternalLink, Pause, XCircle, RefreshCw, Crown,
+  MessageCircle, Copy, ExternalLink, Pause, XCircle, RefreshCw, Crown, ImagePlus, Trash2,
+  ArrowUpDown, Receipt, Infinity as InfinityIcon,
 } from "lucide-react";
 import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscription } from "../types";
 import { usePlatform } from "../hooks/usePlatform";
+import { safeParseJsonArray } from "../lib/utils";
+import { subscribeToPlan, cancelMySubscription, pauseMySubscription, getMyPaymentHistory, updatePaymentMethod, reactivateSubscription, changePlan, setAsaasPublicTokenProvider } from "../lib/asaasPublicService";
 
 // ============================================================
 // DEDICATED Supabase client for PublicSite
@@ -20,8 +24,19 @@ import { usePlatform } from "../hooks/usePlatform";
 
 // Module-level token storage — outside SDK's control
 let _psAccessToken: string | null = null;
+// Wire the token into asaasPublicService so API calls use PS session
+setAsaasPublicTokenProvider(() => _psAccessToken);
 // Flag to prevent loadClientProfile auto-create during migration claim
 let _migrationClaimInProgress = false;
+
+// Pre-load Lottie animation for booking confirmation
+let _lottieSuccessData: any = null;
+fetch("/Quando.json").then(r => r.json()).then(d => { _lottieSuccessData = d; }).catch(() => {});
+function LottieSuccess({ primary }: { primary: string }) {
+  const [data, setData] = useState(_lottieSuccessData);
+  useEffect(() => { if (!data && !_lottieSuccessData) { fetch("/Quando.json").then(r => r.json()).then(d => { _lottieSuccessData = d; setData(d); }).catch(() => {}); } else if (!data && _lottieSuccessData) { setData(_lottieSuccessData); } }, []);
+  return data ? <Lottie animationData={data} loop={false} style={{ width: 120, height: 120, margin: "0 auto 8px" }} /> : <Check className="w-16 h-16 mx-auto mb-4" style={{ color: primary }} />;
+}
 
 // Capture beforeinstallprompt at module level (fires before React mounts)
 let _deferredInstallPrompt: Event | null = null;
@@ -71,8 +86,8 @@ const supabase = createClient(
     },
     global: {
       fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-        // Inject access token for REST API calls (RLS-protected)
-        if (_psAccessToken && typeof input === "string" && input.includes("/rest/v1/")) {
+        // Inject access token for REST API and Storage calls (RLS-protected)
+        if (_psAccessToken && typeof input === "string" && (input.includes("/rest/v1/") || input.includes("/storage/v1/"))) {
           const headers = new Headers(init?.headers);
           headers.set("Authorization", `Bearer ${_psAccessToken}`);
           return fetch(input, { ...init, headers });
@@ -844,7 +859,7 @@ function PublicSiteApp() {
         .from("subscriptions")
         .select("*, subscription_plans(*)")
         .eq("clientId", data.id)
-        .in("status", ["active", "pending_payment"])
+        .in("status", ["active", "pending_payment", "overdue", "paused"])
         .limit(1);
       if (subs && subs.length > 0) {
         const s = subs[0];
@@ -1284,7 +1299,7 @@ function PublicSiteApp() {
           const unitObj = selection.unit;
           openModal(
             <div className="p-6 text-center booking-zoom-in" style={{ borderRadius: "1rem" }}>
-              <Check className="w-16 h-16 mx-auto mb-4" style={{ color: primary }} />
+              <LottieSuccess primary={primary} />
               <h3 className="text-2xl font-bold mb-6" style={{ color: primary }}>{g("booking.success_title", "Agendamento Confirmado!")}</h3>
               <div className="text-left space-y-4 text-sm mb-8">
                 <div>
@@ -1491,6 +1506,8 @@ function PublicSiteApp() {
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
             btnBg={btnBg} btnText={btnText}
             authUser={authUser} clientProfile={clientProfile}
+            clientSubscription={clientSubscription}
+            allEvents={allEvents} barbers={barbers} units={units}
             goals={goals} services={services}
             onLogin={() => showLoginModal()} openModal={openModal} closeModal={closeModal}
             onLogout={async () => { lastSignInRef.current = 0; _psAccessToken = null; localStorage.removeItem("vinnx_ps_user"); sessionStorage.removeItem("vinnx_reminder_dismissed"); await supabase.auth.signOut(); setAuthUser(null); setClientProfile(null); setClientSubscription(null); setAllEvents([]); resetSelection(); }}
@@ -1525,6 +1542,25 @@ function PublicSiteApp() {
                   </div>
                 )}
                 {ftText && <p className="text-xs" style={{ color: ftTextColor }}>{ftText}</p>}
+                {g("branding.show_powered_by", "true") !== "false" && (
+                  <div className="mt-8 flex flex-col items-center gap-2">
+                    <p className="text-sm text-gray-500">Criado por</p>
+                    <svg xmlns="http://www.w3.org/2000/svg" xmlSpace="preserve" viewBox="0 0 13929.2 2791.21" className="w-28 h-auto" style={{ shapeRendering: 'geometricPrecision', fillRule: 'evenodd', clipRule: 'evenodd' }}>
+                      <g>
+                        <path className="svg-elem-1" fill="#9ca3af" d="M10575.96 2770.97c1.81,-67.93 -6.84,-759.75 0.71,-1074.33 -0.71,-312.44 187.28,-481.99 567.14,-481.99l0.12 -419.71c-284.82,0 -393.93,-2.07 -524.85,182.93 -6.84,-10.88 -90.08,-171.34 -95.66,-182.93l-406.52 0 0 1976.03 459.07 0z" />
+                        <path className="svg-elem-2" fill="#9ca3af" d="M986.96 822.41c538.09,0 974.29,436.2 974.29,974.28 0,538.09 -436.2,974.29 -974.29,974.29 -194.4,0 -363.1,-73.47 -515.13,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.28,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
+                        <path className="svg-elem-3" fill="#9ca3af" d="M3159.77 822.38c224.55,0 442.51,58.83 607.26,186.46 230.04,178.2 367.02,474.29 367.02,787.82 0,327.08 -181.77,618.34 -429,795.04 -159.5,113.97 -334.27,179.25 -545.29,179.25 -538.08,0 -974.28,-436.2 -974.28,-974.29 0,-538.08 436.2,-974.28 974.28,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
+                        <path className="svg-elem-4" fill="#9ca3af" d="M-0 232.77l0 2539.65 445.84 -191.06 0.04 -2581.37c0,0 -437.87,229.95 -445.88,232.77z" />
+                        <path className="svg-elem-5" fill="#9ca3af" d="M4168.33 794.94l0 1975.96 -445.74 -192.01 0 -1462.39 0 -139.54c0,0 437.73,-184.83 445.74,-182.03z" />
+                        <path className="svg-elem-6" fill="#9ca3af" d="M4932.59 2770.97c1.81,-67.93 -6.84,-759.75 0.71,-1074.33 -0.71,-312.44 187.28,-481.99 567.14,-481.99l0.12 -419.71c-284.82,0 -393.93,-2.07 -524.85,182.93 -6.84,-10.88 -90.08,-171.34 -95.66,-182.93l-406.52 0 0 1976.03 459.07 0z" />
+                        <path className="svg-elem-7" fill="#9ca3af" d="M6694.19 822.41c538.08,0 974.28,436.2 974.28,974.28 0,538.09 -436.2,974.29 -974.28,974.29 -194.41,0 -363.11,-73.47 -515.14,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.29,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
+                        <path className="svg-elem-8" fill="#9ca3af" d="M5707.22 232.77l0 2539.65 445.84 -191.06 0.05 -2581.37c0,0 -437.87,229.95 -445.89,232.77z" />
+                        <path className="svg-elem-9" fill="#9ca3af" d="M8883.2 822.41c436.12,0 805.27,286.55 929.53,681.63 29.06,92.38 44.76,190.69 44.76,292.65 0,52.14 -4.14,103.3 -12.02,153.22l-1336.29 0.02c0,0 229.95,-437.87 232.76,-445.89l592.44 0c-95.88,-147.51 -262.12,-245.09 -451.18,-245.09 -296.99,0 -537.74,240.75 -537.74,537.74 0,296.99 240.75,537.74 537.74,537.74 205.64,0 384.29,-115.44 474.74,-285.05l322.19 307.78c-176.33,250.29 -467.49,413.82 -796.93,413.82 -194.4,0 -363.1,-73.47 -515.13,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.28,-974.28z" />
+                        <path className="svg-elem-10" fill="#9ca3af" d="M12954.05 2473.8l-974.83 -1678.86 -369.05 0 1159.51 1996.27 184.37 -317.41zm-184.39 -953.1c140.47,-241.94 280.97,-483.86 421.46,-725.77l-842.93 0 421.47 725.77zm184.51 317.77c61.48,105.87 122.94,211.74 184.42,317.62l790.61 -1361.15 -369.08 0c-201.91,347.88 -403.96,695.69 -605.94,1043.53z" />
+                      </g>
+                    </svg>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -1621,7 +1657,14 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
   const showLogo = g("hero.show_logo", "true") !== "false";
   const allSelected = selection.unit && selection.barber && selection.service && selection.date && selection.time;
 
-  const openAppts = allEvents.filter((e: CalendarEvent) => e.status !== "cancelled" && e.status !== "completed");
+  const openAppts = allEvents.filter((e: CalendarEvent) => {
+    if (e.status === "cancelled" || e.status === "completed" || e.status === "no_show") return false;
+    // Exclude past appointments (date already passed) — they are no longer "open"
+    const evDate = new Date(e.year, e.month, e.date);
+    evDate.setHours(23, 59, 59, 999);
+    if (evDate < new Date()) return false;
+    return true;
+  });
   const isMaxed = openAppts.length >= maxOpenAppts;
 
   // Today's appointment reminder
@@ -2248,21 +2291,18 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
 
   // ── Subscription discount calculation (defensive — JSONB may arrive as string) ──
   let subscriptionDiscount = 0; // 0-100 percentage
+  let quotaExceeded = false; // true when monthly usage limit reached
+  let quotaMax = 0; // max uses per month
+  let quotaUsed = 0; // uses this month
   try {
     if (!isCreditRedemption && clientSubscription?.status === 'active' && clientSubscription?.plan) {
       const plan = clientSubscription.plan;
 
       // Safely parse any JSONB field that might arrive as a JSON string
-      const safeParse = (val: any): any[] => {
-        if (Array.isArray(val)) return val;
-        if (typeof val === 'string') { try { const p = JSON.parse(val); return Array.isArray(p) ? p : []; } catch { return []; } }
-        return [];
-      };
-
-      const planServices = safeParse(plan.planServices);
-      const allowedUnitIds = safeParse(plan.allowedUnitIds);
-      const excludedProfessionals = safeParse(plan.excludedProfessionals);
-      const disabledDays = safeParse(plan.disabledDays);
+      const planServices = safeParseJsonArray(plan.planServices);
+      const allowedUnitIds = safeParseJsonArray(plan.allowedUnitIds);
+      const excludedProfessionals = safeParseJsonArray(plan.excludedProfessionals);
+      const disabledDays = safeParseJsonArray(plan.disabledDays);
 
       // Check unit scope
       const unitOk = plan.unitScope === 'all' || allowedUnitIds.length === 0 ||
@@ -2285,6 +2325,10 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
             const maxUses = plan.maxUsesPerMonth || rule.monthlyLimit;
             if (usesThisMonth < maxUses) {
               subscriptionDiscount = discount;
+            } else {
+              quotaExceeded = true;
+              quotaMax = maxUses;
+              quotaUsed = usesThisMonth;
             }
           }
         }
@@ -2417,6 +2461,28 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
         <p><strong className="text-gray-400">Serviço:</strong><br /><span className="text-white">{selection.service?.name}</span></p>
       </div>
 
+      {/* ═══ Informational banners for overdue / quota exceeded ═══ */}
+      {clientSubscription?.status === 'overdue' && (
+        <div className="p-3 rounded-xl mb-4 flex items-start gap-3"
+          style={{ backgroundColor: '#ef444412', border: '1px solid #ef444430' }}>
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#f87171' }} />
+          <div className="flex-1">
+            <p className="text-xs font-bold" style={{ color: '#f87171' }}>Benefícios suspensos</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">Seu pagamento foi recusado e os benefícios do seu plano foram pausados até a regularização.</p>
+          </div>
+        </div>
+      )}
+      {quotaExceeded && clientSubscription?.status === 'active' && (
+        <div className="p-3 rounded-xl mb-4 flex items-start gap-3"
+          style={{ backgroundColor: '#eab30812', border: '1px solid #eab30830' }}>
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#fbbf24' }} />
+          <div className="flex-1">
+            <p className="text-xs font-bold" style={{ color: '#fbbf24' }}>Cota mensal atingida</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">Você já utilizou {quotaUsed} de {quotaMax} usos do seu plano este mês. Sua cota será renovada no próximo mês.</p>
+          </div>
+        </div>
+      )}
+
       <div className="border-t border-gray-700 pt-4">
         {/* Coupon section - hidden if fully covered or credit redemption */}
         {!isCovered && !isCreditRedemption && (
@@ -2522,7 +2588,7 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
 
     openModal(
       <div className="p-6" style={{ borderRadius: "1rem" }}>
-        <h3 className="text-xl font-bold mb-6 text-center italic" style={{ color: primary }}>Detalhes do Agendamento</h3>
+        <h3 className="text-xl font-bold mb-6 text-center" style={{ color: primary }}>Detalhes do Agendamento</h3>
 
         <div className="space-y-5 text-sm mb-6">
           {unit && (
@@ -2586,8 +2652,7 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
                   style={{ backgroundColor: primary, color: bgColor, opacity: canReschedule ? 1 : 0.4 }}
                   disabled={!canReschedule}>Remarcar</button>
                 <button onClick={() => { if (canCancel) closeModal(() => showCancelConfirm(ev)); }}
-                  className="w-full py-3 font-bold rounded-lg"
-                  style={{ backgroundColor: "transparent", color: primary, border: `2px solid ${primary}`, opacity: canCancel ? 1 : 0.4 }}
+                  className={`w-full py-3 font-bold rounded-lg bg-red-600 text-white ${canCancel ? "" : "opacity-40"}`}
                   disabled={!canCancel}>Cancelar agendamento</button>
                 <button onClick={closeModal}
                   className="w-full py-3 font-semibold rounded-lg"
@@ -3036,10 +3101,298 @@ function AvaliacaoModal({ ev, primary, bgColor, onClose, onSubmit, g }: any) {
 }
 
 // ============================================================
+// ASSINAR MODAL (Self-Service Subscription Activation)
+// ============================================================
+function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSuccess, services, isReactivation }: any) {
+  const [step, setStep] = useState<'form' | 'processing' | 'result'>('form');
+  const [formSection, setFormSection] = useState(0); // 0=personal, 1=card, 2=review
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<any>(null);
+
+  // Personal data
+  const [cpf, setCpf] = useState((clientProfile?.cpfCnpj || clientProfile?.cpf || '').replace(/\D/g, ''));
+  const [email, setEmail] = useState(clientProfile?.email || '');
+  const [phone, setPhone] = useState(clientProfile?.phone || '');
+  // Card data
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardName, setCardName] = useState('');
+  const [cardMonth, setCardMonth] = useState('');
+  const [cardYear, setCardYear] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [holderCpf, setHolderCpf] = useState('');
+  const [cep, setCep] = useState('');
+  const [addrNumber, setAddrNumber] = useState('');
+  const [sameHolder, setSameHolder] = useState(true);
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  // Processing messages
+  const [processingMsg, setProcessingMsg] = useState('');
+
+  function formatCardNumber(v: string) { return v.replace(/\D/g, '').replace(/(.{4})/g, '$1 ').trim().slice(0, 19); }
+  function formatCpfInput(v: string) { let d = v.replace(/\D/g, '').slice(0, 11); if (d.length > 9) d = d.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4'); else if (d.length > 6) d = d.replace(/(\d{3})(\d{3})(\d{0,3})/, '$1.$2.$3'); else if (d.length > 3) d = d.replace(/(\d{3})(\d{0,3})/, '$1.$2'); return d; }
+  function formatCep(v: string) { let d = v.replace(/\D/g, '').slice(0, 8); if (d.length > 5) d = d.replace(/(\d{5})(\d{0,3})/, '$1-$2'); return d; }
+  function formatPhone(v: string) { let d = v.replace(/\D/g, '').slice(0, 11); if (d.length > 6) d = d.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3'); else if (d.length > 2) d = d.replace(/(\d{2})(\d{0,5})/, '($1) $2'); return d; }
+
+  // Resolve plan service names for display
+  const planServiceDetails = useMemo(() => {
+    const ps = typeof plan.planServices === 'string' ? JSON.parse(plan.planServices || '[]') : (plan.planServices || []);
+    return ps.map((s: any) => {
+      const svc = (services || []).find((sv: any) => sv.id === s.serviceId);
+      return { name: svc?.name || 'Serviço', discount: s.discount, limit: s.monthlyLimit, price: svc?.price || 0 };
+    });
+  }, [plan, services]);
+  const planBenefits = typeof plan.benefits === 'string' ? JSON.parse(plan.benefits || '[]') : (plan.benefits || []);
+  const recLabelFull: Record<string, string> = { monthly: 'Mensal', quarterly: 'Trimestral', semiannual: 'Semestral', annual: 'Anual' };
+
+  const detectBrand = (n: string) => { const d = n.replace(/\s/g, ''); if (/^4/.test(d)) return 'Visa'; if (/^5[1-5]/.test(d)) return 'Mastercard'; if (/^(636|438|504|606|304)/.test(d)) return 'Elo'; if (/^3[47]/.test(d)) return 'Amex'; if (/^6(?:011|5)/.test(d)) return 'Discover'; return ''; };
+  const cardBrand = detectBrand(cardNumber);
+  const cardLast4 = cardNumber.replace(/\s/g, '').slice(-4);
+
+  const canProceedPersonal = cpf.replace(/\D/g, '').length >= 11 && email.includes('@') && phone.replace(/\D/g, '').length >= 10;
+  const canProceedCard = cardNumber.replace(/\s/g, '').length >= 13 && cardName && cardMonth && cardYear && cardCvv.length >= 3 && (sameHolder || holderCpf.replace(/\D/g, '').length >= 11) && cep.replace(/\D/g, '').length >= 8 && addrNumber;
+
+  async function handleSubmit() {
+    if (!acceptTerms || loading) return;
+    setLoading(true);
+    setStep('processing');
+    setError('');
+    try {
+      setProcessingMsg('Validando dados...');
+      await new Promise(r => setTimeout(r, 400));
+      setProcessingMsg('Verificando cartão de crédito...');
+      const apiPayload = {
+        planId: plan.id,
+        creditCard: { holderName: cardName, number: cardNumber.replace(/\s/g, ''), expiryMonth: cardMonth, expiryYear: cardYear, ccv: cardCvv },
+        holderInfo: { cpfCnpj: (sameHolder ? cpf : holderCpf).replace(/\D/g, ''), postalCode: cep.replace(/\D/g, ''), addressNumber: addrNumber, phone: phone.replace(/\D/g, ''), email },
+      };
+      const res = isReactivation
+        ? await reactivateSubscription(apiPayload)
+        : await subscribeToPlan(apiPayload);
+      setResult(res);
+      setStep('result');
+      setLoading(false);
+    } catch (err: any) {
+      setError(err.message || 'Erro ao processar. Tente novamente.');
+      setStep('form');
+      setFormSection(1); // back to card section
+      setLoading(false);
+    }
+  }
+
+  const planPrice = plan.creditPrice || plan.price || 0;
+  const recLabel: Record<string, string> = { monthly: '/mês', quarterly: '/trimestre', semiannual: '/semestre', annual: '/ano' };
+
+  // Processing screen
+  if (step === 'processing') return (
+    <div className="p-8 text-center" style={{ borderRadius: '1rem' }}>
+      <div className="w-16 h-16 mx-auto mb-6 rounded-full flex items-center justify-center" style={{ backgroundColor: `${primary}20` }}>
+        <Loader2 className="w-8 h-8 booking-spin" style={{ color: primary }} />
+      </div>
+      <h3 className="text-xl font-bold text-white mb-2">Processando...</h3>
+      <p className="text-gray-400 text-sm">{processingMsg}</p>
+      <div className="mt-6 w-48 mx-auto h-1 rounded-full overflow-hidden" style={{ backgroundColor: '#333' }}>
+        <div className="h-full rounded-full booking-progress-bar" style={{ backgroundColor: primary, width: '60%', animation: 'booking-shimmer 2s infinite' }} />
+      </div>
+    </div>
+  );
+
+  // Result screen
+  if (step === 'result' && result) {
+    const isActive = result.finalStatus === 'active';
+    const isOverdue = result.finalStatus === 'overdue';
+    const isPending = result.finalStatus === 'pending_payment';
+    const statusColor = isActive ? '#4ade80' : isOverdue ? '#ef4444' : '#fbbf24';
+    const statusBg = isActive ? '#22c55e20' : isOverdue ? '#ef444420' : '#eab30820';
+    return (
+      <div className="p-6 text-center" style={{ borderRadius: '1rem' }}>
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ backgroundColor: statusBg }}>
+          {isActive ? <Check className="w-8 h-8 text-green-400" /> : isOverdue ? <AlertTriangle className="w-8 h-8 text-red-400" /> : <Clock className="w-8 h-8 text-yellow-400" />}
+        </div>
+        <h3 className="text-2xl font-bold mb-2" style={{ color: statusColor }}>
+          {isActive ? 'Assinatura Ativa!' : isOverdue ? 'Pagamento Recusado' : 'Pagamento em Processamento'}
+        </h3>
+        <p className="text-gray-400 text-sm mb-6">
+          {isActive ? `Seu plano ${result.planName} está ativo. Aproveite seus benefícios!`
+            : isOverdue ? 'O pagamento foi recusado pelo cartão. Verifique os dados e tente novamente.'
+            : 'Seu pagamento está sendo processado. A assinatura será ativada automaticamente após confirmação.'}
+        </p>
+        <div className="p-4 rounded-xl mb-6" style={{ backgroundColor: '#1e1e1e' }}>
+          <div className="flex justify-between text-sm mb-2"><span className="text-gray-400">Plano</span><span className="text-white font-semibold">{result.planName}</span></div>
+          <div className="flex justify-between text-sm mb-2"><span className="text-gray-400">Valor</span><span className="font-bold" style={{ color: primary }}>R$ {Number(result.planPrice).toFixed(2)}{recLabel[plan.recurrence] || '/mês'}</span></div>
+          {result.cardBrand && <div className="flex justify-between text-sm"><span className="text-gray-400">Cartão</span><span className="text-white">{result.cardBrand} •••• {result.cardLast4}</span></div>}
+        </div>
+        <div className="space-y-3">
+          {isOverdue ? (
+            <button onClick={() => { setStep('form'); setFormSection(1); setError('Cartão recusado. Tente outro cartão.'); }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
+              Tentar Novamente
+            </button>
+          ) : (
+            <button onClick={() => { onSuccess(result); onClose(); }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
+              {isActive ? 'Agendar Agora' : 'Entendido'}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Form screen (3 sections)
+  const sections = ['Seus Dados', 'Pagamento', 'Confirmar'];
+  return (
+    <div className="p-6" style={{ borderRadius: '1rem' }}>
+      <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Assinar Plano</h3>
+
+      {/* Plan summary */}
+      <div className="mb-5 pb-5" style={{ borderBottom: '1px solid #333' }}>
+        <div className="flex justify-between items-center mb-3">
+          <div>
+            <h4 className="font-bold text-lg text-white">{plan.name}</h4>
+            <p className="text-xs text-gray-400">{recLabelFull[plan.recurrence] || plan.recurrence}</p>
+          </div>
+          <p className="font-bold text-xl" style={{ color: primary }}>R$ {planPrice.toFixed(2)}<span className="text-xs font-normal text-gray-400">{recLabel[plan.recurrence] || '/mês'}</span></p>
+        </div>
+
+        {/* Included services */}
+        {planServiceDetails.length > 0 && (
+          <div className="pt-3 mt-3" style={{ borderTop: '1px solid #333' }}>
+            <p className="text-xs text-gray-500 font-semibold mb-2">Serviços inclusos</p>
+            {planServiceDetails.map((s: any, i: number) => (
+              <div key={i} className="flex items-center justify-between text-sm mb-1.5">
+                <span className="flex items-center gap-2 text-gray-300">
+                  <Check className="w-3.5 h-3.5" style={{ color: primary }} />{s.name}
+                </span>
+                <span className="text-xs font-semibold" style={{ color: primary }}>{s.limit ? `${s.limit}x/mês` : 'Ilimitado'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Benefits */}
+        {planBenefits.length > 0 && (
+          <div className="pt-3 mt-3" style={{ borderTop: '1px solid #333' }}>
+            <p className="text-xs text-gray-500 font-semibold mb-2">Benefícios</p>
+            {planBenefits.map((b: string, i: number) => (
+              <div key={`b-${i}`} className="flex items-center gap-2 text-sm text-gray-300 mb-1.5">
+                <Star className="w-3.5 h-3.5 text-yellow-500" />{b}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Step indicators */}
+      <div className="flex gap-1 mb-5">{sections.map((s, i) => (
+        <button key={i} onClick={() => { if (i === 0 || (i === 1 && canProceedPersonal) || (i === 2 && canProceedPersonal && canProceedCard)) setFormSection(i); }}
+          className="flex-1 text-center">
+          <div className="h-1 rounded-full mb-1" style={{ backgroundColor: formSection >= i ? primary : '#444' }} />
+          <span className="text-[10px]" style={{ color: formSection >= i ? primary : '#666' }}>{s}</span>
+        </button>
+      ))}</div>
+
+      {error && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{error}</div>}
+
+      {/* Section 0: Personal */}
+      {formSection === 0 && (
+        <div className="space-y-4">
+          <div><label className="text-xs text-gray-400 mb-1 block">CPF *</label>
+            <input value={formatCpfInput(cpf)} onChange={e => setCpf(e.target.value.replace(/\D/g, ''))} placeholder="000.000.000-00" maxLength={14} inputMode="numeric"
+              className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>
+          <div><label className="text-xs text-gray-400 mb-1 block">E-mail para cobrança *</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="seu@email.com"
+              className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>
+          <div><label className="text-xs text-gray-400 mb-1 block">Telefone *</label>
+            <input value={formatPhone(phone)} onChange={e => setPhone(e.target.value.replace(/\D/g, ''))} placeholder="(11) 99999-9999" maxLength={15} inputMode="tel"
+              className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>
+          <button onClick={() => setFormSection(1)} disabled={!canProceedPersonal}
+            className={`w-full py-3 font-bold rounded-lg ${canProceedPersonal ? '' : 'opacity-40'}`} style={{ backgroundColor: primary, color: bgColor }}>Próximo</button>
+        </div>
+      )}
+
+      {/* Section 1: Credit Card */}
+      {formSection === 1 && (
+        <div className="space-y-3">
+          <div><label className="text-xs text-gray-400 mb-1 block">Número do cartão *</label>
+            <div className="relative">
+              <input value={formatCardNumber(cardNumber)} onChange={e => setCardNumber(e.target.value)} placeholder="0000 0000 0000 0000" maxLength={19}
+                className="w-full p-3 pr-16 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} />
+              {cardBrand && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold px-2 py-0.5 rounded" style={{ backgroundColor: `${primary}20`, color: primary }}>{cardBrand}</span>}
+            </div></div>
+          <div><label className="text-xs text-gray-400 mb-1 block">Nome no cartão *</label>
+            <input value={cardName} onChange={e => setCardName(e.target.value.toUpperCase())} placeholder="NOME COMO NO CARTÃO"
+              className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>
+          <div className="grid grid-cols-3 gap-3">
+            <div><label className="text-xs text-gray-400 mb-1 block">Mês *</label>
+              <select value={cardMonth} onChange={e => setCardMonth(e.target.value)} className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }}>
+                <option value="">MM</option>{Array.from({ length: 12 }, (_, i) => <option key={i} value={String(i + 1).padStart(2, '0')}>{String(i + 1).padStart(2, '0')}</option>)}
+              </select></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Ano *</label>
+              <select value={cardYear} onChange={e => setCardYear(e.target.value)} className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }}>
+                <option value="">AAAA</option>{Array.from({ length: 15 }, (_, i) => { const y = new Date().getFullYear() + i; return <option key={y} value={String(y)}>{y}</option>; })}
+              </select></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">CVV *</label>
+              <input value={cardCvv} onChange={e => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="123" maxLength={4}
+                className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" checked={sameHolder} onChange={e => setSameHolder(e.target.checked)} className="accent-primary w-4 h-4" />Titular é o mesmo do CPF informado</label>
+          {!sameHolder && <div><label className="text-xs text-gray-400 mb-1 block">CPF do titular *</label>
+            <input value={formatCpfInput(holderCpf)} onChange={e => setHolderCpf(e.target.value.replace(/\D/g, ''))} placeholder="000.000.000-00" maxLength={14}
+              className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>}
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs text-gray-400 mb-1 block">CEP *</label>
+              <input value={formatCep(cep)} onChange={e => setCep(e.target.value)} placeholder="00000-000" maxLength={9}
+                className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Nº Endereço *</label>
+              <input value={addrNumber} onChange={e => setAddrNumber(e.target.value)} placeholder="123"
+                className="w-full p-3 rounded-lg text-white text-sm" style={{ backgroundColor: '#1e1e1e', border: '1px solid #333' }} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <button onClick={() => setFormSection(0)} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: '#1a1a1a', color: '#fff' }}>Voltar</button>
+            <button onClick={() => setFormSection(2)} disabled={!canProceedCard}
+              className={`py-3 font-bold rounded-lg ${canProceedCard ? '' : 'opacity-40'}`} style={{ backgroundColor: primary, color: bgColor }}>Próximo</button>
+          </div>
+        </div>
+      )}
+
+      {/* Section 2: Review & Confirm */}
+      {formSection === 2 && (
+        <div className="space-y-4">
+          <div className="p-4 rounded-xl" style={{ backgroundColor: '#1e1e1e' }}>
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-3 font-semibold">Resumo da Assinatura</p>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between"><span className="text-gray-400">Plano</span><span className="text-white font-semibold">{plan.name}</span></div>
+              <div className="flex justify-between"><span className="text-gray-400">Valor</span><span className="font-bold" style={{ color: primary }}>R$ {planPrice.toFixed(2)}{recLabel[plan.recurrence] || '/mês'}</span></div>
+              <div className="flex justify-between"><span className="text-gray-400">Cartão</span><span className="text-white">{cardBrand} •••• {cardLast4}</span></div>
+              <div className="flex justify-between"><span className="text-gray-400">Titular</span><span className="text-white">{cardName}</span></div>
+            </div>
+          </div>
+          <div className="p-3 rounded-lg text-xs text-gray-400" style={{ backgroundColor: '#1a1a1a' }}>
+            <CreditCard className="w-4 h-4 inline mr-2" style={{ color: primary }} />
+            A primeira cobrança será realizada imediatamente. As próximas cobranças serão feitas automaticamente a cada período.
+          </div>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input type="checkbox" checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} className="accent-primary w-4 h-4 mt-0.5" />
+            <span className="text-xs text-gray-400">Eu concordo com os termos de uso e autorizo a cobrança recorrente no meu cartão de crédito.</span>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => setFormSection(1)} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: '#1a1a1a', color: '#fff' }}>Voltar</button>
+            <button onClick={handleSubmit} disabled={!acceptTerms || loading}
+              className={`py-3 font-bold rounded-lg flex items-center justify-center gap-2 ${acceptTerms ? '' : 'opacity-40'}`} style={{ backgroundColor: primary, color: bgColor }}>
+              {loading ? <Loader2 className="w-5 h-5 booking-spin" /> : <><CreditCard className="w-4 h-4" />Confirmar</>}
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="flex items-center justify-center gap-2 mt-4 text-[10px] text-gray-600">
+        <Lock className="w-3 h-3" />Ambiente seguro • Dados criptografados
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // PLANOS VIEW
 // ============================================================
 function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services, authUser, clientProfile, onLogin, openModal, closeModal, onRefresh, setActiveView, onSubscriptionChange }: any) {
-  const [interestLoading, setInterestLoading] = useState<string | null>(null);
 
   function showBeneficiosModal() {
     openModal(
@@ -3069,11 +3422,15 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
   }
 
   function showPausarModal() {
-    openModal(
+    const PauseFlow = () => {
+      const [pausing, setPausing] = useState(false);
+      const [error, setError] = useState('');
+      return (
       <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
         <Pause className="w-12 h-12 mx-auto mb-4 text-yellow-400" />
         <h3 className="text-2xl font-bold mb-2 text-white">Pausar Assinatura?</h3>
         <p className="text-gray-400 mb-6">Seu plano será pausado e os benefícios ficarão suspensos até que você reative. Você pode reativar a qualquer momento.</p>
+        {error && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{error}</div>}
         <div className="p-4 rounded-lg mb-6 text-left" style={{ backgroundColor: "#2a2a2a" }}>
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Plano</span>
@@ -3082,28 +3439,42 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
         </div>
         <div className="grid grid-cols-2 gap-3">
           <button onClick={() => closeModal(() => showGerenciarModal())} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
-          <button onClick={async () => {
-            await supabase.from("subscriptions").update({ status: 'paused', pausedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).eq("id", subscription.id);
-            if (onSubscriptionChange) onSubscriptionChange({ ...subscription, status: 'paused' });
-            closeModal();
-          }} className="py-3 font-bold rounded-lg" style={{ backgroundColor: "#eab308", color: "#000" }}>Confirmar Pausa</button>
+          <button disabled={pausing} onClick={async () => {
+            setPausing(true);
+            setError('');
+            try {
+              await pauseMySubscription();
+              if (onSubscriptionChange) onSubscriptionChange({ ...subscription, status: 'paused' });
+              closeModal();
+            } catch (err: any) {
+              console.error('Pause error:', err);
+              setError(err.message || 'Erro ao pausar. Tente novamente.');
+              setPausing(false);
+            }
+          }} className="py-3 font-bold rounded-lg flex items-center justify-center" style={{ backgroundColor: "#eab308", color: "#000" }}>
+            {pausing ? <Loader2 className="w-5 h-5 booking-spin" /> : 'Confirmar Pausa'}
+          </button>
         </div>
-      </div>, "center"
-    );
+      </div>
+      );
+    };
+    openModal(<PauseFlow />, "center");
   }
 
   function showCancelarModal() {
     const CancelFlow = () => {
       const [step, setStep] = useState(1);
       const [cancelling, setCancelling] = useState(false);
+      const [cancelError, setCancelError] = useState('');
       return (
         <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
           <XCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
           <h3 className="text-2xl font-bold mb-2 text-white">{step === 1 ? "Cancelar Assinatura?" : "Tem certeza absoluta?"}</h3>
           <p className="text-gray-400 mb-6">{step === 1
             ? "Você perderá todos os benefícios do seu plano, incluindo descontos e prioridade no agendamento."
-            : "Esta ação pode levar até 24h para ser efetivada. Você precisará assinar novamente caso queira retornar."
+            : "Esta ação cancelará a cobrança recorrente. Você precisará assinar novamente caso queira retornar."
           }</p>
+          {cancelError && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{cancelError}</div>}
           {step === 1 && (
             <div className="p-4 rounded-lg mb-6 text-left" style={{ backgroundColor: "#2a2a2a" }}>
               <div className="flex justify-between text-sm mb-2">
@@ -3121,9 +3492,16 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
             <button disabled={cancelling} onClick={async () => {
               if (step === 1) { setStep(2); return; }
               setCancelling(true);
-              await supabase.from("subscriptions").update({ status: 'cancelled', cancelledAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).eq("id", subscription.id);
-              if (onSubscriptionChange) onSubscriptionChange(null);
-              closeModal();
+              setCancelError('');
+              try {
+                await cancelMySubscription('Cancelado pelo cliente via site');
+                if (onSubscriptionChange) onSubscriptionChange(null);
+                closeModal();
+              } catch (err: any) {
+                console.error('Cancel error:', err);
+                setCancelError(err.message || 'Erro ao cancelar. Tente novamente.');
+                setCancelling(false);
+              }
             }} className="py-3 font-bold rounded-lg" style={{ backgroundColor: "#ef4444", color: "#fff" }}>
               {cancelling ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : step === 1 ? "Continuar" : "Cancelar Assinatura"}
             </button>
@@ -3134,57 +3512,74 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     openModal(<CancelFlow />, "center");
   }
 
-  function showInteresseModal(plan: SubscriptionPlan) {
-    const whatsapp = g("contact.whatsapp", "");
-    const msg = encodeURIComponent(`Olá! Tenho interesse no plano "${plan.name}" (R$${plan.price.toFixed(2)}/mês). Gostaria de mais informações para assinar.`);
+  function showAssinarModal(plan: SubscriptionPlan) {
     openModal(
-      <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
-        <Crown className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />
-        <h3 className="text-2xl font-bold mb-2" style={{ color: primary }}>Interesse Registrado!</h3>
-        <p className="text-gray-400 mb-6">Registramos seu interesse no plano <strong className="text-white">{plan.name}</strong>. Entre em contato para finalizar sua assinatura.</p>
-        <div className="p-4 rounded-lg mb-6" style={{ backgroundColor: "#2a2a2a" }}>
-          <div className="flex justify-between text-sm mb-2">
-            <span className="text-gray-400">Plano</span>
-            <span className="text-white font-semibold">{plan.name}</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-400">Valor</span>
-            <span className="font-bold" style={{ color: primary }}>R$ {plan.price.toFixed(2)}/mês</span>
-          </div>
-        </div>
-        <div className="space-y-3">
-          {whatsapp && (
-            <button onClick={() => window.open(`https://wa.me/${whatsapp.replace(/\D/g, "")}?text=${msg}`, "_blank")} className="w-full py-3 font-bold rounded-lg flex items-center justify-center gap-2" style={{ backgroundColor: "#25D366", color: "#fff" }}>
-              <MessageCircle className="w-5 h-5" />Falar via WhatsApp
-            </button>
-          )}
-          <button onClick={() => closeModal()} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
-        </div>
-      </div>, "center"
+      <AssinarModal plan={plan} primary={primary} bgColor={bgColor} clientProfile={clientProfile} services={services}
+        onClose={() => closeModal()}
+        onSuccess={async (result: any) => {
+          // Reload subscription data
+          const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single();
+          if (s) {
+            onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined });
+          }
+          if (result.finalStatus === 'active') setActiveView('agendar');
+        }}
+      />, "center"
     );
   }
 
   function showGerenciarModal() {
     if (!subscription?.plan) return;
+    const isPaused = subscription.status === 'paused';
+    const isOverdue = subscription.status === 'overdue';
+    const canReactivate = isPaused || isOverdue;
     openModal(
       <div className="p-6" style={{ borderRadius: "1rem" }}>
         <h3 className="text-2xl font-bold text-center mb-8" style={{ color: primary }}>Gerenciar Assinatura</h3>
         <div className="p-5 rounded-lg mb-6" style={{ backgroundColor: "#2a2a2a" }}>
           <h4 className="font-bold text-lg mb-3 text-white">Meu Plano</h4>
-          <div className="flex justify-between text-sm">
+          <div className="flex justify-between text-sm mb-2">
             <span className="text-gray-400">{subscription.plan.name}</span>
             <span className="font-bold text-white">R$ {Number(subscription.plan.price).toFixed(2)}/mês</span>
           </div>
+          {subscription.cardBrand && <div className="flex justify-between text-sm">
+            <span className="text-gray-400">Cartão</span>
+            <span className="text-white">{subscription.cardBrand} ****{subscription.cardLast4}</span>
+          </div>}
+          {isPaused && <div className="mt-2 px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold text-center">⏸ Pausado</div>}
+          {isOverdue && <div className="mt-2 px-3 py-1.5 rounded-full bg-red-500/10 text-red-400 text-xs font-bold text-center">⚠️ Inadimplente</div>}
         </div>
         <div className="space-y-3">
+          {canReactivate && (
+            <button onClick={() => closeModal(() => showReativarModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+              <span className="flex items-center gap-3" style={{ color: '#22c55e' }}><RefreshCw className="w-5 h-5" />{isOverdue ? 'Regularizar assinatura' : 'Reativar assinatura'}</span>
+              <ChevronRight className="w-4 h-4 text-gray-500" />
+            </button>
+          )}
           <button onClick={() => closeModal(() => showBeneficiosModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
             <span className="flex items-center gap-3"><Award className="w-5 h-5" style={{ color: primary }} />Ver benefícios</span>
             <ChevronRight className="w-4 h-4 text-gray-500" />
           </button>
-          <button onClick={() => closeModal(() => showPausarModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
-            <span className="flex items-center gap-3"><Pause className="w-5 h-5" style={{ color: primary }} />Pausar assinatura</span>
+          <button onClick={() => closeModal(() => showHistoricoFaturasModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+            <span className="flex items-center gap-3"><Receipt className="w-5 h-5" style={{ color: primary }} />Histórico de faturas</span>
             <ChevronRight className="w-4 h-4 text-gray-500" />
           </button>
+          {!isPaused && !isOverdue && subscription.gatewaySubscriptionId && (
+            <>
+              <button onClick={() => closeModal(() => showTrocarCartaoModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+                <span className="flex items-center gap-3"><CreditCard className="w-5 h-5" style={{ color: primary }} />Trocar cartão</span>
+                <ChevronRight className="w-4 h-4 text-gray-500" />
+              </button>
+              <button onClick={() => closeModal(() => showTrocarPlanoModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+                <span className="flex items-center gap-3"><ArrowUpDown className="w-5 h-5" style={{ color: primary }} />Trocar plano</span>
+                <ChevronRight className="w-4 h-4 text-gray-500" />
+              </button>
+              <button onClick={() => closeModal(() => showPausarModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+                <span className="flex items-center gap-3"><Pause className="w-5 h-5" style={{ color: primary }} />Pausar assinatura</span>
+                <ChevronRight className="w-4 h-4 text-gray-500" />
+              </button>
+            </>
+          )}
           <button onClick={() => closeModal(() => showCancelarModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
             <span className="flex items-center gap-3 text-red-500"><XCircle className="w-5 h-5" />Cancelar assinatura</span>
             <ChevronRight className="w-4 h-4 text-gray-500" />
@@ -3194,6 +3589,171 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
           <button onClick={() => closeModal()} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
         </div>
       </div>, "center"
+    );
+  }
+
+  // ═══ HISTÓRICO DE FATURAS (F4) ═══
+  function showHistoricoFaturasModal() {
+    const HistoricoContent = () => {
+      const [events, setEvents] = useState<any[]>([]);
+      const [loading, setLoading] = useState(true);
+      useEffect(() => {
+        getMyPaymentHistory().then(e => { setEvents(e); setLoading(false); }).catch(() => setLoading(false));
+      }, []);
+      const statusMap: Record<string, { label: string; color: string }> = {
+        CONFIRMED: { label: 'Pago', color: 'text-emerald-400' }, RECEIVED: { label: 'Recebido', color: 'text-emerald-400' },
+        PENDING: { label: 'Pendente', color: 'text-amber-400' }, OVERDUE: { label: 'Atrasado', color: 'text-red-400' },
+        REFUSED: { label: 'Recusado', color: 'text-red-400' }, REFUNDED: { label: 'Reembolsado', color: 'text-blue-400' },
+      };
+      return (
+        <div className="p-6" style={{ borderRadius: "1rem" }}>
+          <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Histórico de Faturas</h3>
+          {loading ? (
+            <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 booking-spin" style={{ color: primary }} /></div>
+          ) : events.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">Nenhuma fatura encontrada.</p>
+          ) : (
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+              {events.filter(e => ['PAYMENT_CONFIRMED','PAYMENT_RECEIVED','PAYMENT_CREATED','PAYMENT_OVERDUE','PAYMENT_REFUNDED'].includes(e.event)).map((ev, i) => {
+                const st = statusMap[ev.status] || { label: ev.status, color: 'text-gray-400' };
+                const date = ev.paymentDate || ev.dueDate || ev.processedAt;
+                return (
+                  <div key={i} className="p-4 rounded-lg flex items-center justify-between" style={{ backgroundColor: "#2a2a2a" }}>
+                    <div>
+                      <p className="text-white text-sm font-semibold">{date ? new Date(date).toLocaleDateString('pt-BR') : '—'}</p>
+                      <p className={`text-xs font-bold ${st.color}`}>{st.label}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-white font-bold">R$ {Number(ev.amount || 0).toFixed(2)}</p>
+                      {ev.invoiceUrl && <a href={ev.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline" style={{ color: primary }}>Ver fatura</a>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="mt-6 pt-6 border-t border-gray-700">
+            <button onClick={() => closeModal(() => showGerenciarModal())} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+          </div>
+        </div>
+      );
+    };
+    openModal(<HistoricoContent />, "center");
+  }
+
+  // ═══ TROCAR CARTÃO (F3) ═══
+  function showTrocarCartaoModal() {
+    const CardForm = () => {
+      const [form, setForm] = useState({ holderName: '', number: '', expiry: '', ccv: '', cpf: '', cep: '', addressNumber: '' });
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const handleSubmit = async () => {
+        if (!form.holderName || !form.number || !form.expiry || !form.ccv || !form.cpf || !form.cep) { setError('Preencha todos os campos.'); return; }
+        setLoading(true); setError('');
+        const [mm, yy] = form.expiry.split('/');
+        try {
+          const result = await updatePaymentMethod({
+            creditCard: { holderName: form.holderName, number: form.number, expiryMonth: mm, expiryYear: yy?.length === 2 ? '20' + yy : yy, ccv: form.ccv },
+            holderInfo: { cpfCnpj: form.cpf, email: clientProfile?.email, phone: clientProfile?.phone, postalCode: form.cep.replace(/\D/g, ''), addressNumber: form.addressNumber || '0' },
+          });
+          if (onSubscriptionChange && subscription) onSubscriptionChange({ ...subscription, cardBrand: result.cardBrand, cardLast4: result.cardLast4 });
+          closeModal();
+        } catch (err: any) { setError(err.message || 'Erro ao atualizar cartão.'); setLoading(false); }
+      };
+      return (
+        <div className="p-6" style={{ borderRadius: "1rem" }}>
+          <h3 className="text-2xl font-bold text-center mb-6" style={{ color: primary }}>Trocar Cartão</h3>
+          {error && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{error}</div>}
+          <div className="space-y-4">
+            <input placeholder="Nome no cartão" value={form.holderName} onChange={e => setForm(p => ({ ...p, holderName: e.target.value }))} className="w-full p-3 rounded-lg text-white placeholder-gray-500 border border-gray-700 outline-none focus:border-gray-500" style={{ backgroundColor: "#2a2a2a" }} />
+            <input placeholder="Número do cartão" inputMode="numeric" value={form.number} onChange={e => setForm(p => ({ ...p, number: e.target.value.replace(/\D/g, '').substring(0, 16) }))} className="w-full p-3 rounded-lg text-white placeholder-gray-500 border border-gray-700 outline-none focus:border-gray-500" style={{ backgroundColor: "#2a2a2a" }} />
+            <div className="grid grid-cols-2 gap-3">
+              <input placeholder="MM/AA" value={form.expiry} onChange={e => { let v = e.target.value.replace(/\D/g, '').substring(0, 4); if (v.length > 2) v = v.substring(0, 2) + '/' + v.substring(2); setForm(p => ({ ...p, expiry: v })); }} className="w-full p-3 rounded-lg text-white placeholder-gray-500 border border-gray-700 outline-none focus:border-gray-500" style={{ backgroundColor: "#2a2a2a" }} />
+              <input placeholder="CVV" inputMode="numeric" value={form.ccv} onChange={e => setForm(p => ({ ...p, ccv: e.target.value.replace(/\D/g, '').substring(0, 4) }))} className="w-full p-3 rounded-lg text-white placeholder-gray-500 border border-gray-700 outline-none focus:border-gray-500" style={{ backgroundColor: "#2a2a2a" }} />
+            </div>
+            <input placeholder="CPF" inputMode="numeric" value={form.cpf} onChange={e => { let v = e.target.value.replace(/\D/g, '').substring(0, 11); if (v.length > 9) v = v.substring(0,3)+'.'+v.substring(3,6)+'.'+v.substring(6,9)+'-'+v.substring(9); else if (v.length > 6) v = v.substring(0,3)+'.'+v.substring(3,6)+'.'+v.substring(6); else if (v.length > 3) v = v.substring(0,3)+'.'+v.substring(3); setForm(p => ({ ...p, cpf: v })); }} className="w-full p-3 rounded-lg text-white placeholder-gray-500 border border-gray-700 outline-none focus:border-gray-500" style={{ backgroundColor: "#2a2a2a" }} />
+            <div className="grid grid-cols-2 gap-3">
+              <input placeholder="CEP" inputMode="numeric" value={form.cep} onChange={e => { let v = e.target.value.replace(/\D/g, '').substring(0, 8); if (v.length > 5) v = v.substring(0,5)+'-'+v.substring(5); setForm(p => ({ ...p, cep: v })); }} className="w-full p-3 rounded-lg text-white placeholder-gray-500 border border-gray-700 outline-none focus:border-gray-500" style={{ backgroundColor: "#2a2a2a" }} />
+              <input placeholder="Nº Endereço" value={form.addressNumber} onChange={e => setForm(p => ({ ...p, addressNumber: e.target.value }))} className="w-full p-3 rounded-lg text-white placeholder-gray-500 border border-gray-700 outline-none focus:border-gray-500" style={{ backgroundColor: "#2a2a2a" }} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 mt-6">
+            <button onClick={() => closeModal(() => showGerenciarModal())} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+            <button disabled={loading} onClick={handleSubmit} className="py-3 font-bold rounded-lg flex items-center justify-center" style={{ backgroundColor: primary, color: bgColor }}>
+              {loading ? <Loader2 className="w-5 h-5 booking-spin" /> : 'Atualizar'}
+            </button>
+          </div>
+        </div>
+      );
+    };
+    openModal(<CardForm />, "center");
+  }
+
+  // ═══ TROCAR PLANO (F6) ═══
+  function showTrocarPlanoModal() {
+    const PlanSelector = () => {
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [selectedPlanId, setSelectedPlanId] = useState('');
+      const availablePlans = (plans || []).filter((p: SubscriptionPlan) => p.active && p.availableForSale && p.id !== subscription?.planId);
+      const handleChange = async () => {
+        if (!selectedPlanId) { setError('Selecione um plano.'); return; }
+        setLoading(true); setError('');
+        try {
+          const result = await changePlan(selectedPlanId);
+          // Reload subscription
+          const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single();
+          if (s && onSubscriptionChange) onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined });
+          closeModal();
+        } catch (err: any) { setError(err.message || 'Erro ao trocar plano.'); setLoading(false); }
+      };
+      return (
+        <div className="p-6" style={{ borderRadius: "1rem" }}>
+          <h3 className="text-2xl font-bold text-center mb-2" style={{ color: primary }}>Trocar Plano</h3>
+          <p className="text-gray-400 text-center text-sm mb-6">A alteração vale a partir da próxima cobrança</p>
+          {error && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{error}</div>}
+          <div className="space-y-3 max-h-[50vh] overflow-y-auto">
+            {availablePlans.length === 0 ? (
+              <p className="text-gray-400 text-center py-8">Nenhum outro plano disponível.</p>
+            ) : availablePlans.map((p: SubscriptionPlan) => {
+              const isSelected = selectedPlanId === p.id;
+              const priceDirection = Number(p.price) > Number(subscription?.plan?.price || 0) ? '↑' : '↓';
+              return (
+                <button key={p.id} onClick={() => setSelectedPlanId(p.id)} className="w-full text-left p-4 rounded-lg border-2 transition-all" style={{ backgroundColor: "#2a2a2a", borderColor: isSelected ? primary : '#333' }}>
+                  <div className="flex justify-between items-center">
+                    <span className="text-white font-semibold">{p.name}</span>
+                    <span className="font-bold" style={{ color: isSelected ? primary : '#fff' }}>{priceDirection} R$ {Number(p.price).toFixed(2)}/mês</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-2 gap-3 mt-6">
+            <button onClick={() => closeModal(() => showGerenciarModal())} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+            <button disabled={loading || !selectedPlanId} onClick={handleChange} className="py-3 font-bold rounded-lg flex items-center justify-center" style={{ backgroundColor: primary, color: bgColor, opacity: selectedPlanId ? 1 : 0.5 }}>
+              {loading ? <Loader2 className="w-5 h-5 booking-spin" /> : 'Confirmar'}
+            </button>
+          </div>
+        </div>
+      );
+    };
+    openModal(<PlanSelector />, "center");
+  }
+
+  // ═══ REATIVAR ASSINATURA (F1) ═══
+  function showReativarModal() {
+    if (!subscription?.plan) return;
+    // Reuse AssinarModal flow — user needs to enter card info again
+    openModal(
+      <AssinarModal plan={subscription.plan as SubscriptionPlan} primary={primary} bgColor={bgColor} clientProfile={clientProfile} services={services}
+        onClose={() => closeModal()}
+        isReactivation={true}
+        onSuccess={async (result: any) => {
+          const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single();
+          if (s) onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined });
+          if (result.finalStatus === 'active') setActiveView('agendar');
+        }}
+      />, "center"
     );
   }
 
@@ -3208,34 +3768,93 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
           <div className="p-5 rounded-2xl border border-gray-800" style={{ backgroundColor: "#1e1e1e" }}>
             <div className="flex justify-between items-center mb-5">
               <h3 className="font-bold text-white text-lg">{subscription.plan.name}</h3>
-              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full`} style={{ backgroundColor: subscription.status === 'active' ? '#22c55e33' : '#3b82f633', color: subscription.status === 'active' ? '#4ade80' : '#60a5fa' }}>{subscription.status === 'active' ? 'Ativo' : 'Aguardando Pagamento'}</span>
+              {(() => {
+                const statusMap: Record<string, { bg: string; color: string; label: string }> = {
+                  active: { bg: '#22c55e33', color: '#4ade80', label: 'Ativo' },
+                  overdue: { bg: '#ef444433', color: '#f87171', label: 'Inadimplente' },
+                  paused: { bg: '#eab30833', color: '#fbbf24', label: 'Pausado' },
+                  pending_payment: { bg: '#3b82f633', color: '#60a5fa', label: 'Aguardando Pgto' },
+                };
+                const st = statusMap[subscription.status] || statusMap.pending_payment;
+                return <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>;
+              })()}
             </div>
+            {/* ═══ Alert banner for overdue/paused ═══ */}
+            {(subscription.status === 'overdue' || subscription.status === 'paused') && (
+              <div className="p-4 rounded-xl mt-4 flex items-start gap-3"
+                style={{ backgroundColor: subscription.status === 'overdue' ? '#ef444415' : '#eab30815',
+                         border: `1px solid ${subscription.status === 'overdue' ? '#ef444440' : '#eab30840'}` }}>
+                <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5"
+                  style={{ color: subscription.status === 'overdue' ? '#f87171' : '#fbbf24' }} />
+                <div className="flex-1">
+                  <p className="text-sm font-bold" style={{ color: subscription.status === 'overdue' ? '#f87171' : '#fbbf24' }}>
+                    {subscription.status === 'overdue' ? 'Pagamento pendente' : 'Assinatura pausada'}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {subscription.status === 'overdue'
+                      ? 'Seus benefícios estão suspensos. Regularize para voltar a aproveitar seu plano.'
+                      : 'Seus benefícios estão suspensos. Reative quando quiser voltar a aproveitar.'}
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="space-y-4">
-              <div className="grid grid-cols-4 gap-3">
-                {Array.from({ length: subscription.plan.maxUsesPerMonth || 4 }).map((_: any, i: number) => {
-                  const isUsed = i < (subscription.usesThisMonth || 0);
-                  return (
-                    <div key={i} className="booking-service-icon" style={{
-                      backgroundColor: isUsed ? "#374151" : "#1e1e1e",
-                      color: isUsed ? "#9ca3af" : primary,
-                      border: isUsed ? "none" : `1px solid ${primary}`,
-                    }}>
-                      <Scissors className="w-5 h-5" />
-                      <span className="text-xs mt-1">{isUsed ? "Usado" : "Livre"}</span>
+              {subscription.plan.maxUsesPerMonth ? (
+                <>
+                  <div className="grid grid-cols-4 gap-3">
+                    {Array.from({ length: subscription.plan.maxUsesPerMonth }).map((_: any, i: number) => {
+                      const isUsed = i < (subscription.usesThisMonth || 0);
+                      return (
+                        <div key={i} className="booking-service-icon" style={{
+                          backgroundColor: isUsed ? "#374151" : "#1e1e1e",
+                          color: isUsed ? "#9ca3af" : primary,
+                          border: isUsed ? "none" : `1px solid ${primary}`,
+                        }}>
+                          <Scissors className="w-5 h-5" />
+                          <span className="text-xs mt-1">{isUsed ? "Usado" : "Livre"}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div>
+                    <div className="flex justify-between mb-1 text-xs font-medium" style={{ color: "#d1d5db" }}>
+                      <span>Progresso</span>
+                      <span>{subscription.usesThisMonth || 0} de {subscription.plan.maxUsesPerMonth}</span>
                     </div>
-                  );
-                })}
-              </div>
-              <div>
-                <div className="flex justify-between mb-1 text-xs font-medium" style={{ color: "#d1d5db" }}>
-                  <span>Progresso</span>
-                  <span>{subscription.usesThisMonth || 0} de {subscription.plan.maxUsesPerMonth || 4}</span>
+                    <div className="w-full bg-gray-700 rounded-full h-2.5">
+                      <div className="h-2.5 rounded-full booking-progress-bar" style={{ backgroundColor: primary, width: `${Math.min(100, ((subscription.usesThisMonth || 0) / subscription.plan.maxUsesPerMonth) * 100)}%` }} />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center gap-3 p-4 rounded-lg" style={{ backgroundColor: '#2a2a2a' }}>
+                  <InfinityIcon className="w-6 h-6" style={{ color: primary }} />
+                  <div>
+                    <p className="text-white font-semibold">Uso ilimitado</p>
+                    <p className="text-xs text-gray-400">{subscription.usesThisMonth || 0} utilizações este mês</p>
+                  </div>
                 </div>
-                <div className="w-full bg-gray-700 rounded-full h-2.5">
-                  <div className="h-2.5 rounded-full booking-progress-bar" style={{ backgroundColor: primary, width: `${Math.min(100, ((subscription.usesThisMonth || 0) / (subscription.plan.maxUsesPerMonth || 4)) * 100)}%` }} />
-                </div>
-              </div>
+              )}
             </div>
+            {/* Card on file info */}
+            {subscription.cardBrand && (
+              <div className="flex items-center gap-2 mt-4 p-3 rounded-lg" style={{ backgroundColor: '#2a2a2a' }}>
+                <CreditCard className="w-4 h-4 text-gray-400" />
+                <span className="text-sm text-gray-300">{subscription.cardBrand} •••• {subscription.cardLast4}</span>
+                <span className="ml-auto text-xs" style={{ color: subscription.status === 'overdue' ? '#f87171' : '#6b7280' }}>
+                  {subscription.status === 'overdue' ? 'Pgto recusado' : 'Cartão ativo'}
+                </span>
+              </div>
+            )}
+            {/* ═══ CTA direto para overdue/paused ═══ */}
+            {(subscription.status === 'overdue' || subscription.status === 'paused') && (
+              <button onClick={showReativarModal}
+                className="w-full py-3 font-bold rounded-lg mt-4 flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
+                style={{ backgroundColor: subscription.status === 'overdue' ? '#22c55e' : primary, color: subscription.status === 'overdue' ? '#fff' : bgColor }}>
+                <RefreshCw className="w-4 h-4" />
+                {subscription.status === 'overdue' ? 'Regularizar Assinatura' : 'Reativar Assinatura'}
+              </button>
+            )}
             <div className="border-t border-gray-700 my-5" />
             <div className="grid grid-cols-2 gap-3">
               <button onClick={showGerenciarModal} className="py-2 text-sm font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Gerenciar</button>
@@ -3268,28 +3887,24 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                     <li key={i} className="flex items-start"><Check className="w-4 h-4 mr-3 mt-0.5 flex-shrink-0" style={{ color: primary }} /><span>{b}</span></li>
                   ))}
                 </ul>
-                <button disabled={isCurrent || interestLoading === plan.id}
-                  onClick={async () => {
-                    if (!authUser) { onLogin(); return; }
-                    setInterestLoading(plan.id);
-                    try {
-                      await supabase.from("subscription_interests").insert({
-                        id: crypto.randomUUID(),
-                        clientId: clientProfile?.id,
-                        clientName: clientProfile?.name,
-                        planId: plan.id,
-                        planName: plan.name,
-                        status: 'pending',
-                        createdAt: new Date().toISOString(),
-                      });
-                    } catch (_) { /* silently proceed to modal */ }
-                    setInterestLoading(null);
-                    showInteresseModal(plan);
-                  }}
-                  className="w-full py-3 font-bold rounded-lg transition-colors"
-                  style={{ backgroundColor: isCurrent ? "#4a4a4a" : primary, color: isCurrent ? "#888" : bgColor, cursor: isCurrent ? "not-allowed" : "pointer" }}>
-                  {isCurrent ? "Seu Plano Atual" : interestLoading === plan.id ? <Loader2 className="w-5 h-5 mx-auto booking-spin" /> : "Assinar Plano"}
-                </button>
+                {isCurrent && (subscription?.status === 'overdue' || subscription?.status === 'paused') ? (
+                  <button onClick={() => showReativarModal()}
+                    className="w-full py-3 font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+                    style={{ backgroundColor: '#22c55e', color: '#fff' }}>
+                    <RefreshCw className="w-4 h-4" />
+                    {subscription.status === 'overdue' ? 'Regularizar' : 'Reativar'}
+                  </button>
+                ) : (
+                  <button disabled={isCurrent}
+                    onClick={() => {
+                      if (!authUser) { onLogin(); return; }
+                      showAssinarModal(plan);
+                    }}
+                    className="w-full py-3 font-bold rounded-lg transition-colors"
+                    style={{ backgroundColor: isCurrent ? "#4a4a4a" : primary, color: isCurrent ? "#888" : bgColor, cursor: isCurrent ? "not-allowed" : "pointer" }}>
+                    {isCurrent ? "Seu Plano Atual" : "Assinar Plano"}
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -3315,7 +3930,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
 // ============================================================
 // PERFIL VIEW (complete)
 // ============================================================
-function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goals, services, onLogin, openModal, closeModal, onLogout, onProfileUpdate, setActiveView, updateSelection, resetSelection, pushSubscribed, pushSupported, onPushSubscribe, onPushUnsubscribe }: any) {
+function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, clientSubscription, allEvents, barbers, units, goals, services, onLogin, openModal, closeModal, onLogout, onProfileUpdate, setActiveView, updateSelection, resetSelection, pushSubscribed, pushSupported, onPushSubscribe, onPushUnsubscribe }: any) {
   const [creditsExpanded, setCreditsExpanded] = useState(false);
 
   if (!authUser) {
@@ -3333,6 +3948,26 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
   const credits = clientProfile?.referralCredits || 0;
   const referrals = clientProfile?.referralsMade || 0;
 
+  // Smart greeting
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
+
+  // Member since
+  const memberSince = clientProfile?.createdAt ? new Date(clientProfile.createdAt).toLocaleDateString("pt-BR", { month: "long", year: "numeric" }) : null;
+
+  // Client stats from events
+  const myEvents = (allEvents || []).filter((e: any) => e.clientId === clientProfile?.id && e.status !== "cancelled");
+  const completedEvents = myEvents.filter((e: any) => { const d = new Date(e.year, e.month, e.date); return d < new Date(); });
+  const futureEvents = myEvents.filter((e: any) => { const d = new Date(e.year, e.month, e.date); d.setHours(23,59); return d >= new Date(); }).sort((a: any, b: any) => new Date(a.year, a.month, a.date).getTime() - new Date(b.year, b.month, b.date).getTime());
+  const nextEvent = futureEvents[0];
+
+  // Favorite barber
+  const barberCounts: Record<string, number> = {};
+  completedEvents.forEach((e: any) => { if (e.barberId) barberCounts[e.barberId] = (barberCounts[e.barberId] || 0) + 1; });
+  const favBarberId = Object.entries(barberCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const favBarber = favBarberId ? (barbers || []).find((b: any) => b.id === favBarberId) : null;
+  const favBarberCount = favBarberId ? barberCounts[favBarberId] : 0;
+
   function showEditarPerfilModal() {
     openModal(
       <EditarPerfilModal primary={primary} bgColor={bgColor} clientProfile={clientProfile}
@@ -3345,7 +3980,27 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
               saveData.birthday = `${parts[2]}-${parts[1]}-${parts[0]}`;
             }
           }
-          await supabase.from("clients").update({ ...saveData, updatedAt: new Date().toISOString() }).eq("id", clientProfile.id);
+          // Remove empty strings to avoid NOT NULL / constraint violations
+          if (!saveData.email?.trim()) delete saveData.email;
+          if (!saveData.birthday?.trim()) delete saveData.birthday;
+
+          const { error: updateErr } = await supabase.from("clients").update({ ...saveData, updatedAt: new Date().toISOString() }).eq("id", clientProfile.id);
+
+          if (updateErr) {
+            console.error("[Profile Update] Error:", updateErr);
+            closeModal(() => {
+              openModal(
+                <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+                  <X className="w-12 h-12 mx-auto mb-4 text-red-500" />
+                  <h3 className="text-xl font-bold mb-3 text-red-400">Erro ao Salvar</h3>
+                  <p className="text-gray-300 mb-6">{(() => { const m = updateErr.message || ""; if (m.includes("unique") || m.includes("duplicate")) { if (m.includes("email")) return "Este e-mail já está em uso por outro cliente."; if (m.includes("phone")) return "Este telefone já está em uso por outro cliente."; if (m.includes("cpf")) return "Este CPF/CNPJ já está em uso por outro cliente."; return "Este dado já está em uso por outro cliente."; } return "Não foi possível atualizar seu perfil. Tente novamente."; })()}</p>
+                  <button onClick={() => closeModal()} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Fechar</button>
+                </div>, "center"
+              );
+            });
+            return;
+          }
+
           onProfileUpdate({ ...clientProfile, ...saveData });
           closeModal(() => {
             openModal(
@@ -3458,27 +4113,208 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
 
   return (
     <div className="p-6" style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
-      {/* Avatar + Name */}
+      {/* Avatar + Name — Premium */}
       <div className="text-center pt-8 mb-8">
         <div className="relative inline-block">
-          {clientProfile?.profilePic || clientProfile?.avatar ? (
-            <img src={clientProfile.profilePic || clientProfile.avatar} alt="Avatar" className="w-24 h-24 rounded-full object-cover mx-auto border-4" style={{ borderColor: primary }} />
-          ) : (
-            <div className="w-24 h-24 rounded-full mx-auto flex items-center justify-center text-3xl font-bold" style={{ backgroundColor: "#374151", color: primary }}>
-              {firstName.charAt(0).toUpperCase()}
-            </div>
-          )}
-          <button onClick={showEditarPerfilModal} className="absolute bottom-0 right-0 w-8 h-8 rounded-full flex items-center justify-center border-2 border-gray-800" style={{ backgroundColor: "#374151" }}>
-            <Camera className="w-4 h-4 text-white" />
+          <div className="w-28 h-28 rounded-full p-[3px] mx-auto booking-avatar-ring" style={{ background: `linear-gradient(135deg, ${primary}, ${primary}66, ${primary})` }}>
+            {clientProfile?.profilePic || clientProfile?.avatar ? (
+              <img src={clientProfile.profilePic || clientProfile.avatar} alt="Avatar" className="w-full h-full rounded-full object-cover" />
+            ) : (
+              <div className="w-full h-full rounded-full flex items-center justify-center text-3xl font-bold" style={{ backgroundColor: "#1a1a1a", color: primary }}>
+                {firstName.charAt(0).toUpperCase()}
+              </div>
+            )}
+          </div>
+          <button onClick={() => {
+            const hasPhoto = !!(clientProfile?.profilePic || clientProfile?.avatar);
+            const doUpload = () => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = 'image/*';
+              input.onchange = async (ev: any) => {
+                const file = ev.target.files?.[0];
+                if (!file || !clientProfile?.id) return;
+                closeModal();
+                // Show uploading state
+                openModal(
+                  <div className="p-6 text-center" style={{ borderRadius: '1rem' }}>
+                    <Loader2 className="w-10 h-10 mx-auto mb-4 booking-spin" style={{ color: primary }} />
+                    <p className="text-white font-semibold">Enviando foto...</p>
+                  </div>, "center"
+                );
+                try {
+                  const ext = file.name.split('.').pop() || 'jpg';
+                  const path = `clients/${clientProfile.id}.${ext}`;
+                  const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type });
+                  if (upErr) throw upErr;
+                  const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+                  const publicUrl = urlData?.publicUrl ? `${urlData.publicUrl}?t=${Date.now()}` : '';
+                  if (publicUrl) {
+                    await supabase.from('clients').update({ profilePic: publicUrl, updatedAt: new Date().toISOString() }).eq('id', clientProfile.id);
+                    onProfileUpdate({ ...clientProfile, profilePic: publicUrl });
+                  }
+                  closeModal();
+                } catch (err) {
+                  console.error('Avatar upload error:', err);
+                  closeModal();
+                  openModal(
+                    <div className="p-6 text-center" style={{ borderRadius: '1rem' }}>
+                      <AlertTriangle className="w-10 h-10 mx-auto mb-4 text-red-400" />
+                      <p className="text-white font-semibold mb-2">Erro ao enviar foto</p>
+                      <p className="text-gray-400 text-sm mb-4">Tente novamente com uma imagem menor.</p>
+                      <button onClick={closeModal} className="w-full py-3 font-semibold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>OK</button>
+                    </div>, "center"
+                  );
+                }
+              };
+              input.click();
+            };
+            const doRemove = async () => {
+              closeModal();
+              await supabase.from('clients').update({ profilePic: null, updatedAt: new Date().toISOString() }).eq('id', clientProfile.id);
+              onProfileUpdate({ ...clientProfile, profilePic: null });
+            };
+            openModal(
+              <div className="booking-modal-sheet p-5 pb-8">
+                <h3 className="booking-modal-title" style={{ color: primary }}>Foto de perfil</h3>
+                <div className="space-y-3 px-1">
+                  <div onClick={() => { closeModal(); setTimeout(doUpload, 200); }} className="booking-modal-item">
+                    <div className="booking-modal-avatar w-12 h-12 rounded-full"><ImagePlus className="w-5 h-5 text-gray-500" /></div>
+                    <div className="flex-1">
+                      <p className="font-semibold text-white">Escolher foto</p>
+                      <p className="text-xs text-gray-400">Selecione uma imagem da galeria</p>
+                    </div>
+                  </div>
+                  {hasPhoto && (
+                    <div onClick={() => { doRemove(); }} className="booking-modal-item">
+                      <div className="booking-modal-avatar w-12 h-12 rounded-full"><Trash2 className="w-5 h-5 text-red-400" /></div>
+                      <div className="flex-1">
+                        <p className="font-semibold text-red-400">Remover foto</p>
+                        <p className="text-xs text-gray-500">Voltar para a letra inicial</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }} className="absolute bottom-1 right-1 w-8 h-8 rounded-full flex items-center justify-center shadow-lg" style={{ backgroundColor: primary, color: bgColor }}>
+            <Camera className="w-4 h-4" />
           </button>
         </div>
-        <h2 className="text-2xl font-bold mt-4 text-white">{clientProfile?.name || "Visitante"}</h2>
-        <p className="text-gray-400 text-sm">{authUser.email}</p>
+        <p className="text-gray-400 text-sm mt-4">{greeting},</p>
+        <h2 className="text-2xl font-bold text-white">{clientProfile?.name || "Visitante"}</h2>
+        <div className="flex items-center justify-center gap-2 mt-2">
+          {clientSubscription && (() => {
+            const badgeMap: Record<string, { label: string; color: string; bg: string }> = {
+              active: { label: 'Assinante', color: primary, bg: `${primary}20` },
+              overdue: { label: 'Inadimplente', color: '#f87171', bg: '#ef444420' },
+              paused: { label: 'Pausado', color: '#fbbf24', bg: '#eab30820' },
+              pending_payment: { label: 'Aguardando Pgto', color: '#60a5fa', bg: '#3b82f620' },
+            };
+            const b = badgeMap[clientSubscription.status] || badgeMap.active;
+            return <span className="text-xs font-bold px-2.5 py-0.5 rounded-full" style={{ backgroundColor: b.bg, color: b.color, border: `1px solid ${b.color}40` }}><Crown className="w-3 h-3 inline mr-1" />{b.label}</span>;
+          })()}
+          {memberSince && <span className="text-xs text-gray-500">Cliente desde {memberSince}</span>}
+        </div>
       </div>
+
+      {/* Next appointment card */}
+      {nextEvent && (() => {
+        const nBarber = (barbers || []).find((b: any) => b.id === nextEvent.barberId);
+        const nSvc = (services || []).find((s: any) => s.id === nextEvent.serviceId);
+        const nDateStr = new Date(nextEvent.year, nextEvent.month, nextEvent.date).toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "short" });
+        return (
+          <div className="mb-6 border border-gray-800 overflow-hidden" style={{ backgroundColor: "#1e1e1e", borderRadius: 16 }}>
+            <button onClick={() => {
+              const eventDate = new Date(nextEvent.year, nextEvent.month, nextEvent.date);
+              const dateStrFull = eventDate.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+              const unit = (units || []).find((u: any) => u.id === nextEvent.unitId);
+              const price = nextEvent.finalPrice != null ? Number(nextEvent.finalPrice) : (nSvc?.price ?? null);
+              const isOpen = eventDate >= new Date(new Date().setHours(0,0,0,0)) && nextEvent.status !== "completed";
+              const evDate2 = new Date(nextEvent.year, nextEvent.month, nextEvent.date);
+              const [evH, evM] = (nextEvent.startTime || "00:00").split(":").map(Number);
+              evDate2.setHours(evH, evM, 0, 0);
+              const hoursUntil = (evDate2.getTime() - Date.now()) / (1000 * 60 * 60);
+              const cancelMin = parseInt(g("booking.cancellation_hours", "0"), 10);
+              const reschedMin = parseInt(g("booking.reschedule_hours", "0"), 10);
+              const canCancel = cancelMin <= 0 || hoursUntil >= cancelMin;
+              const canReschedule = reschedMin <= 0 || hoursUntil >= reschedMin;
+              openModal(
+                <div className="p-6" style={{ borderRadius: "1rem" }}>
+                  <h3 className="text-xl font-bold mb-6 text-center" style={{ color: primary }}>Detalhes do Agendamento</h3>
+                  <div className="space-y-5 text-sm mb-6">
+                    {unit && (<div><p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Unidade:</p><p className="text-white font-medium">{unit.tradeName || unit.name}</p></div>)}
+                    <div><p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Data:</p><p className="text-white capitalize">{dateStrFull}</p></div>
+                    <div><p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Horário:</p><p className="text-white">{nextEvent.startTime}</p></div>
+                    <div><p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Barbeiro:</p><p className="text-white">{nBarber?.name || nextEvent.barberName || "A definir"}</p></div>
+                    <div className="border-t border-gray-700 pt-4"><div className="flex items-center justify-between"><p className="text-white">{nextEvent.serviceName || nextEvent.title}</p>{price != null && <p className="text-white font-bold">R$ {price.toFixed(2)}</p>}</div></div>
+                    {price != null && (<div className="flex items-center justify-between border-t border-gray-700 pt-3"><p className="text-white font-bold text-base">Total</p><p className="font-bold text-base" style={{ color: primary }}>R$ {price.toFixed(2)}</p></div>)}
+                  </div>
+                  {isOpen ? (
+                    <div className="space-y-3">
+                      <button onClick={() => { if (canReschedule) { closeModal(); setActiveView("historico"); } }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor, opacity: canReschedule ? 1 : 0.4 }} disabled={!canReschedule}>Remarcar</button>
+                      <button onClick={() => { if (canCancel) { closeModal(); setActiveView("historico"); } }} className={`w-full py-3 font-bold rounded-lg bg-red-600 text-white ${canCancel ? "" : "opacity-40"}`} disabled={!canCancel}>Cancelar agendamento</button>
+                      <button onClick={closeModal} className="w-full py-3 font-semibold rounded-lg" style={{ backgroundColor: "#1a1a1a", color: "#fff", border: "1px solid rgba(255,255,255,0.15)" }}>Voltar</button>
+                    </div>
+                  ) : (
+                    <button onClick={closeModal} className="w-full py-3 font-semibold rounded-lg" style={{ backgroundColor: "#1a1a1a", color: "#fff", border: "1px solid rgba(255,255,255,0.15)" }}>Fechar</button>
+                  )}
+                </div>, "center"
+              );
+            }} className="w-full p-4 flex items-center gap-4 text-left hover:bg-white/5 transition-colors">
+              <div className="w-10 h-10 flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${primary}15`, borderRadius: 6 }}>
+                <Calendar className="w-5 h-5" style={{ color: primary }} />
+              </div>
+              <div className="flex-grow min-w-0">
+                <p className="text-[11px] text-gray-500 font-medium">Próximo agendamento</p>
+                <p className="text-white text-sm font-bold truncate">{nDateStr.charAt(0).toUpperCase() + nDateStr.slice(1)} às {nextEvent.startTime}</p>
+                <p className="text-[11px] text-gray-500 truncate">{nextEvent.serviceName || nextEvent.title} • {nBarber?.name || ""}</p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-gray-600 flex-shrink-0" />
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* Quick stats */}
+      {completedEvents.length > 0 && (
+        <div className="grid grid-cols-3 gap-3 mb-6">
+          <div className="p-3 rounded-lg text-center border border-gray-800" style={{ backgroundColor: "#1e1e1e" }}>
+            <p className="text-xl font-bold" style={{ color: primary }}>{completedEvents.length}</p>
+            <p className="text-[10px] text-gray-500 mt-0.5">Visitas</p>
+          </div>
+          <div className="p-3 rounded-lg text-center border border-gray-800" style={{ backgroundColor: "#1e1e1e" }}>
+            <p className="text-xl font-bold" style={{ color: primary }}>{memberSince ? (() => { const m = Math.max(1, Math.floor((Date.now() - new Date(clientProfile.createdAt).getTime()) / (1000*60*60*24*30))); return m; })() : "—"}</p>
+            <p className="text-[10px] text-gray-500 mt-0.5">Meses</p>
+          </div>
+          <div className="p-3 rounded-lg text-center border border-gray-800" style={{ backgroundColor: "#1e1e1e" }}>
+            <p className="text-xl font-bold" style={{ color: primary }}>{favBarber ? favBarberCount : referrals}</p>
+            <p className="text-[10px] text-gray-500 mt-0.5">{favBarber ? "Com favorito" : "Indicações"}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Favorite barber */}
+      {favBarber && (
+        <div className="p-4 rounded-2xl border border-gray-800 mb-6 flex items-center gap-4" style={{ backgroundColor: "#1e1e1e" }}>
+          <div className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 text-lg font-bold" style={{ backgroundColor: "#374151", color: primary }}>
+            {favBarber.name?.charAt(0) || "B"}
+          </div>
+          <div className="flex-grow min-w-0">
+            <p className="text-xs text-gray-400">Seu barbeiro favorito</p>
+            <p className="text-white font-bold truncate">{favBarber.name}</p>
+            <p className="text-xs text-gray-500">{favBarberCount} {favBarberCount === 1 ? "visita" : "visitas"} juntos</p>
+          </div>
+          <button onClick={() => { resetSelection(); const favUnit = Array.isArray(favBarber.unitIds) && favBarber.unitIds.length > 0 ? (units || []).find((u: any) => u.id === favBarber.unitIds[0]) : (units || [])[0]; if (favUnit) updateSelection({ unit: favUnit, barber: favBarber }); else updateSelection({ barber: favBarber }); setActiveView("agendar"); }}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold flex-shrink-0" style={{ backgroundColor: primary, color: bgColor }}>
+            Agendar
+          </button>
+        </div>
+      )}
 
       {/* Credits card */}
       {g("referral.enabled", "true") !== "false" && (
-      <div className="p-5 rounded-2xl border border-gray-800 mb-6" style={{ background: "linear-gradient(to bottom, #2a2a2a, #1e1e1e)" }}>
+      <div className="p-5 rounded-2xl border border-gray-800 mb-6" style={{ backgroundColor: "#1e1e1e" }}>
         <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setCreditsExpanded(!creditsExpanded)}>
           <h3 className="font-bold text-white">{g("referral.credits_title", "Créditos de Indicação")}</h3>
           <div className="flex items-center gap-2">
@@ -3565,47 +4401,85 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
         </div>
       )}
 
-      {/* Info */}
-      <div className="p-5 rounded-2xl border border-gray-800 mb-6" style={{ backgroundColor: "#1e1e1e" }}>
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="font-bold text-white">Informações Pessoais</h3>
-          <button onClick={showEditarPerfilModal}><Edit3 className="w-4 h-4" style={{ color: primary }} /></button>
+      {/* Info — Row items style */}
+      <div className="rounded-2xl border border-gray-800 mb-6 overflow-hidden" style={{ backgroundColor: "#1e1e1e" }}>
+        <div className="flex justify-between items-center p-4 pb-2">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Informações Pessoais</h3>
+          <button onClick={showEditarPerfilModal} className="text-xs font-bold px-3 py-1 rounded-full" style={{ color: primary, backgroundColor: `${primary}15` }}>Editar</button>
         </div>
-        <div className="space-y-4 text-sm">
-          <div>
-            <div className="flex items-center gap-2 text-gray-400 mb-1"><Phone className="w-3 h-3" /><span>Telefone</span></div>
-            <p className="text-white font-medium pl-5">{clientProfile?.phone || "—"}</p>
-          </div>
-          <div>
-            <div className="flex items-center gap-2 text-gray-400 mb-1"><Mail className="w-3 h-3" /><span>Email</span></div>
-            <p className="text-white font-medium pl-5 truncate">{authUser.email}</p>
-          </div>
-          {clientProfile?.birthday && (
-            <div>
-              <div className="flex items-center gap-2 text-gray-400 mb-1"><Gift className="w-3 h-3" /><span>Aniversário</span></div>
-              <p className="text-white font-medium pl-5">{clientProfile.birthday.includes('-') ? clientProfile.birthday.split('-').reverse().join('/') : clientProfile.birthday}</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="space-y-3 mb-8">
         {[
-          ...(g("referral.enabled", "true") !== "false" ? [
-            { icon: Share2, label: "Indique um Amigo", onClick: showIndiqueAmigoModal },
-            { icon: CreditCard, label: "Cashback", onClick: showCashbackModal },
-          ] : []),
-          { icon: Bell, label: "Notificações", onClick: showNotificacoesModal },
-          { icon: Lock, label: "Alterar Senha", onClick: showAlterarSenhaModal },
-          { icon: MessageCircle, label: "Fale Conosco", onClick: showFaleConoscoModal },
-        ].map(({ icon: Icon, label, onClick }) => (
-          <button key={label} onClick={onClick} className="w-full text-left p-4 rounded-xl border border-gray-800 flex items-center justify-between hover:border-gray-700 transition-colors"
-            style={{ backgroundColor: "#1e1e1e" }}>
-            <span className="flex items-center gap-3"><Icon className="w-5 h-5" style={{ color: primary }} />{label}</span>
-            <ChevronRight className="w-4 h-4 text-gray-500" />
+          { icon: Phone, label: "Telefone", value: clientProfile?.phone ? formatPhone(clientProfile.phone) : "—" },
+          { icon: Mail, label: "Email", value: authUser.email },
+          ...(clientProfile?.birthday ? [{ icon: Gift, label: "Aniversário", value: (() => { const bd = clientProfile.birthday.split('T')[0]; return bd.includes('-') ? bd.split('-').reverse().join('/') : bd; })() }] : []),
+        ].map(({ icon: Icon, label, value }, i) => (
+          <button key={label} onClick={showEditarPerfilModal} className="w-full flex items-center gap-4 p-4 text-left hover:bg-white/5 transition-colors" style={{ borderTop: i > 0 ? "1px solid #2a2a2a" : "none" }}>
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${primary}12` }}>
+              <Icon className="w-4 h-4" style={{ color: primary }} />
+            </div>
+            <div className="min-w-0 flex-grow">
+              <p className="text-[11px] text-gray-500">{label}</p>
+              <p className="text-white text-sm font-medium truncate">{value}</p>
+            </div>
+            <ChevronRight className="w-4 h-4 text-gray-600 flex-shrink-0" />
           </button>
         ))}
+      </div>
+
+      {/* Actions — Grouped */}
+      <div className="space-y-4 mb-8">
+        {/* Group: Conta */}
+        <div>
+          <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider px-1 mb-2">Conta</p>
+          <div className="rounded-2xl border border-gray-800 overflow-hidden" style={{ backgroundColor: "#1e1e1e" }}>
+            {[
+              { icon: Edit3, label: "Editar Perfil", onClick: showEditarPerfilModal },
+              { icon: Lock, label: "Alterar Senha", onClick: showAlterarSenhaModal },
+              { icon: Bell, label: "Notificações", onClick: showNotificacoesModal, badge: pushSubscribed ? "Ativo" : "Inativo", badgeColor: pushSubscribed ? "#22c55e" : "#6b7280" },
+            ].map(({ icon: Icon, label, onClick, badge, badgeColor }, i) => (
+              <button key={label} onClick={onClick} className="w-full text-left p-4 flex items-center justify-between hover:bg-white/5 transition-colors"
+                style={{ borderTop: i > 0 ? "1px solid #2a2a2a" : "none" }}>
+                <span className="flex items-center gap-3"><Icon className="w-5 h-5" style={{ color: primary }} /><span className="text-sm text-white">{label}</span></span>
+                <span className="flex items-center gap-2">
+                  {badge && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${badgeColor}20`, color: badgeColor }}>{badge}</span>}
+                  <ChevronRight className="w-4 h-4 text-gray-500" />
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Group: Benefícios */}
+        {g("referral.enabled", "true") !== "false" && (
+        <div>
+          <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider px-1 mb-2">Benefícios</p>
+          <div className="rounded-2xl border border-gray-800 overflow-hidden" style={{ backgroundColor: "#1e1e1e" }}>
+            {[
+              { icon: Share2, label: "Indique um Amigo", onClick: showIndiqueAmigoModal, badge: referrals > 0 ? `${referrals} indicações` : undefined },
+              { icon: CreditCard, label: "Cashback", onClick: showCashbackModal, badge: credits > 0 ? `R$ ${credits.toFixed(2)}` : undefined, badgeColor: primary },
+            ].map(({ icon: Icon, label, onClick, badge, badgeColor }, i) => (
+              <button key={label} onClick={onClick} className="w-full text-left p-4 flex items-center justify-between hover:bg-white/5 transition-colors"
+                style={{ borderTop: i > 0 ? "1px solid #2a2a2a" : "none" }}>
+                <span className="flex items-center gap-3"><Icon className="w-5 h-5" style={{ color: primary }} /><span className="text-sm text-white">{label}</span></span>
+                <span className="flex items-center gap-2">
+                  {badge && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${badgeColor || primary}20`, color: badgeColor || primary }}>{badge}</span>}
+                  <ChevronRight className="w-4 h-4 text-gray-500" />
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+        )}
+
+        {/* Group: Suporte */}
+        <div>
+          <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider px-1 mb-2">Suporte</p>
+          <div className="rounded-2xl border border-gray-800 overflow-hidden" style={{ backgroundColor: "#1e1e1e" }}>
+            <button onClick={showFaleConoscoModal} className="w-full text-left p-4 flex items-center justify-between hover:bg-white/5 transition-colors">
+              <span className="flex items-center gap-3"><MessageCircle className="w-5 h-5" style={{ color: primary }} /><span className="text-sm text-white">Fale Conosco</span></span>
+              <ChevronRight className="w-4 h-4 text-gray-500" />
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Logout */}
@@ -3624,27 +4498,6 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
       }} className="w-full py-3 font-semibold rounded-lg border border-red-800 text-red-400 hover:bg-red-900/20 transition-colors">
         <LogOut className="w-4 h-4 inline mr-2" />Sair da Conta
       </button>
-
-      {/* Criado por */}
-      {g("branding.show_powered_by", "true") !== "false" && (
-      <div className="mt-16 mb-8 text-center flex flex-col items-center gap-2">
-        <p className="text-sm text-gray-500">Criado por</p>
-        <svg xmlns="http://www.w3.org/2000/svg" xmlSpace="preserve" viewBox="0 0 13929.2 2791.21" className="w-28 h-auto" style={{ shapeRendering: 'geometricPrecision', fillRule: 'evenodd', clipRule: 'evenodd' }}>
-          <g>
-            <path className="svg-elem-1" fill="#9ca3af" d="M10575.96 2770.97c1.81,-67.93 -6.84,-759.75 0.71,-1074.33 -0.71,-312.44 187.28,-481.99 567.14,-481.99l0.12 -419.71c-284.82,0 -393.93,-2.07 -524.85,182.93 -6.84,-10.88 -90.08,-171.34 -95.66,-182.93l-406.52 0 0 1976.03 459.07 0z" />
-            <path className="svg-elem-2" fill="#9ca3af" d="M986.96 822.41c538.09,0 974.29,436.2 974.29,974.28 0,538.09 -436.2,974.29 -974.29,974.29 -194.4,0 -363.1,-73.47 -515.13,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.28,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
-            <path className="svg-elem-3" fill="#9ca3af" d="M3159.77 822.38c224.55,0 442.51,58.83 607.26,186.46 230.04,178.2 367.02,474.29 367.02,787.82 0,327.08 -181.77,618.34 -429,795.04 -159.5,113.97 -334.27,179.25 -545.29,179.25 -538.08,0 -974.28,-436.2 -974.28,-974.29 0,-538.08 436.2,-974.28 974.28,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
-            <path className="svg-elem-4" fill="#9ca3af" d="M-0 232.77l0 2539.65 445.84 -191.06 0.04 -2581.37c0,0 -437.87,229.95 -445.88,232.77z" />
-            <path className="svg-elem-5" fill="#9ca3af" d="M4168.33 794.94l0 1975.96 -445.74 -192.01 0 -1462.39 0 -139.54c0,0 437.73,-184.83 445.74,-182.03z" />
-            <path className="svg-elem-6" fill="#9ca3af" d="M4932.59 2770.97c1.81,-67.93 -6.84,-759.75 0.71,-1074.33 -0.71,-312.44 187.28,-481.99 567.14,-481.99l0.12 -419.71c-284.82,0 -393.93,-2.07 -524.85,182.93 -6.84,-10.88 -90.08,-171.34 -95.66,-182.93l-406.52 0 0 1976.03 459.07 0z" />
-            <path className="svg-elem-7" fill="#9ca3af" d="M6694.19 822.41c538.08,0 974.28,436.2 974.28,974.28 0,538.09 -436.2,974.29 -974.28,974.29 -194.41,0 -363.11,-73.47 -515.14,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.29,-974.28zm0 436.54c296.99,0 537.74,240.75 537.74,537.74 0,296.99 -240.75,537.74 -537.74,537.74 -296.99,0 -537.74,-240.75 -537.74,-537.74 0,-296.99 240.75,-537.74 537.74,-537.74z" />
-            <path className="svg-elem-8" fill="#9ca3af" d="M5707.22 232.77l0 2539.65 445.84 -191.06 0.05 -2581.37c0,0 -437.87,229.95 -445.89,232.77z" />
-            <path className="svg-elem-9" fill="#9ca3af" d="M8883.2 822.41c436.12,0 805.27,286.55 929.53,681.63 29.06,92.38 44.76,190.69 44.76,292.65 0,52.14 -4.14,103.3 -12.02,153.22l-1336.29 0.02c0,0 229.95,-437.87 232.76,-445.89l592.44 0c-95.88,-147.51 -262.12,-245.09 -451.18,-245.09 -296.99,0 -537.74,240.75 -537.74,537.74 0,296.99 240.75,537.74 537.74,537.74 205.64,0 384.29,-115.44 474.74,-285.05l322.19 307.78c-176.33,250.29 -467.49,413.82 -796.93,413.82 -194.4,0 -363.1,-73.47 -515.13,-171.57 -268.78,-173.43 -459.15,-459.04 -459.15,-802.72 0,-538.08 436.2,-974.28 974.28,-974.28z" />
-            <path className="svg-elem-10" fill="#9ca3af" d="M12954.05 2473.8l-974.83 -1678.86 -369.05 0 1159.51 1996.27 184.37 -317.41zm-184.39 -953.1c140.47,-241.94 280.97,-483.86 421.46,-725.77l-842.93 0 421.47 725.77zm184.51 317.77c61.48,105.87 122.94,211.74 184.42,317.62l790.61 -1361.15 -369.08 0c-201.91,347.88 -403.96,695.69 -605.94,1043.53z" />
-          </g>
-        </svg>
-      </div>
-      )}
     </div>
   );
 }
@@ -3652,14 +4505,15 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, goal
 // --- Editar Perfil Modal ---
 function EditarPerfilModal({ primary, bgColor, clientProfile, onClose, onSave }: any) {
   const [name, setName] = useState(clientProfile?.name || "");
-  const [phone, setPhone] = useState(clientProfile?.phone || "");
+  const phoneRaw = clientProfile?.phone || "";
+  const [phone, setPhone] = useState(phoneRaw ? formatPhone(phoneRaw) : "");
   const [email, setEmail] = useState(clientProfile?.email || "");
-  const bdRaw = clientProfile?.birthday || "";
+  const bdRaw = (clientProfile?.birthday || "").split('T')[0];
   const bdDisplay = bdRaw.includes('-') ? bdRaw.split('-').reverse().join('/') : bdRaw;
   const [birthday, setBirthday] = useState(bdDisplay);
   const [loading, setLoading] = useState(false);
 
-  const hasChanged = name !== (clientProfile?.name || "") || phone !== (clientProfile?.phone || "") || email !== (clientProfile?.email || "") || birthday !== bdDisplay;
+  const hasChanged = name !== (clientProfile?.name || "") || phone.replace(/\D/g, "") !== phoneRaw.replace(/\D/g, "") || email !== (clientProfile?.email || "") || birthday !== bdDisplay;
   const valid = name.trim().length > 0 && hasChanged;
 
   return (
@@ -3743,8 +4597,9 @@ function NotificacoesModal({ primary, bgColor, clientProfile, onClose, onSave, p
     setLoading(true);
     const notificationPreferences = { email: emailNotif, whatsapp: whatsappNotif };
     if (clientProfile?.id) {
-      await supabase.from("clients").update({ notificationPreferences, updatedAt: new Date().toISOString() }).eq("id", clientProfile.id);
-      if (onSave) onSave({ ...clientProfile, notificationPreferences });
+      const { error } = await supabase.from("clients").update({ notificationPreferences, updatedAt: new Date().toISOString() }).eq("id", clientProfile.id);
+      if (!error && onSave) onSave({ ...clientProfile, notificationPreferences });
+      if (error) console.error("[Notif Prefs] Save error:", error);
     }
     setLoading(false);
     onClose();

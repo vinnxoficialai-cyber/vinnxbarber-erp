@@ -118,20 +118,25 @@ export default async function handler(req, res) {
       }
     }
 
-    // Log the push
-    await sbQuery('push_log', {
-      method: 'POST',
-      body: JSON.stringify({
-        clientId,
-        type: tag?.startsWith('booking-') ? 'transactional' :
-              tag?.startsWith('cancel-') ? 'transactional' :
-              tag?.startsWith('reschedule-') ? 'transactional' : 'manual',
-        title,
-        body: body || '',
-        status: failed === subscriptions.length ? 'failed' : 'sent',
-        errorDetail: errors.length ? JSON.stringify(errors) : null,
-      }),
-    });
+    // Log the push (non-blocking — don't crash if log fails)
+    try {
+      await sbQuery('push_log', {
+        method: 'POST',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          clientId,
+          type: tag?.startsWith('booking-') ? 'transactional' :
+                tag?.startsWith('cancel-') ? 'transactional' :
+                tag?.startsWith('reschedule-') ? 'transactional' : 'manual',
+          title,
+          body: body || '',
+          status: failed === subscriptions.length ? 'failed' : 'sent',
+          errorDetail: errors.length ? JSON.stringify(errors) : null,
+        }),
+      });
+    } catch (logErr) {
+      console.error('[push-send] Log insert failed:', logErr.message);
+    }
 
     return res.status(200).json({ sent, failed, total: subscriptions.length });
   } catch (error) {

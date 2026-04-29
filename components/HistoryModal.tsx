@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { X, History, Calendar, User, CheckCircle, Circle, Clock, Search, Users } from 'lucide-react';
 import { TeamMember, PersonalTask, CalendarEvent } from '../types';
 import { CustomDropdown } from './CustomDropdown';
@@ -44,12 +45,9 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
     const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'pending'>('all');
     const [searchQuery, setSearchQuery] = useState('');
 
-    // Theme
-    const textMain = isDarkMode ? 'text-slate-50' : 'text-slate-900';
-    const textSub = isDarkMode ? 'text-slate-400' : 'text-slate-600';
-    const bgCard = isDarkMode ? 'bg-dark-surface' : 'bg-white';
-    const bgInput = isDarkMode ? 'bg-dark' : 'bg-white';
-    const borderCol = isDarkMode ? 'border-dark-border' : 'border-slate-200';
+    // Pagination — load 30 items at a time
+    const PAGE_SIZE = 30;
+    const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
     // Filtered items
     const filteredItems = useMemo(() => {
@@ -71,15 +69,24 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
         }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     }, [items, dateFrom, dateTo, selectedMember, statusFilter, searchQuery, members]);
 
+    // Reset pagination when filters change
+    React.useEffect(() => {
+        setVisibleCount(PAGE_SIZE);
+    }, [dateFrom, dateTo, selectedMember, statusFilter, searchQuery]);
+
+    // Paginated slice
+    const visibleItems = useMemo(() => filteredItems.slice(0, visibleCount), [filteredItems, visibleCount]);
+    const hasMore = visibleCount < filteredItems.length;
+
     // Stats
     const completedCount = filteredItems.filter(i => i.completed).length;
     const pendingCount = filteredItems.filter(i => !i.completed).length;
 
-    // Group items by date
+    // Group visible items by date (only paginated slice)
     const groupedItems = useMemo(() => {
-        const groups: { date: string; label: string; items: typeof filteredItems }[] = [];
-        const map = new Map<string, typeof filteredItems>();
-        for (const item of filteredItems) {
+        const groups: { date: string; label: string; items: typeof visibleItems }[] = [];
+        const map = new Map<string, typeof visibleItems>();
+        for (const item of visibleItems) {
             const key = item.date;
             if (!map.has(key)) map.set(key, []);
             map.get(key)!.push(item);
@@ -98,7 +105,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
             groups.push({ date, label, items: dateItems });
         }
         return groups;
-    }, [filteredItems]);
+    }, [visibleItems]);
 
     // Status config
     const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
@@ -116,66 +123,64 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
 
     if (!isOpen) return null;
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
             <div
-                className={`${bgCard} border ${borderCol} rounded-2xl shadow-2xl w-full max-w-3xl h-[90vh] flex flex-col animate-in zoom-in-95 duration-200`}
+                className="bg-background border border-border sm:rounded-lg shadow-lg w-full max-w-3xl h-[90vh] flex flex-col animate-in zoom-in-95 duration-200"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className={`px-5 py-4 border-b ${borderCol} flex items-center justify-between shrink-0`}>
-                    <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-xl ${isDarkMode ? 'bg-primary/10' : 'bg-primary/5'}`}>
-                            <History size={18} className="text-primary" />
+                <div className="px-6 pt-5 pb-2 flex-shrink-0 border-b border-border">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
+                            <History size={20} className="text-primary" />
+                            {title}
                         </div>
-                        <div>
-                            <h2 className={`font-bold text-base ${textMain}`}>{title}</h2>
-                            <p className={`text-[11px] ${textSub}`}>
-                                {filteredItems.length} {itemType === 'task' ? 'tarefas' : 'registros'}
-                                {hasActiveFilters && ' (filtrados)'}
-                            </p>
-                        </div>
+                        <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
+                            <X size={16} />
+                        </button>
                     </div>
-                    <button onClick={onClose} className={`p-2 rounded-xl border transition-colors ${isDarkMode ? 'border-dark-border hover:bg-dark text-slate-400' : 'border-slate-200 hover:bg-slate-50 text-slate-500'}`}>
-                        <X size={16} />
-                    </button>
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                        {filteredItems.length} {itemType === 'task' ? 'tarefas' : 'registros'}
+                        {hasActiveFilters && ' (filtrados)'}
+                    </p>
                 </div>
 
                 {/* Filters — always visible, inline */}
-                <div className={`px-5 py-3 border-b ${borderCol} shrink-0`}>
+                <div className="px-6 py-3 border-b border-border shrink-0">
                     {/* Search */}
                     <div className="relative mb-3">
-                        <Search size={14} className={`absolute left-3 top-1/2 -translate-y-1/2 ${textSub}`} />
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                         <input
                             type="text"
                             placeholder="Buscar por nome, cliente ou profissional..."
                             value={searchQuery}
                             onChange={e => setSearchQuery(e.target.value)}
-                            className={`w-full pl-9 pr-3 py-2 text-sm rounded-xl border ${borderCol} ${bgInput} ${textMain} focus:ring-1 focus:ring-primary outline-none placeholder:${textSub}`}
+                            className="w-full pl-9 pr-3 py-2 text-sm rounded-md border border-input bg-background text-foreground focus:ring-1 focus:ring-primary outline-none placeholder:text-muted-foreground"
                         />
                     </div>
                     {/* Filter row */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         <div>
-                            <label className={`block text-[10px] font-semibold ${textSub} mb-0.5 uppercase tracking-wider`}>De</label>
+                            <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5 uppercase tracking-wider">De</label>
                             <input
                                 type="date"
                                 value={dateFrom}
                                 onChange={e => setDateFrom(e.target.value)}
-                                className={`w-full px-2.5 py-1.5 text-xs rounded-lg border ${borderCol} ${bgInput} ${textMain} outline-none focus:ring-1 focus:ring-primary`}
+                                className="w-full px-2.5 py-1.5 text-xs rounded-md border border-input bg-background text-foreground outline-none focus:ring-1 focus:ring-primary [color-scheme:dark]"
                             />
                         </div>
                         <div>
-                            <label className={`block text-[10px] font-semibold ${textSub} mb-0.5 uppercase tracking-wider`}>Ate</label>
+                            <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5 uppercase tracking-wider">Ate</label>
                             <input
                                 type="date"
                                 value={dateTo}
                                 onChange={e => setDateTo(e.target.value)}
-                                className={`w-full px-2.5 py-1.5 text-xs rounded-lg border ${borderCol} ${bgInput} ${textMain} outline-none focus:ring-1 focus:ring-primary`}
+                                className="w-full px-2.5 py-1.5 text-xs rounded-md border border-input bg-background text-foreground outline-none focus:ring-1 focus:ring-primary [color-scheme:dark]"
                             />
                         </div>
                         <div>
-                            <label className={`block text-[10px] font-semibold ${textSub} mb-0.5 uppercase tracking-wider`}>Profissional</label>
+                            <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5 uppercase tracking-wider">Profissional</label>
                             <CustomDropdown
                                 value={selectedMember}
                                 onChange={setSelectedMember}
@@ -187,7 +192,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                             />
                         </div>
                         <div>
-                            <label className={`block text-[10px] font-semibold ${textSub} mb-0.5 uppercase tracking-wider`}>Status</label>
+                            <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5 uppercase tracking-wider">Status</label>
                             <CustomDropdown
                                 value={statusFilter}
                                 onChange={v => setStatusFilter(v as any)}
@@ -202,11 +207,11 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                     </div>
                     {/* Quick Stats */}
                     <div className="flex items-center gap-4 mt-2.5">
-                        <span className={`text-[11px] font-medium ${textSub} flex items-center gap-1.5`}>
+                        <span className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                             {completedCount} concluidos
                         </span>
-                        <span className={`text-[11px] font-medium ${textSub} flex items-center gap-1.5`}>
+                        <span className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                             {pendingCount} pendentes
                         </span>
@@ -223,8 +228,8 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
 
                 {/* Items List — grouped by date (timeline) */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
-                    {filteredItems.length === 0 ? (
-                        <div className={`text-center py-16 ${textSub}`}>
+                    {visibleItems.length === 0 ? (
+                        <div className="text-center py-16 text-muted-foreground">
                             <History size={40} className="mx-auto mb-3 opacity-20" />
                             <p className="text-sm font-medium">Nenhum registro encontrado</p>
                             <p className="text-xs mt-1 opacity-60">Tente ajustar os filtros</p>
@@ -234,11 +239,11 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                             {groupedItems.map(group => (
                                 <div key={group.date} className="mb-4 last:mb-0">
                                     {/* Date header */}
-                                    <div className="flex items-center gap-2 mb-2 sticky top-0 z-10 py-1" style={{ backgroundColor: isDarkMode ? 'rgb(30, 31, 38)' : 'white' }}>
+                                    <div className="flex items-center gap-2 mb-2 sticky top-0 z-10 py-1 bg-background">
                                         <Calendar size={12} className="text-primary" />
-                                        <span className={`text-[11px] font-bold uppercase tracking-wider ${textSub}`}>{group.label}</span>
-                                        <div className={`flex-1 h-px ${isDarkMode ? 'bg-dark-border/50' : 'bg-slate-200/80'}`} />
-                                        <span className={`text-[10px] font-medium ${textSub}`}>{group.items.length}</span>
+                                        <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{group.label}</span>
+                                        <div className="flex-1 h-px bg-border" />
+                                        <span className="text-[10px] font-medium text-muted-foreground">{group.items.length}</span>
                                     </div>
 
                                     {/* Timeline items */}
@@ -250,7 +255,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                                             return (
                                                 <div
                                                     key={item.id}
-                                                    className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all ${isDarkMode ? 'border-dark-border/60 hover:border-primary/20 hover:bg-primary/5' : 'border-slate-200 hover:border-primary/15 hover:bg-primary/5'}`}
+                                                    className="flex items-center gap-3 p-2.5 rounded-xl border transition-all border-border hover:border-primary/20 hover:bg-primary/5"
                                                 >
                                                     {/* Status indicator */}
                                                     <div className="shrink-0">
@@ -266,25 +271,25 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                                                     {/* Content */}
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center gap-2">
-                                                            <p className={`text-sm font-semibold truncate ${item.completed ? `line-through opacity-50 ${textSub}` : textMain}`}>
+                                                            <p className={`text-sm font-semibold truncate ${item.completed ? 'line-through opacity-50 text-muted-foreground' : 'text-foreground'}`}>
                                                                 {item.text}
                                                             </p>
                                                         </div>
                                                         <div className="flex items-center gap-2.5 mt-0.5">
                                                             {assignee && (
-                                                                <span className={`text-[10px] ${textSub} flex items-center gap-0.5`}>
+                                                                <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                                                                     <User size={9} />
                                                                     {assignee.name.split(' ')[0]}
                                                                 </span>
                                                             )}
                                                             {item.client && (
-                                                                <span className={`text-[10px] ${textSub} flex items-center gap-0.5`}>
+                                                                <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                                                                     <User size={9} />
                                                                     {item.client}
                                                                 </span>
                                                             )}
                                                             {item.startTime && (
-                                                                <span className={`text-[10px] ${textSub} flex items-center gap-0.5`}>
+                                                                <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                                                                     <Clock size={9} />
                                                                     {item.startTime}{item.endTime ? ` - ${item.endTime}` : ''}
                                                                 </span>
@@ -311,11 +316,27 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                                     </div>
                                 </div>
                             ))}
+
+                            {/* Load More */}
+                            {hasMore && (
+                                <div className="flex flex-col items-center gap-2 py-4">
+                                    <p className="text-[11px] text-muted-foreground">
+                                        Exibindo {visibleCount} de {filteredItems.length} registros
+                                    </p>
+                                    <button
+                                        onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
+                                        className="px-5 py-2 text-xs font-semibold rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors border border-primary/20"
+                                    >
+                                        Carregar mais {Math.min(PAGE_SIZE, filteredItems.length - visibleCount)} registros
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

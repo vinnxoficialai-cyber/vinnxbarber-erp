@@ -16,8 +16,10 @@ import { CustomDropdown } from '../components/CustomDropdown';
 import {
     saveSubscriptionPlan, deleteSubscriptionPlan, getSubscriptionPlans,
     saveSubscription, deleteSubscription, getSubscriptions,
-    getBillingConfig, saveBillingConfig
+    getBillingConfig, saveBillingConfig,
+    getSubscriptionInterests, updateSubscriptionInterestStatus, deleteSubscriptionInterest,
 } from '../lib/dataService';
+import type { SubscriptionInterest } from '../lib/dataService';
 import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription, tokenizeCreditCard, updateAsaasSubscription, cancelAsaasSubscription, configureAsaasWebhook, getAsaasWebhookStatus } from '../lib/asaasService';
 import type { BillingGatewayConfig } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
@@ -97,6 +99,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
     const [subModalSection, setSubModalSection] = useState(0);
     const SUB_SECTIONS = ['Dados', 'Pagamento', 'Venda & Contrato'];
     const [newBenefit, setNewBenefit] = useState('');
+    const [interests, setInterests] = useState<SubscriptionInterest[]>([]);
     const [svcForm, setSvcForm] = useState<PlanServiceRule>({ serviceId: '', discount: 100, monthlyLimit: undefined, commissionType: 'default', customCommission: undefined });
     const [prodForm, setProdForm] = useState<PlanProductRule>({ productId: '', discount: 10, monthlyLimit: undefined, commission: undefined });
     const [planModalSection, setPlanModalSection] = useState(0);
@@ -121,7 +124,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
     const [integrationTesting, setIntegrationTesting] = useState(false);
     const [showApiKey, setShowApiKey] = useState(false);
 
-    useEffect(() => { (async () => { setLoading(true); try { const [p, s, bc] = await Promise.all([getSubscriptionPlans(), getSubscriptions(), getBillingConfig()]); setPlans(p); setSubscriptions(s); if (bc) setIntegrationConfig(bc); } finally { setLoading(false); } })(); }, []);
+    useEffect(() => { (async () => { setLoading(true); try { const [p, s, bc, si] = await Promise.all([getSubscriptionPlans(), getSubscriptions(), getBillingConfig(), getSubscriptionInterests()]); setPlans(p); setSubscriptions(s); if (bc) setIntegrationConfig(bc); setInterests(si); } finally { setLoading(false); } })(); }, []);
     const formatCurrency = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
     // Unit-filtered subscriptions (Decisão #8: filtro direto por unitId)
@@ -1268,6 +1271,75 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
                         </tbody>
                     </table>
                 </div>
+
+                {/* ═══ LEADS (Subscription Interests) ═══ */}
+                {interests.length > 0 && (
+                    <div className="mt-8">
+                        <h3 className={`text-sm font-bold ${textMain} mb-4 flex items-center gap-2`}>
+                            <Target size={16} className="text-amber-500" />
+                            Leads de Interesse
+                            <span className="ml-2 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 text-[10px] font-bold">
+                                {interests.filter(i => i.status === 'pending').length} pendente{interests.filter(i => i.status === 'pending').length !== 1 ? 's' : ''}
+                            </span>
+                        </h3>
+                        <div className={`${bgCard} border ${borderCol} ${shadowClass} rounded-xl overflow-hidden`}>
+                            <table className="w-full text-left text-sm">
+                                <thead className={`bg-muted/30 text-foreground uppercase font-medium`}>
+                                    <tr><th className="px-6 py-3">Cliente</th><th className="px-6 py-3">Plano</th><th className="px-6 py-3">Status</th><th className="px-6 py-3">Data</th><th className="px-6 py-3 text-right">Ações</th></tr>
+                                </thead>
+                                <tbody className={`divide-y divide-border`}>
+                                    {interests.map(interest => {
+                                        const statusColors: Record<string, string> = {
+                                            pending: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+                                            contacted: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+                                            converted: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
+                                            dismissed: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
+                                        };
+                                        const statusLabels: Record<string, string> = { pending: 'Pendente', contacted: 'Contatado', converted: 'Convertido', dismissed: 'Descartado' };
+                                        return (
+                                            <tr key={interest.id} className="hover:bg-muted/30">
+                                                <td className={`px-6 py-3 font-medium ${textMain}`}>{interest.clientName || '—'}</td>
+                                                <td className={`px-6 py-3 ${textSub}`}>{interest.planName || 'Geral'}</td>
+                                                <td className="px-6 py-3">
+                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border inline-flex items-center gap-1 ${statusColors[interest.status] || ''}`}>
+                                                        {statusLabels[interest.status] || interest.status}
+                                                    </span>
+                                                </td>
+                                                <td className={`px-6 py-3 text-xs ${textSub}`}>{interest.createdAt ? new Date(interest.createdAt).toLocaleDateString('pt-BR') : '—'}</td>
+                                                <td className="px-6 py-3 text-right">
+                                                    <div className="flex justify-end gap-2">
+                                                        {interest.status === 'pending' && (
+                                                            <button onClick={async () => {
+                                                                await updateSubscriptionInterestStatus(interest.id, 'contacted');
+                                                                setInterests(p => p.map(i => i.id === interest.id ? { ...i, status: 'contacted' as const } : i));
+                                                            }} className="text-blue-500 hover:underline text-xs font-medium">Contatei</button>
+                                                        )}
+                                                        {(interest.status === 'pending' || interest.status === 'contacted') && (
+                                                            <button onClick={async () => {
+                                                                await updateSubscriptionInterestStatus(interest.id, 'converted');
+                                                                setInterests(p => p.map(i => i.id === interest.id ? { ...i, status: 'converted' as const } : i));
+                                                            }} className="text-emerald-500 hover:underline text-xs font-medium">Convertido</button>
+                                                        )}
+                                                        {interest.status !== 'dismissed' && interest.status !== 'converted' && (
+                                                            <button onClick={async () => {
+                                                                await updateSubscriptionInterestStatus(interest.id, 'dismissed');
+                                                                setInterests(p => p.map(i => i.id === interest.id ? { ...i, status: 'dismissed' as const } : i));
+                                                            }} className="text-gray-500 hover:underline text-xs font-medium">Descartar</button>
+                                                        )}
+                                                        <button onClick={async () => {
+                                                            await deleteSubscriptionInterest(interest.id);
+                                                            setInterests(p => p.filter(i => i.id !== interest.id));
+                                                        }} className="text-red-500 hover:underline text-xs font-medium"><Trash2 size={12} /></button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
             </>)}
 
             {/* ═══ TAB: DASHBOARD ═══ */}

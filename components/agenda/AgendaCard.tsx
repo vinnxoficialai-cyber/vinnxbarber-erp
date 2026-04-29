@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import {
-  GripVertical, Lock, User, Scissors, Plus, CheckCircle2, Crown
+  GripVertical, Lock, User, Plus, CheckCircle2, Crown, Clock
 } from 'lucide-react';
 import { CalendarEvent } from '../../types';
 import { getMinutes, STATUS_OPTIONS } from './agendaHelpers';
@@ -30,7 +30,7 @@ export const DroppableSlot: React.FC<{
     >
       <div className={`absolute inset-0 flex items-center justify-center transition-colors rounded-sm
         ${isOver
-          ? (isDarkMode ? 'bg-primary/15 ring-1 ring-primary/40' : 'bg-primary/10 ring-1 ring-primary/30')
+          ? 'bg-primary/15'
           : 'opacity-0 group-hover/slot:opacity-100 bg-primary/5'
         }`}
       >
@@ -43,6 +43,18 @@ export const DroppableSlot: React.FC<{
     </div>
   );
 };
+
+// ── Status-driven border + text colors ─────────────────────────
+const STATUS_STYLES: Record<string, { border: string; text: string }> = {
+  confirmed:  { border: 'border-emerald-500/50', text: 'text-emerald-400' },
+  arrived:    { border: 'border-amber-500/50',   text: 'text-amber-400' },
+  in_service: { border: 'border-blue-500/50',    text: 'text-blue-400' },
+  completed:  { border: 'border-slate-500/50',   text: 'text-slate-400' },
+  no_show:    { border: 'border-red-500/50',     text: 'text-red-400' },
+  cancelled:  { border: 'border-slate-600/50',   text: 'text-slate-500 line-through' },
+};
+
+const DEFAULT_STATUS = { border: 'border-emerald-500/50', text: 'text-emerald-400' };
 
 // ── Draggable Card ─────────────────────────────────────────────
 export const DraggableCard: React.FC<{
@@ -70,51 +82,21 @@ export const DraggableCard: React.FC<{
   const topPx = ((startMin - dayStartMin) / 60) * hourHeight;
   const heightPx = Math.max((duration / 60) * hourHeight, slotHeight);
 
-  const isAppointment = event.type === 'appointment';
-
-  // Status indicator colors
-  const statusColors: Record<string, string> = {
-    confirmed: 'bg-emerald-500',
-    arrived: 'bg-amber-500',
-    in_service: 'bg-blue-500',
-    completed: 'bg-slate-400',
-    no_show: 'bg-red-500',
-    cancelled: 'bg-slate-300',
-  };
-  const statusDot = statusColors[event.status || 'confirmed'] || 'bg-emerald-500';
-  const currentStatusLabel = STATUS_OPTIONS.find(s => s.value === (event.status || 'confirmed'))?.label || 'Confirmado';
-
-
-
-
-  const textClass = isBlocked
-    ? (isDarkMode ? 'text-slate-500' : 'text-slate-400')
-    : isAppointment
-      ? 'text-primary'
-      : 'text-blue-600 dark:text-blue-400';
-
-  // Enterprise card border color
-  const cardBorder = isBlocked
-    ? (isDarkMode ? 'border-slate-600/50' : 'border-slate-300')
-    : isAppointment
-      ? (isDarkMode ? 'border-primary/50' : 'border-primary/40')
-      : (isDarkMode ? 'border-blue-500/50' : 'border-blue-500/40');
-
-  const cardBg = isBlocked
-    ? (isDarkMode ? 'bg-dark-surface' : 'bg-slate-50')
-    : (isDarkMode ? 'bg-dark-surface' : 'bg-white');
+  const statusStyle = isBlocked
+    ? { border: 'border-border border-dashed', text: 'text-muted-foreground' }
+    : STATUS_STYLES[event.status || 'confirmed'] || DEFAULT_STATUS;
 
   const style: React.CSSProperties = {
     position: 'absolute',
     top: `${topPx}px`,
     height: `${heightPx}px`,
-    left: '4px',
-    right: '4px',
+    left: '3px',
+    right: '3px',
     zIndex: isDragging ? 50 : 10,
     opacity: isDragging ? 0.25 : 1,
     cursor: isBlocked ? 'default' : 'grab',
     transform: CSS.Translate.toString(transform),
-    transition: isDragging ? 'none' : 'box-shadow 0.15s ease, border-color 0.15s ease',
+    transition: isDragging ? 'none' : 'box-shadow 0.15s ease',
   };
 
   return (
@@ -124,90 +106,72 @@ export const DraggableCard: React.FC<{
       {...(isBlocked ? {} : listeners)}
       {...(isBlocked ? {} : attributes)}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className={`
-        rounded-xl border ${cardBorder} ${cardBg} px-3 py-2 overflow-hidden select-none
-        hover:shadow-xl hover:z-20 transition-all
-        ${isBlocked ? 'border-dashed' : ''}
-      `}
+      onContextMenu={(e) => {
+        if (!isBlocked && onStatusChange) {
+          e.preventDefault();
+          e.stopPropagation();
+          setShowStatusMenu(prev => !prev);
+        }
+      }}
+      className={`rounded-md border px-3 py-2 bg-card ${statusStyle.border} ${statusStyle.text} text-xs font-semibold overflow-hidden select-none hover:z-20 transition-all`}
     >
-      {/* Top row: Grip + Title + Status badge */}
-      <div className="flex items-center gap-2 leading-tight">
-        {!isBlocked && (
-          <GripVertical size={12} className={isDarkMode ? 'text-slate-600 shrink-0' : 'text-slate-300 shrink-0'} />
-        )}
-        {isBlocked && <Lock size={12} className={`shrink-0 ${textClass}`} />}
-        <span className={`text-[12px] font-bold truncate flex-1 ${textClass}`}>{event.title}</span>
-
-        {/* Status badge (clickable) */}
-        {!isBlocked && (
-          <div className="relative shrink-0">
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowStatusMenu(prev => !prev); }}
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold transition-all border
-                ${isDarkMode ? 'border-dark-border bg-black/25 hover:border-primary/40' : 'border-slate-200 bg-slate-50 hover:border-primary/30'}`}
-              title={currentStatusLabel}
-            >
-              <div className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
-              <span className={isDarkMode ? 'text-slate-300' : 'text-slate-600'}>{currentStatusLabel}</span>
-            </button>
-            {showStatusMenu && onStatusChange && (
-              <div
-                className={`absolute top-6 right-0 z-[60] w-40 rounded-xl border shadow-2xl py-1 ${isDarkMode ? 'bg-dark-surface border-dark-border' : 'bg-white border-slate-200'}`}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {STATUS_OPTIONS.map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStatusChange(event.id, opt.value);
-                      setShowStatusMenu(false);
-                    }}
-                    className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isDarkMode ? 'hover:bg-dark' : 'hover:bg-slate-50'} ${event.status === opt.value ? 'font-bold' : ''}`}
-                  >
-                    <div className={`w-2 h-2 rounded-full ${opt.color}`} />
-                    <span className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>{opt.label}</span>
-                    {event.status === opt.value && <CheckCircle2 size={10} className="ml-auto text-primary" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Time + Service row */}
-      <div className={`flex items-center gap-2 mt-1 text-[11px] font-semibold ${textClass} ${isDarkMode ? 'opacity-60' : 'opacity-55'}`}>
-        <span>{event.startTime} - {event.endTime}</span>
-        {event.serviceName && event.serviceName !== event.title && (
-          <>
-            <span className="opacity-40">•</span>
-            <span className="truncate flex items-center gap-1"><Scissors size={9} />{event.serviceName}</span>
-          </>
-        )}
+      {/* Line 1: Grip + Service/Title */}
+      <div className="flex items-center gap-1.5">
+        {isBlocked ? <Lock size={12} /> : <GripVertical size={12} />}
+        <span className="truncate flex-1">
+          {event.client
+            ? (event.serviceName || event.title?.replace(`${event.client} - `, '').replace(` - ${event.client}`, '') || event.title)
+            : event.title}
+        </span>
         {event.source && event.source !== 'manual' && (
-          <span className={`ml-auto px-1.5 py-px rounded-full text-[9px] font-bold uppercase tracking-wide ${isDarkMode ? 'bg-blue-500/15 text-blue-400' : 'bg-blue-500/10 text-blue-600'}`}>
-            {event.source === 'app' ? 'App' : 'Web'}
+          <span className="px-1 py-px rounded text-[9px] font-bold uppercase opacity-60 shrink-0">
+            {event.source === 'app' ? 'APP' : 'Web'}
           </span>
         )}
+        {isSubscriber && <Crown size={11} className="text-amber-400 shrink-0" />}
       </div>
 
-      {/* Client row + Subscriber badge */}
+      {/* Line 2: Time */}
+      <div className="text-[11px] opacity-60 mt-0.5 flex items-center gap-1">
+        <Clock size={10} />
+        {event.startTime} - {event.endTime}
+      </div>
+
+      {/* Line 3: Client */}
       {!isBlocked && event.client && (
-        <div className={`text-[11px] flex items-center gap-1.5 mt-1 font-medium ${textClass} ${isDarkMode ? 'opacity-55' : 'opacity-50'}`}>
-          <User size={10} className="shrink-0" /> <span className="truncate">{event.client}</span>
-          {isSubscriber && (
-            <span className={`ml-auto shrink-0 px-1.5 py-px rounded-full text-[9px] font-bold flex items-center gap-0.5 ${isDarkMode ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-500/10 text-amber-600'}`} title={planName || 'Assinante'}>
-              <Crown size={8} /> Assinante
-            </span>
-          )}
+        <div className="text-[11px] opacity-50 flex items-center gap-1 mt-0.5">
+          <User size={10} />{event.client}
         </div>
       )}
 
-      {/* Observation (only for >=60min slots) */}
+      {/* Line 4: Observation (long slots) */}
       {duration >= 60 && event.observation && (
-        <div className={`text-[10px] italic mt-1 truncate ${textClass} ${isDarkMode ? 'opacity-35' : 'opacity-30'}`}>
+        <div className="text-[9px] italic opacity-30 truncate mt-0.5">
           {event.observation}
+        </div>
+      )}
+
+      {/* Status context menu (right-click) */}
+      {showStatusMenu && onStatusChange && (
+        <div
+          className="absolute top-full left-0 mt-1 z-[60] w-36 rounded-lg border shadow-md py-1 bg-card border-border"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {STATUS_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              onClick={(e) => {
+                e.stopPropagation();
+                onStatusChange(event.id, opt.value);
+                setShowStatusMenu(false);
+              }}
+              className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors hover:bg-muted ${event.status === opt.value ? 'font-bold' : ''}`}
+            >
+              <div className={`w-2 h-2 rounded-full ${opt.color}`} />
+              <span className="text-foreground">{opt.label}</span>
+              {event.status === opt.value && <CheckCircle2 size={10} className="ml-auto text-primary" />}
+            </button>
+          ))}
         </div>
       )}
     </div>
