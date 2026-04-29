@@ -1327,6 +1327,20 @@ function PublicSiteApp() {
           return;
         }
         // Push notification is handled by DB trigger (trg_push_on_calendar_event)
+        // ── Increment subscription usage counter when plan discount was applied ──
+        if ((subDisc || 0) > 0 && clientSubscription?.id) {
+          try {
+            const newUses = (clientSubscription.usesThisMonth || 0) + 1;
+            await supabase.from("subscriptions").update({
+              usesThisMonth: newUses,
+              updatedAt: new Date().toISOString(),
+            }).eq("id", clientSubscription.id);
+            // Update local state so next booking in same session sees updated quota
+            setClientSubscription((prev: any) => prev ? { ...prev, usesThisMonth: newUses } : prev);
+          } catch (e) {
+            console.error('[Booking] Failed to increment subscription uses:', e);
+          }
+        }
         // Deduct referral credits after successful booking
         if (selection.isFromCreditRedemption && clientProfile) {
           const minRedemption = parseInt(g("referral.min_redemption", "50"), 10) || 50;
@@ -1530,6 +1544,7 @@ function PublicSiteApp() {
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
             btnBg={btnBg} btnText={btnText}
             authUser={authUser} clientProfile={clientProfile}
+            clientSubscription={clientSubscription} setClientSubscription={setClientSubscription}
             events={allEvents} availabilityEvents={availabilityEvents}
             units={units} barbers={barbers} services={services}
             schedules={schedules} closedDays={closedDays} maxAdvDays={maxAdvDays}
@@ -2584,7 +2599,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
 // ============================================================
 // HISTORICO VIEW (with details, reschedule, cancel, rate)
 // ============================================================
-function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, events, availabilityEvents, units, barbers, services, schedules, closedDays, maxAdvDays, slotInterval, onLogin, openModal, closeModal, onRefresh, setActiveView, updateSelection, resetSelection }: any) {
+function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, clientSubscription, setClientSubscription, events, availabilityEvents, units, barbers, services, schedules, closedDays, maxAdvDays, slotInterval, onLogin, openModal, closeModal, onRefresh, setActiveView, updateSelection, resetSelection }: any) {
   if (!authUser) {
     return (
       <div className="p-6 h-full flex flex-col items-center justify-center text-center min-h-[80vh]">
@@ -2753,6 +2768,19 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, e
       <CancelConfirmModal ev={ev} primary={primary} bgColor={bgColor} onBack={() => closeModal(() => showDetalhes(ev))}
         onConfirm={async () => {
           await supabase.from("calendar_events").update({ status: "cancelled", updatedAt: new Date().toISOString() }).eq("id", ev.id);
+          // ── Decrement subscription usage if this booking used plan discount ──
+          if ((ev as any).usedInPlan && clientSubscription?.id && (clientSubscription.usesThisMonth || 0) > 0) {
+            try {
+              const newUses = Math.max(0, (clientSubscription.usesThisMonth || 0) - 1);
+              await supabase.from("subscriptions").update({
+                usesThisMonth: newUses,
+                updatedAt: new Date().toISOString(),
+              }).eq("id", clientSubscription.id);
+              setClientSubscription((prev: any) => prev ? { ...prev, usesThisMonth: newUses } : prev);
+            } catch (e) {
+              console.error('[Cancel] Failed to decrement subscription uses:', e);
+            }
+          }
           closeModal(() => {
             openModal(
               <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
