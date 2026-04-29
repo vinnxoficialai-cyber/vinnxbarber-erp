@@ -3886,6 +3886,132 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     openModal(<PlanSelector />, "center");
   }
 
+  // ═══ COMPARAR E TROCAR PLANO (modal dedicado por plano) ═══
+  function showCompararPlanoModal(targetPlan: SubscriptionPlan) {
+    const currentPlan = subscription?.plan;
+    if (!currentPlan) return;
+    const currentPrice = Number(currentPlan.price) || 0;
+    const targetPrice = Number(targetPlan.price) || 0;
+    const diff = targetPrice - currentPrice;
+    const isUpgrade = diff > 0;
+    const currentBenefits = typeof currentPlan.benefits === 'string' ? JSON.parse(currentPlan.benefits || '[]') : (currentPlan.benefits || []);
+    const targetBenefits = typeof targetPlan.benefits === 'string' ? JSON.parse(targetPlan.benefits || '[]') : (targetPlan.benefits || []);
+    const currentServices = safeParseJsonArray(currentPlan.planServices);
+    const targetServices = safeParseJsonArray(targetPlan.planServices);
+
+    const CompareFlow = () => {
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [confirmed, setConfirmed] = useState(false);
+
+      const handleSwitch = async () => {
+        setLoading(true); setError('');
+        try {
+          await changePlan(targetPlan.id);
+          const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single();
+          if (s && onSubscriptionChange) onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined });
+          setConfirmed(true);
+        } catch (err: any) { setError(err.message || 'Erro ao trocar plano.'); setLoading(false); }
+      };
+
+      if (confirmed) {
+        return (
+          <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+            <Check className="w-14 h-14 mx-auto mb-4" style={{ color: primary }} />
+            <h3 className="text-2xl font-bold mb-2" style={{ color: primary }}>Plano Alterado!</h3>
+            <p className="text-gray-400 mb-6">Seu plano foi alterado para <strong className="text-white">{targetPlan.name}</strong>. A alteração será aplicada na próxima cobrança.</p>
+            <button onClick={() => closeModal()} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Entendido</button>
+          </div>
+        );
+      }
+
+      return (
+        <div className="p-6" style={{ borderRadius: "1rem" }}>
+          <h3 className="text-2xl font-bold text-center mb-1" style={{ color: primary }}>Trocar de Plano</h3>
+          <p className="text-gray-400 text-center text-sm mb-6">A alteração vale a partir da próxima cobrança</p>
+          {error && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{error}</div>}
+
+          {/* Comparativo visual */}
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            {/* Plano atual */}
+            <div className="p-4 rounded-xl border border-gray-700" style={{ backgroundColor: '#1a1a1a' }}>
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Plano atual</p>
+              <p className="text-sm font-bold text-white mb-1">{currentPlan.name}</p>
+              <p className="text-lg font-bold text-gray-400">R$ {currentPrice.toFixed(2)}<span className="text-xs text-gray-500">/mês</span></p>
+              {currentPlan.maxUsesPerMonth ? (
+                <p className="text-[10px] text-gray-500 mt-1">{currentPlan.maxUsesPerMonth} usos/mês</p>
+              ) : (
+                <p className="text-[10px] text-gray-500 mt-1">Uso ilimitado</p>
+              )}
+            </div>
+            {/* Novo plano */}
+            <div className="p-4 rounded-xl border-2" style={{ backgroundColor: '#111', borderColor: primary }}>
+              <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: primary }}>Novo plano</p>
+              <p className="text-sm font-bold text-white mb-1">{targetPlan.name}</p>
+              <p className="text-lg font-bold" style={{ color: primary }}>R$ {targetPrice.toFixed(2)}<span className="text-xs text-gray-400">/mês</span></p>
+              {targetPlan.maxUsesPerMonth ? (
+                <p className="text-[10px] text-gray-400 mt-1">{targetPlan.maxUsesPerMonth} usos/mês</p>
+              ) : (
+                <p className="text-[10px] text-gray-400 mt-1">Uso ilimitado</p>
+              )}
+            </div>
+          </div>
+
+          {/* Diferença de preço */}
+          <div className="p-3 rounded-xl mb-5 flex items-center justify-between" style={{ backgroundColor: isUpgrade ? '#22c55e10' : '#3b82f610', border: `1px solid ${isUpgrade ? '#22c55e25' : '#3b82f625'}` }}>
+            <span className="text-xs text-gray-400">Diferença mensal</span>
+            <span className="text-sm font-bold" style={{ color: isUpgrade ? '#4ade80' : '#60a5fa' }}>
+              {diff > 0 ? '+' : ''}{diff === 0 ? 'Mesmo valor' : `R$ ${diff.toFixed(2)}/mês`}
+            </span>
+          </div>
+
+          {/* Benefícios do novo plano */}
+          {targetBenefits.length > 0 && (
+            <div className="mb-5">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Benefícios inclusos</p>
+              <div className="space-y-1.5">
+                {targetBenefits.map((b: string, i: number) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 flex-shrink-0" style={{ color: primary }} />
+                    <span className="text-xs text-gray-300">{b}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Serviços com desconto do novo plano */}
+          {targetServices.length > 0 && (
+            <div className="mb-5">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Serviços com desconto</p>
+              <div className="space-y-1.5">
+                {targetServices.map((s: any, i: number) => {
+                  const svc = (services || []).find((sv: any) => sv.id === s.serviceId);
+                  return svc ? (
+                    <div key={i} className="flex items-center justify-between">
+                      <span className="text-xs text-gray-300">{svc.name}</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: `${primary}20`, color: primary }}>{Number(s.discount)}% off</span>
+                    </div>
+                  ) : null;
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => closeModal()} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+            <button disabled={loading} onClick={handleSwitch}
+              className="py-3 font-bold rounded-lg flex items-center justify-center gap-2"
+              style={{ backgroundColor: primary, color: bgColor }}>
+              {loading ? <Loader2 className="w-5 h-5 booking-spin" /> : <><ArrowUpDown className="w-4 h-4" />Trocar</>}
+            </button>
+          </div>
+        </div>
+      );
+    };
+    openModal(<CompareFlow />, "center");
+  }
+
   // ═══ REATIVAR ASSINATURA (F1) ═══
   function showReativarModal() {
     if (!subscription?.plan) return;
@@ -4045,7 +4171,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                     onClick={() => {
                       if (!authUser) { onLogin(); return; }
                       if (subscription && subscription.status !== 'cancelled') {
-                        showTrocarPlanoModal();
+                        showCompararPlanoModal(plan);
                       } else {
                         showAssinarModal(plan);
                       }
