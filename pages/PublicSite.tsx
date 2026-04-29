@@ -3776,7 +3776,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
               })}
             </div>
           )}
-          <div className="mt-6 pt-6 border-t border-gray-700">
+          <div className="mt-6">
             <button onClick={() => closeModal(() => showGerenciarModal())} className="w-full py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
           </div>
         </div>
