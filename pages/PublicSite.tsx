@@ -2544,7 +2544,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
           </div>
         </div>
       )}
-      {quotaExceeded && clientSubscription?.status === 'active' && (
+      {quotaExceeded && (clientSubscription?.status === 'active' || (clientSubscription?.status === 'cancelled' && clientSubscription?.endDate && new Date(clientSubscription.endDate) > new Date())) && (
         <div className="p-3 rounded-xl mb-4 flex items-start gap-3"
           style={{ backgroundColor: '#eab30812', border: '1px solid #eab30830' }}>
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#fbbf24' }} />
