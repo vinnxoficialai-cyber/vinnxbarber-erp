@@ -466,12 +466,17 @@ export default async function handler(req, res) {
           }
         }
 
+        // Calculate when benefits expire (end of current paid period)
+        // nextPaymentDate = when next charge WOULD have been = end of current period
+        const endDate = sub.nextPaymentDate || sub.endDate || new Date().toISOString();
+
         // Update local
         await sbQuery(`subscriptions?id=eq.${sub.id}`, {
           method: 'PATCH',
           body: JSON.stringify({
             status: 'cancelled',
             cancelledAt: new Date().toISOString(),
+            endDate: endDate,
             cancellationReason: reason || 'Cancelado pelo cliente via site',
             pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
             updatedAt: new Date().toISOString(),
@@ -479,7 +484,7 @@ export default async function handler(req, res) {
           prefer: 'return=minimal',
         });
 
-        return res.status(200).json({ success: true });
+        return res.status(200).json({ success: true, endDate });
       }
 
       // ═══ Pause My Subscription ═══

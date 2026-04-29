@@ -905,13 +905,21 @@ function PublicSiteApp() {
         .from("subscriptions")
         .select("*, subscription_plans(*)")
         .eq("clientId", data.id)
-        .in("status", ["active", "pending_payment", "overdue", "paused"])
-        .limit(1);
-      if (subs && subs.length > 0) {
-        const s = subs[0];
+        .in("status", ["active", "pending_payment", "overdue", "paused", "cancelled"])
+        .order("createdAt", { ascending: false })
+        .limit(5);
+      // Filter: keep active/paused/overdue/pending OR cancelled-but-still-in-paid-period
+      const now = new Date();
+      const validSub = subs?.find((s: any) => {
+        if (s.status !== 'cancelled') return true;
+        // Cancelled: only show if endDate is in the future (benefits still valid)
+        if (s.endDate && new Date(s.endDate) > now) return true;
+        return false;
+      });
+      if (validSub) {
         setClientSubscription({
-          ...s,
-          plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined,
+          ...validSub,
+          plan: validSub.subscription_plans ? { ...validSub.subscription_plans, price: Number(validSub.subscription_plans.price) || 0 } : undefined,
         });
       }
       // Load client events
@@ -2356,7 +2364,11 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
   let quotaMax = 0; // max uses per month
   let quotaUsed = 0; // uses this month
   try {
-    if (!isCreditRedemption && clientSubscription?.status === 'active' && clientSubscription?.plan) {
+    if (!isCreditRedemption && clientSubscription?.plan) {
+      const isActive = clientSubscription.status === 'active';
+      const isCancelledButValid = clientSubscription.status === 'cancelled'
+        && clientSubscription.endDate && new Date(clientSubscription.endDate) > new Date();
+      if ((isActive || isCancelledButValid) && clientSubscription.plan) {
       const plan = clientSubscription.plan;
 
       // Safely parse any JSONB field that might arrive as a JSON string
@@ -2393,6 +2405,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
             }
           }
         }
+      }
       }
     }
   } catch (e) {
@@ -3786,8 +3799,16 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
               setCancelling(true);
               setCancelError('');
               try {
-                await cancelMySubscription('Cancelado pelo cliente via site');
-                if (onSubscriptionChange) onSubscriptionChange(null);
+                const result = await cancelMySubscription('Cancelado pelo cliente via site');
+                // Keep subscription in state with cancelled status + endDate so UI shows remaining benefits
+                if (onSubscriptionChange && subscription) {
+                  onSubscriptionChange({
+                    ...subscription,
+                    status: 'cancelled',
+                    cancelledAt: new Date().toISOString(),
+                    endDate: (result as any)?.endDate || subscription.nextPaymentDate || subscription.endDate || new Date().toISOString(),
+                  });
+                }
                 closeModal();
               } catch (err: any) {
                 console.error('Cancel error:', err);
@@ -4401,12 +4422,27 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                   overdue: { bg: '#ef444433', color: '#f87171', label: 'Inadimplente' },
                   paused: { bg: '#eab30833', color: '#fbbf24', label: 'Pausado' },
                   pending_payment: { bg: '#3b82f633', color: '#60a5fa', label: 'Aguardando Pgto' },
+                  cancelled: { bg: '#ef444433', color: '#f87171', label: 'Cancelado' },
                 };
                 const st = statusMap[subscription.status] || statusMap.pending_payment;
                 return <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>;
               })()}
             </div>
-            {/* ═══ Alert banner for overdue/paused ═══ */}
+            {/* ═══ Alert banner for overdue/paused/cancelled ═══ */}
+            {subscription.status === 'cancelled' && subscription.endDate && (
+              <div className="p-4 rounded-xl mt-4 flex items-start gap-3"
+                style={{ backgroundColor: '#ef444415', border: '1px solid #ef444440' }}>
+                <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#f87171' }} />
+                <div className="flex-1">
+                  <p className="text-sm font-bold" style={{ color: '#f87171' }}>Assinatura cancelada</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Seus benefícios continuam válidos até{' '}
+                    <strong className="text-white">{new Date(subscription.endDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</strong>.
+                    Após essa data, os descontos do plano deixarão de ser aplicados.
+                  </p>
+                </div>
+              </div>
+            )}
             {(subscription.status === 'overdue' || subscription.status === 'paused') && (
               <div className="p-4 rounded-xl mt-4 flex items-start gap-3"
                 style={{ backgroundColor: subscription.status === 'overdue' ? '#ef444415' : '#eab30815',
@@ -4490,9 +4526,19 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                 Regularizar Assinatura
               </button>
             )}
+            {subscription.status === 'cancelled' && (
+              <button onClick={showReativarModal}
+                className="w-full py-2.5 text-sm font-bold rounded-lg mt-4 flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
+                style={{ backgroundColor: primary, color: bgColor }}>
+                <RefreshCw className="w-4 h-4" />
+                Reassinar Plano
+              </button>
+            )}
             <div className="border-t border-gray-700 my-5" />
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={showGerenciarModal} className="py-2 text-sm font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Gerenciar</button>
+            <div className={`grid ${subscription.status === 'cancelled' ? '' : 'grid-cols-2'} gap-3`}>
+              {subscription.status !== 'cancelled' && (
+                <button onClick={showGerenciarModal} className="py-2 text-sm font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Gerenciar</button>
+              )}
               <button onClick={showBeneficiosModal} className="py-2 text-sm font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Benefícios</button>
             </div>
           </div>
