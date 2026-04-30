@@ -170,16 +170,18 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'Você já possui uma assinatura ativa. Cancele a atual antes de assinar um novo plano.' });
         }
 
-        // 2c. Check for existing overdue subscription to reuse (same pattern as admin)
+        // 2c. Check for existing overdue/cancelled subscription to reuse (same pattern as admin)
         let reuseSubId = null;
         let oldGatewaySubId = null;
+        let oldSubStatus = null;
         const overdueRes = await sbQuery(
-          `subscriptions?clientId=eq.${client.id}&status=eq.overdue${resolvedUnitId ? `&unitId=eq.${resolvedUnitId}` : ''}&select=id,gatewaySubscriptionId&order=createdAt.desc&limit=1`
+          `subscriptions?clientId=eq.${client.id}&status=in.(overdue,cancelled)${resolvedUnitId ? `&unitId=eq.${resolvedUnitId}` : ''}&select=id,status,gatewaySubscriptionId&order=createdAt.desc&limit=1`
         );
         const overdueSubs = await overdueRes.json();
         if (overdueSubs?.length > 0) {
           reuseSubId = overdueSubs[0].id;
           oldGatewaySubId = overdueSubs[0].gatewaySubscriptionId || null;
+          oldSubStatus = overdueSubs[0].status;
         }
 
         // 3. Get/save CPF
@@ -248,6 +250,15 @@ export default async function handler(req, res) {
             autoRenew: true,
             unitId: resolvedUnitId,
             saleChannel: 'site',
+            // Clear stale fields from previous subscription lifecycle
+            cancelledAt: null,
+            endDate: null,
+            cancellationReason: null,
+            failedAttempts: 0,
+            lastPaymentDate: null,
+            nextPaymentDate: null,
+            pausedAt: null,
+            lastWebhookAt: null,
             updatedAt: now,
         };
 
@@ -315,10 +326,14 @@ export default async function handler(req, res) {
           if (!isPermissionError) {
             // Card error — revert subscription and return error
             if (reuseSubId) {
-              // Revert reused sub back to overdue (don't delete existing record)
+              // Revert reused sub back to original status (don't delete existing record)
               await sbQuery(`subscriptions?id=eq.${subscriptionId}`, {
                 method: 'PATCH',
-                body: JSON.stringify({ status: 'overdue', updatedAt: new Date().toISOString() }),
+                body: JSON.stringify({
+                  status: oldSubStatus || 'overdue',
+                  cancelledAt: oldSubStatus === 'cancelled' ? new Date().toISOString() : null,
+                  updatedAt: new Date().toISOString(),
+                }),
                 prefer: 'return=minimal',
               });
             } else {
@@ -365,10 +380,14 @@ export default async function handler(req, res) {
         try {
           asaasSub = await asaasRequest(config, '/subscriptions', 'POST', subPayload);
         } catch (subErr) {
-          // Subscription creation failed — mark as overdue
+          // Subscription creation failed — revert to original status
           await sbQuery(`subscriptions?id=eq.${subscriptionId}`, {
             method: 'PATCH',
-            body: JSON.stringify({ status: 'overdue', updatedAt: new Date().toISOString() }),
+            body: JSON.stringify({
+              status: reuseSubId ? (oldSubStatus || 'overdue') : 'overdue',
+              cancelledAt: (reuseSubId && oldSubStatus === 'cancelled') ? new Date().toISOString() : null,
+              updatedAt: new Date().toISOString(),
+            }),
             prefer: 'return=minimal',
           });
           return res.status(400).json({
@@ -467,8 +486,11 @@ export default async function handler(req, res) {
         }
 
         // Calculate when benefits expire (end of current paid period)
-        // nextPaymentDate = when next charge WOULD have been = end of current period
-        const endDate = sub.nextPaymentDate || sub.endDate || new Date().toISOString();
+        // Only grant benefit period if there was at least one confirmed payment
+        const hadSuccessfulPayment = !!sub.lastPaymentDate;
+        const endDate = hadSuccessfulPayment
+          ? (sub.nextPaymentDate || sub.endDate || new Date().toISOString())
+          : new Date().toISOString(); // Never paid → no benefit period
 
         // Update local
         await sbQuery(`subscriptions?id=eq.${sub.id}`, {
@@ -559,6 +581,9 @@ export default async function handler(req, res) {
         const config = await getConfig();
         if (!config) return res.status(500).json({ error: 'Gateway não configurado.' });
 
+        // Resolve remoteIp before tokenization (required by ASAAS)
+        const remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.headers['x-real-ip'] || '127.0.0.1';
+
         // 1. Tokenize new card
         const tokenPayload = {
           customer: sub.gatewayCustomerId,
@@ -577,6 +602,7 @@ export default async function handler(req, res) {
             postalCode: holderInfo.postalCode?.replace(/\D/g, '') || '00000000',
             addressNumber: holderInfo.addressNumber || '0',
           },
+          remoteIp,
         };
 
         let token;
@@ -590,7 +616,6 @@ export default async function handler(req, res) {
         }
 
         // 2. Update subscription credit card via dedicated endpoint
-        const remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.headers['x-real-ip'] || '127.0.0.1';
         const updateCardPayload = {
           creditCardToken: token.creditCardToken,
           remoteIp,
@@ -632,13 +657,13 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'Dados do cartão são obrigatórios para reativar.' });
         }
 
-        // Find paused or overdue subscription
+        // Find paused, overdue, or cancelled subscription
         const subRes = await sbQuery(
-          `subscriptions?clientId=eq.${client.id}&status=in.(paused,overdue)&select=*,subscription_plans(*)&order=createdAt.desc&limit=1`
+          `subscriptions?clientId=eq.${client.id}&status=in.(paused,overdue,cancelled)&select=*,subscription_plans(*)&order=createdAt.desc&limit=1`
         );
         const subs = await subRes.json();
         const sub = subs?.[0];
-        if (!sub) return res.status(400).json({ error: 'Nenhuma assinatura pausada ou inadimplente encontrada.' });
+        if (!sub) return res.status(400).json({ error: 'Nenhuma assinatura encontrada para reativar.' });
 
         const plan = sub.subscription_plans;
         if (!plan) return res.status(400).json({ error: 'Plano da assinatura não encontrado.' });
@@ -660,38 +685,56 @@ export default async function handler(req, res) {
           customerId = asaasCustomer.id;
         }
 
-        // Tokenize card
-        const tokenPayload = {
-          customer: customerId,
-          creditCard: {
-            holderName: creditCard.holderName,
-            number: creditCard.number.replace(/\D/g, ''),
-            expiryMonth: creditCard.expiryMonth,
-            expiryYear: creditCard.expiryYear,
-            ccv: creditCard.ccv,
-          },
-          creditCardHolderInfo: {
-            name: creditCard.holderName,
-            cpfCnpj: holderInfo.cpfCnpj.replace(/\D/g, ''),
-            email: holderInfo.email || client.email,
-            phone: holderInfo.phone?.replace(/\D/g, '') || client.phone?.replace(/\D/g, ''),
-            postalCode: holderInfo.postalCode?.replace(/\D/g, '') || '00000000',
-            addressNumber: holderInfo.addressNumber || '0',
-          },
+        // Resolve remoteIp BEFORE tokenization (required by ASAAS)
+        const remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.headers['x-real-ip'] || '127.0.0.1';
+
+        // Prepare card data (used for tokenize and as fallback for raw card)
+        const cardData = {
+          holderName: creditCard.holderName,
+          number: creditCard.number.replace(/\D/g, ''),
+          expiryMonth: creditCard.expiryMonth,
+          expiryYear: creditCard.expiryYear,
+          ccv: creditCard.ccv,
+        };
+        const holderData = {
+          name: creditCard.holderName,
+          cpfCnpj: holderInfo.cpfCnpj.replace(/\D/g, ''),
+          email: holderInfo.email || client.email,
+          phone: holderInfo.phone?.replace(/\D/g, '') || client.phone?.replace(/\D/g, ''),
+          postalCode: holderInfo.postalCode?.replace(/\D/g, '') || '00000000',
+          addressNumber: holderInfo.addressNumber || '0',
         };
 
-        let token;
+        // Tokenize card (with permission error fallback)
+        let creditCardToken;
+        let tokenBrand = '';
+        let tokenLast4 = '';
+
         try {
-          token = await asaasRequest(config, '/creditCard/tokenize', 'POST', tokenPayload);
-        } catch (tokErr) {
-          return res.status(400).json({
-            error: tokErr.message || 'Erro ao processar cartão.',
-            errorCode: 'TOKENIZATION_FAILED',
+          const tokenResult = await asaasRequest(config, '/creditCard/tokenize', 'POST', {
+            customer: customerId,
+            creditCard: cardData,
+            creditCardHolderInfo: holderData,
+            remoteIp,
           });
+          creditCardToken = tokenResult.creditCardToken;
+          tokenBrand = tokenResult.creditCardBrand || '';
+          tokenLast4 = tokenResult.creditCardNumber || '';
+          console.log(`[asaas-public] Card tokenized for reactivation: ${tokenBrand} ${tokenLast4}`);
+        } catch (tokErr) {
+          const isPermissionError = tokErr.message?.toLowerCase()?.includes('permiss')
+            || tokErr.message?.toLowerCase()?.includes('permission');
+          if (!isPermissionError) {
+            return res.status(400).json({
+              error: tokErr.message || 'Erro ao processar cartão.',
+              errorCode: 'TOKENIZATION_FAILED',
+            });
+          }
+          console.log('[asaas-public] Tokenization not available for reactivation, using raw card data');
         }
 
         // Cancel old ASAAS subscription if exists (prevents duplicates)
-        // For paused subs, gateway was already cancelled — 404 is expected and silenced
+        // For paused/cancelled subs, gateway may already be cancelled — 404 is expected and silenced
         if (sub.gatewaySubscriptionId) {
           try {
             await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'DELETE');
@@ -705,7 +748,6 @@ export default async function handler(req, res) {
 
         // Create new subscription in ASAAS
         const planPrice = Number(plan.creditPrice) || Number(plan.price) || 0;
-        const remoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.headers['x-real-ip'] || '127.0.0.1';
         const recurrenceMap = { monthly: 'MONTHLY', quarterly: 'QUARTERLY', semiannual: 'SEMIANNUALLY', annual: 'YEARLY' };
         const subPayload = {
           customer: customerId,
@@ -714,10 +756,18 @@ export default async function handler(req, res) {
           nextDueDate: new Date().toISOString().split('T')[0],
           cycle: recurrenceMap[plan.recurrence] || 'MONTHLY',
           description: `Assinatura ${plan.name} (reativada)`,
-          creditCardToken: token.creditCardToken,
-          remoteIp,
           externalReference: sub.id,
         };
+
+        // Use token if available, otherwise raw card data
+        if (creditCardToken) {
+          subPayload.creditCardToken = creditCardToken;
+          subPayload.remoteIp = remoteIp;
+        } else {
+          subPayload.creditCard = cardData;
+          subPayload.creditCardHolderInfo = holderData;
+          subPayload.remoteIp = remoteIp;
+        }
 
         let asaasSub;
         try {
@@ -729,17 +779,43 @@ export default async function handler(req, res) {
           });
         }
 
+        // Check first payment status (align with createSubscription flow)
+        let firstPaymentStatus = null;
+        try {
+          const payments = await asaasRequest(config, `/subscriptions/${asaasSub.id}/payments?limit=1`, 'GET');
+          if (payments?.data?.length > 0) {
+            firstPaymentStatus = payments.data[0].status;
+          }
+        } catch (e) {
+          console.log('[asaas-public] Could not fetch reactivation payment:', e.message);
+        }
+
+        let reactivatedStatus = 'pending_payment';
+        let reactivatedLastPayment = null;
+        if (firstPaymentStatus === 'CONFIRMED' || firstPaymentStatus === 'RECEIVED') {
+          reactivatedStatus = 'active';
+          reactivatedLastPayment = new Date().toISOString();
+        } else if (firstPaymentStatus === 'REFUSED' || firstPaymentStatus === 'OVERDUE') {
+          reactivatedStatus = 'overdue';
+        }
+
         // Update local subscription
         const last4 = creditCard.number?.replace(/\D/g, '').slice(-4) || '';
+        const finalBrand = tokenBrand || (creditCard.number?.replace(/\D/g, '').substring(0, 1) === '4' ? 'VISA' : 'MASTERCARD');
         await sbQuery(`subscriptions?id=eq.${sub.id}`, {
           method: 'PATCH',
           body: JSON.stringify({
-            status: 'active',
+            status: reactivatedStatus,
             gatewaySubscriptionId: asaasSub.id,
             gatewayCustomerId: customerId,
-            cardBrand: token.creditCardBrand || (creditCard.number?.replace(/\D/g, '').substring(0, 1) === '4' ? 'VISA' : 'MASTERCARD'),
+            cardBrand: finalBrand,
             cardLast4: last4,
+            // Clear stale cancellation/pause fields
+            cancelledAt: null,
+            endDate: null,
+            cancellationReason: null,
             pausedAt: null,
+            lastPaymentDate: reactivatedLastPayment,
             failedAttempts: 0,
             usesThisMonth: 0,
             startDate: new Date().toISOString(),
@@ -749,12 +825,11 @@ export default async function handler(req, res) {
           prefer: 'return=minimal',
         });
 
-        const finalBrand = token.creditCardBrand || (creditCard.number?.replace(/\D/g, '').substring(0, 1) === '4' ? 'VISA' : 'MASTERCARD');
         return res.status(200).json({
           success: true,
           subscriptionId: sub.id,
-          paymentStatus: 'CONFIRMED',
-          finalStatus: 'active',
+          paymentStatus: firstPaymentStatus || 'PENDING',
+          finalStatus: reactivatedStatus,
           cardBrand: finalBrand,
           cardLast4: last4,
           planName: plan.name,

@@ -344,13 +344,13 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
                 toast.error('Assinatura existente', 'Este cliente já possui uma assinatura ativa nesta unidade.');
                 return;
             }
-            // If there's an overdue sub for this client (e.g. card was refused), reuse its ID
-            const overdueExisting = subscriptions.find(s =>
+            // If there's an overdue/cancelled sub for this client, reuse its ID (prevents duplicates)
+            const reusableExisting = subscriptions.find(s =>
                 s.clientId === subForm.clientId &&
-                s.status === 'overdue' &&
+                (s.status === 'overdue' || s.status === 'cancelled') &&
                 s.unitId === targetUnit
             );
-            reuseSubId = overdueExisting?.id;
+            reuseSubId = reusableExisting?.id;
         }
 
         // ═══ PAYMENT VALIDATION (when ASAAS is configured) ═══

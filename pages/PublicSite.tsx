@@ -1667,6 +1667,9 @@ function PublicSiteApp() {
               {item.key === "historico" && needsReview && g("review.enabled", "true") !== "false" && g("review.show_badge", "true") !== "false" && (
                 <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#ef4444" }} />
               )}
+              {item.key === "planos" && clientSubscription && (clientSubscription.status === 'overdue' || clientSubscription.status === 'cancelled') && (
+                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full" style={{ backgroundColor: clientSubscription.status === 'overdue' ? "#ef4444" : "#f59e0b" }} />
+              )}
             </div>
             {navbarShowLabels && <span>{item.label}</span>}
           </div>
@@ -3968,6 +3971,11 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
             <p className="text-sm font-bold text-white">R$ {Number(subscription.plan.price).toFixed(2)}<span className="text-xs text-gray-500 font-normal">/mês</span></p>
             {isPaused && <span className="text-[10px] font-bold text-amber-400 flex items-center justify-end gap-1 mt-0.5"><Pause className="w-2.5 h-2.5" />Pausado</span>}
             {isOverdue && <span className="text-[10px] font-bold text-red-400 flex items-center justify-end gap-1 mt-0.5"><AlertTriangle className="w-2.5 h-2.5" />Inadimplente</span>}
+            {subscription.nextPaymentDate && !isPaused && !isOverdue && (
+              <p className="text-[10px] text-gray-500 mt-1 flex items-center justify-end gap-1">
+                <Calendar className="w-2.5 h-2.5" />Próxima: {new Date(subscription.nextPaymentDate).toLocaleDateString('pt-BR')}
+              </p>
+            )}
             {subscription.pendingPlanId && <span className="text-[10px] font-bold text-blue-400 flex items-center justify-end gap-1 mt-0.5"><ArrowUpDown className="w-2.5 h-2.5" />Troca agendada → {subscription.pendingPlanName}</span>}
           </div>
         </div>
@@ -4085,7 +4093,19 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
             holderInfo: { cpfCnpj: form.cpf, email: clientProfile?.email, phone: clientProfile?.phone, postalCode: form.cep.replace(/\D/g, ''), addressNumber: form.addressNumber || '0' },
           });
           if (onSubscriptionChange && subscription) onSubscriptionChange({ ...subscription, cardBrand: result.cardBrand, cardLast4: result.cardLast4 });
-          closeModal();
+          closeModal(() => openModal(
+            <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
+              <div className="w-14 h-14 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ backgroundColor: '#22c55e20' }}>
+                <Check className="w-7 h-7 text-green-400" />
+              </div>
+              <h3 className="text-xl font-bold text-green-400 mb-2">Cartão Atualizado!</h3>
+              <p className="text-gray-400 text-sm mb-6">
+                Agora usando <strong className="text-white">{result.cardBrand} •••• {result.cardLast4}</strong>
+              </p>
+              <button onClick={() => closeModal()} className="w-full py-3 font-bold rounded-lg"
+                style={{ backgroundColor: primary, color: bgColor }}>Entendido</button>
+            </div>, "center"
+          ));
         } catch (err: any) { setError(err.message || 'Erro ao atualizar cartão.'); setLoading(false); }
       };
       return (
@@ -4413,6 +4433,8 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     );
   }
 
+  const isSuspended = subscription?.status === 'overdue' || subscription?.status === 'paused';
+
   return (
     <div className="p-6" style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
       {subscription && subscription.plan && (
@@ -4448,6 +4470,15 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                     <strong className="text-white">{new Date(subscription.endDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</strong>.
                     Após essa data, os descontos do plano deixarão de ser aplicados.
                   </p>
+                  {(() => {
+                    const daysLeft = Math.ceil((new Date(subscription.endDate).getTime() - Date.now()) / 86400000);
+                    return daysLeft > 0 ? (
+                      <div className="mt-3 flex items-center gap-2 p-2 rounded-lg" style={{ backgroundColor: '#ef444410' }}>
+                        <span className="text-lg font-bold" style={{ color: primary }}>{daysLeft}</span>
+                        <span className="text-xs text-gray-400">{daysLeft === 1 ? 'dia restante' : 'dias restantes'}</span>
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               </div>
             )}
@@ -4477,12 +4508,13 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                       const isUsed = i < (subscription.usesThisMonth || 0);
                       return (
                         <div key={i} className="booking-service-icon" style={{
-                          backgroundColor: isUsed ? "#374151" : "#1e1e1e",
-                          color: isUsed ? "#9ca3af" : primary,
-                          border: isUsed ? "none" : `1px solid ${primary}`,
+                          backgroundColor: isSuspended ? "#2a2a2a" : (isUsed ? "#374151" : "#1e1e1e"),
+                          color: isSuspended ? "#555" : (isUsed ? "#9ca3af" : primary),
+                          border: isSuspended ? "1px solid #333" : (isUsed ? "none" : `1px solid ${primary}`),
+                          opacity: isSuspended ? 0.5 : 1,
                         }}>
                           <Scissors className="w-5 h-5" />
-                          <span className="text-xs mt-1">{isUsed ? "Usado" : "Livre"}</span>
+                          <span className="text-xs mt-1">{isSuspended ? "—" : (isUsed ? "Usado" : "Livre")}</span>
                         </div>
                       );
                     })}
@@ -4493,7 +4525,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                       <span>{subscription.usesThisMonth || 0} de {subscription.plan.maxUsesPerMonth}</span>
                     </div>
                     <div className="w-full bg-gray-700 rounded-full h-2.5">
-                      <div className="h-2.5 rounded-full booking-progress-bar" style={{ backgroundColor: primary, width: `${Math.min(100, ((subscription.usesThisMonth || 0) / subscription.plan.maxUsesPerMonth) * 100)}%` }} />
+                      <div className="h-2.5 rounded-full booking-progress-bar" style={{ backgroundColor: isSuspended ? "#555" : primary, width: `${Math.min(100, ((subscription.usesThisMonth || 0) / subscription.plan.maxUsesPerMonth) * 100)}%` }} />
                     </div>
                   </div>
                 </>
@@ -4507,6 +4539,16 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                 </div>
               )}
             </div>
+            {/* Next payment date */}
+            {subscription.nextPaymentDate && (subscription.status === 'active' || subscription.status === 'pending_payment') && (
+              <div className="flex items-center gap-2 mt-4 p-3 rounded-lg" style={{ backgroundColor: '#2a2a2a' }}>
+                <Calendar className="w-4 h-4 text-gray-400" />
+                <span className="text-sm text-gray-300">Próxima cobrança</span>
+                <span className="ml-auto text-sm font-semibold text-white">
+                  {new Date(subscription.nextPaymentDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                </span>
+              </div>
+            )}
             {/* Card on file info */}
             {subscription.cardBrand && (
               <div className="flex items-center gap-2 mt-4 p-3 rounded-lg" style={{ backgroundColor: '#2a2a2a' }}>
@@ -4543,6 +4585,11 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
               </button>
             )}
             <div className="border-t border-gray-700 my-5" />
+            {subscription.startDate && subscription.status !== 'cancelled' && (
+              <p className="text-[10px] text-gray-500 text-center mb-3">
+                Membro desde {new Date(subscription.startDate).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+              </p>
+            )}
             <div className={`grid ${subscription.status === 'cancelled' ? '' : 'grid-cols-2'} gap-3`}>
               {subscription.status !== 'cancelled' && (
                 <button onClick={showGerenciarModal} className="py-2 text-sm font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Gerenciar</button>
@@ -4588,6 +4635,10 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                   <button disabled={(isCurrent && subscription?.status !== 'cancelled') || isPending}
                     onClick={() => {
                       if (!authUser) { onLogin(); return; }
+                      if (subscription && subscription.status === 'overdue') {
+                        showRegularizarModal();
+                        return;
+                      }
                       if (subscription && subscription.status !== 'cancelled') {
                         showCompararPlanoModal(plan);
                       } else {
@@ -4596,7 +4647,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                     }}
                     className="w-full py-3 font-bold rounded-lg transition-colors"
                     style={{ backgroundColor: (isCurrent && subscription?.status !== 'cancelled') || isPending ? "#4a4a4a" : primary, color: (isCurrent && subscription?.status !== 'cancelled') || isPending ? "#888" : bgColor, cursor: (isCurrent && subscription?.status !== 'cancelled') || isPending ? "not-allowed" : "pointer" }}>
-                    {(isCurrent && subscription?.status !== 'cancelled') ? "Seu Plano Atual" : isPending ? "Troca Agendada ✓" : (subscription && subscription.status !== 'cancelled') ? "Trocar para este Plano" : "Assinar Plano"}
+                    {(isCurrent && subscription?.status !== 'cancelled') ? "Seu Plano Atual" : isPending ? "Troca Agendada ✓" : subscription?.status === 'overdue' ? "Regularize para trocar" : (subscription && subscription.status !== 'cancelled') ? "Trocar para este Plano" : "Assinar Plano"}
                   </button>
                 )}
               </div>
@@ -4682,6 +4733,14 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, clie
           if (!saveData.birthday?.trim()) delete saveData.birthday;
 
           const { error: updateErr } = await supabase.from("clients").update({ ...saveData, updatedAt: new Date().toISOString() }).eq("id", clientProfile.id);
+
+          // Sync clientName in subscriptions if name changed (prevents admin panel showing old names)
+          if (!updateErr && saveData.name && saveData.name !== clientProfile.name) {
+            await supabase.from("subscriptions").update({
+              clientName: saveData.name,
+              updatedAt: new Date().toISOString(),
+            }).eq("clientId", clientProfile.id);
+          }
 
           if (updateErr) {
             console.error("[Profile Update] Error:", updateErr);
