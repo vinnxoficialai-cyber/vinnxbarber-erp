@@ -143,6 +143,28 @@ export default async function handler(req, res) {
               console.log(`[asaas-webhook] Applied pending plan change for sub ${subscription.id}`);
             }
           }
+          // Calculate next payment date proactively (avoids stale date between CONFIRMED and next CREATED)
+          if (payment.dueDate) {
+            try {
+              const planId = updates.planId || subscription.planId;
+              const planRes = await sbQuery(
+                `subscription_plans?id=eq.${planId}&select=recurrence&limit=1`,
+                { headers: { Prefer: 'return=representation' } }
+              );
+              const plans = await planRes.json();
+              const recurrence = plans?.[0]?.recurrence || 'monthly';
+              const nextDate = new Date(payment.dueDate);
+              switch (recurrence) {
+                case 'quarterly': nextDate.setMonth(nextDate.getMonth() + 3); break;
+                case 'semiannual': nextDate.setMonth(nextDate.getMonth() + 6); break;
+                case 'annual': nextDate.setFullYear(nextDate.getFullYear() + 1); break;
+                default: nextDate.setMonth(nextDate.getMonth() + 1); // monthly
+              }
+              updates.nextPaymentDate = nextDate.toISOString().split('T')[0];
+            } catch (e) {
+              console.warn('[asaas-webhook] Could not calculate next payment date:', e.message);
+            }
+          }
           break;
 
         case 'PAYMENT_OVERDUE':
