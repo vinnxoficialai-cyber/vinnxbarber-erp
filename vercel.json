@@ -11,10 +11,6 @@
         {
             "path": "/api/push-cron-daily",
             "schedule": "0 12 * * *"
-        },
-        {
-            "path": "/api/push-cron-hourly",
-            "schedule": "0 8-22 * * *"
         }
     ],
     "rewrites": [
