@@ -36,7 +36,32 @@ fetch("/Quando.json").then(r => r.json()).then(d => { _lottieSuccessData = d; })
 function LottieSuccess({ primary }: { primary: string }) {
   const [data, setData] = useState(_lottieSuccessData);
   useEffect(() => { if (!data && !_lottieSuccessData) { fetch("/Quando.json").then(r => r.json()).then(d => { _lottieSuccessData = d; setData(d); }).catch(() => {}); } else if (!data && _lottieSuccessData) { setData(_lottieSuccessData); } }, []);
-  return data ? <Lottie animationData={data} loop={false} style={{ width: 120, height: 120, margin: "0 auto 8px" }} /> : <Check className="w-16 h-16 mx-auto mb-4" style={{ color: primary }} />;
+  const colorized = useMemo(() => {
+    if (!data) return null;
+    // Convert hex color to normalized RGB [0-1]
+    const hex = primary.replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16) / 255;
+    const g = parseInt(hex.substring(2, 4), 16) / 255;
+    const b = parseInt(hex.substring(4, 6), 16) / 255;
+    const json = JSON.parse(JSON.stringify(data));
+    // Replace colors in all layers
+    for (const layer of (json.layers || [])) {
+      for (const shape of (layer.shapes || [])) {
+        for (const it of (shape.it || [])) {
+          // Stroke colors (white [1,1,1,1] → primary)
+          if (it.ty === 'st' && it.c?.a === 0 && it.c.k?.[0] === 1 && it.c.k?.[1] === 1 && it.c.k?.[2] === 1) {
+            it.c.k = [r, g, b, 1];
+          }
+          // Fill colors (gray dots → primary with slight transparency)
+          if (it.ty === 'fl' && it.c?.a === 0) {
+            it.c.k = [r, g, b, 1];
+          }
+        }
+      }
+    }
+    return json;
+  }, [data, primary]);
+  return colorized ? <Lottie animationData={colorized} loop={false} style={{ width: 80, height: 80, margin: "0 auto 8px" }} /> : <Check className="w-12 h-12 mx-auto mb-4" style={{ color: primary }} />;
 }
 
 // Capture beforeinstallprompt at module level (fires before React mounts)
