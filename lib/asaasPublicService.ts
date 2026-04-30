@@ -165,3 +165,21 @@ export async function cancelPendingPlanChange(): Promise<{ success: boolean }> {
 export async function retryPayment(): Promise<{ success: boolean }> {
     return callApi('retryPayment');
 }
+
+// N1: Sync client profile data to ASAAS (fire-and-forget after profile save)
+export async function syncCustomerData(data: {
+    name?: string;
+    email?: string;
+    phone?: string;
+}): Promise<{ success: boolean; synced?: string[]; skipped?: boolean }> {
+    return callApi('syncCustomerData', data);
+}
+
+// Update auth profile in Supabase Auth (email + user_metadata via service_role)
+export async function updateAuthEmail(data: {
+    newEmail?: string;
+    name?: string;
+    phone?: string;
+}): Promise<{ success: boolean; updated?: string[]; error?: string }> {
+    return callApi('updateAuthEmail', data);
+}

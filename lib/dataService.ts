@@ -2067,8 +2067,10 @@ export async function createComandaFromAppointment(
         }
 
         // Increment subscription usage counter if any discounts were applied
+        // Guard: skip if the booking flow already incremented (usedInPlan flag on the event)
+        const alreadyCountedByBooking = !!(event as any).usedInPlan;
         const discountedCount = comandaItems.filter(i => i.subscriptionDiscount).length;
-        if (discountedCount > 0 && activeSubscription) {
+        if (discountedCount > 0 && activeSubscription && !alreadyCountedByBooking) {
             await incrementSubscriptionUses(activeSubscription.id, discountedCount);
         }
 
@@ -2303,6 +2305,8 @@ export async function saveSubscriptionPlan(plan: SubscriptionPlan): Promise<{ su
             excludedProfessionals: plan.excludedProfessionals || [],
             unitScope: plan.unitScope || 'all',
             allowedUnitIds: plan.allowedUnitIds || [],
+            comboMode: plan.comboMode ?? false,
+            comboServiceIds: JSON.stringify(plan.comboServiceIds || []),
             updatedAt: now,
         };
         const { error } = await supabase
@@ -2352,6 +2356,8 @@ export async function getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
             disabledDays: safeParseJsonArray(p.disabledDays),
             excludedProfessionals: safeParseJsonArray(p.excludedProfessionals),
             allowedUnitIds: safeParseJsonArray(p.allowedUnitIds),
+            comboMode: p.comboMode ?? false,
+            comboServiceIds: safeParseJsonArray(p.comboServiceIds),
         })) as SubscriptionPlan[];
     } catch (err) {
         console.error('Error fetching subscription plans:', err);
@@ -2465,6 +2471,8 @@ export async function getSubscriptions(): Promise<Subscription[]> {
                 allowedUnitIds: safeParseJsonArray(s.subscription_plans.allowedUnitIds),
                 disabledDays: safeParseJsonArray(s.subscription_plans.disabledDays),
                 excludedProfessionals: safeParseJsonArray(s.subscription_plans.excludedProfessionals),
+                comboMode: s.subscription_plans.comboMode ?? false,
+                comboServiceIds: safeParseJsonArray(s.subscription_plans.comboServiceIds),
             } : undefined,
         })) as Subscription[];
     } catch (err) {

@@ -402,6 +402,11 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
         unitId: selectedUnitId !== 'all' ? selectedUnitId : clientData.unitId,
       };
       await saveSubscription(subData);
+      // F15: Warn that manual sub from Clients page doesn't trigger ASAAS billing
+      if (!existingSub) {
+        toast.info('Assinatura manual',
+          'Esta assinatura foi criada localmente sem cobrança automática. Para cobranças via cartão/pix/boleto, use a tela de Assinaturas com integração ASAAS.');
+      }
     }
 
     if (editingId) {
@@ -723,7 +728,7 @@ export const Clients: React.FC<ClientsProps> = ({ clients, setClients, members, 
                               <div className="flex justify-between text-sm"><span className={textSub}>Valor</span><span className={`font-semibold ${textMain}`}>{formatCurrency(plan.price)}/mes</span></div>
                               <div className="flex justify-between text-sm"><span className={textSub}>Status</span><span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase ${sub.status === 'active' ? 'bg-primary/10 text-primary' : sub.status === 'pending_payment' ? 'bg-blue-500/10 text-blue-500' : sub.status === 'overdue' ? 'bg-red-500/10 text-red-500' : sub.status === 'paused' ? 'bg-yellow-500/10 text-yellow-500' : 'bg-slate-500/10 text-slate-500'}`}>{sub.status === 'active' ? 'Ativo' : sub.status === 'pending_payment' ? 'Aguardando Pgto' : sub.status === 'overdue' ? 'Inadimplente' : sub.status === 'paused' ? 'Pausado' : 'Cancelado'}</span></div>
                               {sub.cardBrand && <div className="flex justify-between text-sm"><span className={textSub}>Cartao</span><span className={`font-semibold ${textMain}`}>{sub.cardBrand.toUpperCase()} *{sub.cardLast4}</span></div>}
-                              <div className="flex justify-between text-sm"><span className={textSub}>Usos no mes</span><span className={`font-semibold ${textMain}`}>{sub.usesThisMonth}{plan.maxUsesPerMonth ? `/${plan.maxUsesPerMonth}` : ''}</span></div>
+                              <div className="flex justify-between text-sm"><span className={textSub}>Usos no mes</span><span className={`font-semibold ${textMain}`}>{Number(sub.usesThisMonth) % 1 === 0 ? sub.usesThisMonth : Number(sub.usesThisMonth).toFixed(1)}{plan.maxUsesPerMonth ? `/${plan.maxUsesPerMonth}` : ''}</span></div>
                             </>
                           )}
                         </div>

@@ -13,7 +13,7 @@ import {
 import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscription } from "../types";
 import { usePlatform } from "../hooks/usePlatform";
 import { safeParseJsonArray } from "../lib/utils";
-import { subscribeToPlan, cancelMySubscription, pauseMySubscription, getMyPaymentHistory, updatePaymentMethod, reactivateSubscription, changePlan, cancelPendingPlanChange, retryPayment, setAsaasPublicTokenProvider, setAsaasPublicRefreshCallback } from "../lib/asaasPublicService";
+import { subscribeToPlan, cancelMySubscription, pauseMySubscription, getMyPaymentHistory, updatePaymentMethod, reactivateSubscription, changePlan, cancelPendingPlanChange, retryPayment, setAsaasPublicTokenProvider, setAsaasPublicRefreshCallback, syncCustomerData, updateAuthEmail } from "../lib/asaasPublicService";
 
 // ============================================================
 // DEDICATED Supabase client for PublicSite
@@ -243,7 +243,7 @@ type ModalPosition = "bottom" | "center" | "fullscreen";
 interface SelectionState {
   unit: any | null;
   barber: any | null;
-  service: Service | null;
+  services: Service[];
   date: Date | null;
   time: string | null;
   isFromCreditRedemption?: boolean;
@@ -442,7 +442,7 @@ function PublicSiteApp() {
 
   // Selection
   const [selection, setSelection] = useState<SelectionState>({
-    unit: null, barber: null, service: null, date: null, time: null,
+    unit: null, barber: null, services: [], date: null, time: null,
   });
 
   // Modal
@@ -1169,7 +1169,7 @@ function PublicSiteApp() {
   }
 
   function resetSelection() {
-    setSelection({ unit: null, barber: null, service: null, date: null, time: null });
+    setSelection({ unit: null, barber: null, services: [], date: null, time: null });
   }
 
   // === Unit modal ===
@@ -1179,7 +1179,7 @@ function PublicSiteApp() {
         <h3 className="booking-modal-title" style={{ color: primary }}>{g("booking.modal_title_unit", "Escolha uma unidade")}</h3>
         <ScrollFadeList className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar px-1 pb-2">
           {units.map((u) => (
-            <div key={u.id} onClick={() => { updateSelection({ unit: u, barber: null, service: null, date: null, time: null }); closeModal(); }}
+            <div key={u.id} onClick={() => { updateSelection({ unit: u, barber: null, services: [], date: null, time: null }); closeModal(); }}
               className={`booking-modal-item ${selection.unit?.id === u.id ? "active" : ""}`}>
               {u.image ? <img src={u.image} alt={u.name} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" /> : <div className="booking-modal-avatar w-16 h-16 rounded-lg"><Store className="w-6 h-6 text-gray-500" /></div>}
               <div className="flex-1 min-w-0">
@@ -1216,7 +1216,7 @@ function PublicSiteApp() {
           {barberList.length === 0 ? (
             <p className="text-gray-400 text-center py-8">Nenhum profissional disponível nesta unidade.</p>
           ) : barberList.map((b: any) => (
-            <div key={b.id} onClick={() => { updateSelection({ barber: b, service: selection.isFromCreditRedemption ? selection.service : null, date: null, time: null }); closeModal(); }}
+            <div key={b.id} onClick={() => { updateSelection({ barber: b, services: selection.isFromCreditRedemption ? selection.services : [], date: null, time: null }); closeModal(); }}
               className={`booking-modal-item ${selection.barber?.id === b.id ? "active" : ""}`}>
               {b.avatar ? <img src={b.avatar} alt={b.name} className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
                 : <div className="booking-modal-avatar w-12 h-12 rounded-full"><User className="w-5 h-5 text-gray-500" /></div>}
@@ -1240,14 +1240,26 @@ function PublicSiteApp() {
       s.allowsOnlineBooking !== false &&
       (!s.unitId || s.unitId === selection.unit?.id)
     );
-    openModal(
+    const MultiServicePicker = () => {
+      const [selected, setSelected] = useState<Service[]>([...selection.services]);
+      const toggle = (s: Service) => {
+        setSelected(prev => prev.some(x => x.id === s.id) ? prev.filter(x => x.id !== s.id) : [...prev, s]);
+      };
+      const totalDuration = selected.reduce((sum, s) => sum + (s.duration || 30), 0);
+      const totalPrice = selected.reduce((sum, s) => sum + (s.price || 0), 0);
+      return (
       <div className="booking-modal-sheet p-5 pb-8">
-        <h3 className="booking-modal-title" style={{ color: primary }}>{g("booking.modal_title_service", "Escolha um serviço")}</h3>
-        <ScrollFadeList className="space-y-3 max-h-[60vh] overflow-y-auto booking-scrollbar px-1 pb-2">
-          {filtered.map((s) => (
-            <div key={s.id} onClick={() => { updateSelection({ service: s, date: null, time: null }); closeModal(); }}
-              className={`booking-modal-item ${selection.service?.id === s.id ? "active" : ""}`}>
+        <h3 className="booking-modal-title" style={{ color: primary }}>{g("booking.modal_title_service", "Escolha os serviços")}</h3>
+        <ScrollFadeList className="space-y-3 max-h-[50vh] overflow-y-auto booking-scrollbar px-1 pb-2">
+          {filtered.map((s) => {
+            const isChecked = selected.some(x => x.id === s.id);
+            return (
+            <div key={s.id} onClick={() => toggle(s)}
+              className={`booking-modal-item ${isChecked ? "active" : ""}`}>
               <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0" style={{ borderColor: isChecked ? primary : '#555', backgroundColor: isChecked ? primary : 'transparent' }}>
+                  {isChecked && <Check className="w-3 h-3 text-black" />}
+                </div>
                 {s.image ? <img src={s.image} alt={s.name} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
                   : <div className="booking-modal-avatar w-12 h-12 rounded-lg"><Scissors className="w-5 h-5" style={{ color: primary }} /></div>}
                 <div className="min-w-0">
@@ -1257,22 +1269,40 @@ function PublicSiteApp() {
                   </div>
                 </div>
               </div>
-              {showPrices && <span className="font-bold text-lg flex-shrink-0" style={{ color: primary }}>R$ {s.price.toFixed(2)}</span>}
+              {showPrices && <span className="font-bold text-lg flex-shrink-0" style={{ color: isChecked ? primary : '#888' }}>R$ {s.price.toFixed(2)}</span>}
             </div>
-          ))}
+          );
+          })}
         </ScrollFadeList>
+        {/* Footer with totals and confirm */}
+        {selected.length > 0 && (
+          <div className="mt-4 pt-4" style={{ borderTop: '1px solid #333' }}>
+            <div className="flex justify-between text-sm mb-3">
+              <span className="text-gray-400">{selected.length} serviço{selected.length !== 1 ? 's' : ''} • {totalDuration} min</span>
+              {showPrices && <span className="font-bold" style={{ color: primary }}>R$ {totalPrice.toFixed(2)}</span>}
+            </div>
+            <button onClick={() => { updateSelection({ services: selected, date: null, time: null }); closeModal(); }}
+              className="w-full py-3 font-bold rounded-lg text-sm" style={{ backgroundColor: primary, color: bgColor }}>
+              Confirmar {selected.length} serviço{selected.length !== 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
       </div>
-    );
+      );
+    };
+    openModal(<MultiServicePicker />, "bottom");
   }
 
   // === Calendar+time modal ===
   function showDateModal() {
-    if (!selection.service) return;
+    if (selection.services.length === 0) return;
+    const totalDur = selection.services.reduce((sum, s) => sum + (s.duration || 30), 0);
     openModal(<CalendarModal
       primary={primary} cardBg={cardBg} barber={selection.barber}
       unitId={selection.unit?.id}
       schedules={schedules} events={availabilityEvents} maxDays={maxAdvDays}
       closedDays={closedDays} slotInterval={slotInterval} g={g}
+      serviceDuration={totalDur}
       onSelect={(date: Date, time: string) => { updateSelection({ date, time }); closeModal(); }}
     />, "fullscreen");
   }
@@ -1295,7 +1325,7 @@ function PublicSiteApp() {
 
   // === Confirm booking ===
   async function handleAgendarClick() {
-    if (!selection.unit || !selection.barber || !selection.service || !selection.date || !selection.time) return;
+    if (!selection.unit || !selection.barber || selection.services.length === 0 || !selection.date || !selection.time) return;
 
     if (!authUser) {
       setPendingBooking(true);
@@ -1325,29 +1355,32 @@ function PublicSiteApp() {
     openModal(<ResumoModal
       selection={selection} primary={primary} bgColor={bgColor} cardBg={cardBg}
       clientSubscription={clientSubscription} onClose={closeModal}
-      onConfirm={async ({ couponCode: cpCode, couponDiscount: cpDisc, finalPrice: fp, subscriptionDiscount: subDisc }: any) => {
+      onConfirm={async ({ couponCode: cpCode, couponDiscount: cpDisc, finalPrice: fp, subscriptionDiscount: subDisc, quotaIncrement: qInc }: any) => {
         const d = selection.date!;
         const now = new Date().toISOString();
         const isoDate = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
+        const totalDuration = selection.services.reduce((sum, s) => sum + (s.duration || 30), 0);
+        const totalPrice = selection.services.reduce((sum, s) => sum + (s.price || 0), 0);
+        const serviceNames = selection.services.map(s => s.name).join(' + ');
         const newEvent = {
           id: crypto.randomUUID(),
-          title: `${clientProfile?.name || "Cliente"} - ${selection.service!.name}`,
+          title: `${clientProfile?.name || "Cliente"} - ${serviceNames}`,
           type: "APPOINTMENT",
           startTime: selection.time,
-          endTime: addMinutesToTime(selection.time!, selection.service!.duration || 30),
+          endTime: addMinutesToTime(selection.time!, totalDuration),
           date: isoDate,
           clientName: clientProfile?.name || "Cliente",
           clientId: clientProfile?.id || null,
           barberId: selection.barber.id === "__no_pref__" ? null : selection.barber.id,
           barberName: selection.barber.name,
-          serviceId: selection.service!.id,
-          serviceName: selection.service!.name,
-          serviceIds: JSON.stringify([selection.service!.id]),
-          duration: selection.service!.duration || 30,
+          serviceId: selection.services[0]?.id,
+          serviceName: serviceNames,
+          serviceIds: JSON.stringify(selection.services.map(s => s.id)),
+          duration: totalDuration,
           unitId: selection.unit.id,
           source: "app",
           status: "confirmed",
-          finalPrice: fp ?? (selection.isFromCreditRedemption ? 0 : selection.service!.price),
+          finalPrice: fp ?? (selection.isFromCreditRedemption ? 0 : totalPrice),
           couponCode: cpCode || null,
           usedReferralCredit: !!selection.isFromCreditRedemption,
           usedInPlan: (subDisc || 0) > 0,
@@ -1363,7 +1396,8 @@ function PublicSiteApp() {
         // ── Increment subscription usage counter when plan discount was applied ──
         if ((subDisc || 0) > 0 && clientSubscription?.id) {
           try {
-            const newUses = (clientSubscription.usesThisMonth || 0) + 1;
+            const increment = qInc ?? 1;
+            const newUses = Math.round(((clientSubscription.usesThisMonth || 0) + increment) * 10) / 10;
             const { error: updErr } = await supabase.from("subscriptions").update({
               usesThisMonth: newUses,
               updatedAt: new Date().toISOString(),
@@ -1405,7 +1439,7 @@ function PublicSiteApp() {
                   {unitObj.address && <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${unitObj.address}, ${unitObj.city || ""} - ${unitObj.state || ""}`)}`} target="_blank" rel="noopener noreferrer" className="block w-full text-center mt-2 py-2 px-4 rounded-xl text-white font-semibold text-sm" style={{ backgroundColor: "#0b0b0a" }}>Ver localização</a>}
                 </div>
                 <p><strong className="text-gray-400">Barbeiro:</strong> <span className="text-white">{selection.barber.name}</span></p>
-                <p><strong className="text-gray-400">Serviço:</strong> <span className="text-white">{selection.service!.name}</span></p>
+                <p><strong className="text-gray-400">Serviço:</strong> <span className="text-white">{selection.services.map(s => s.name).join(' + ')}</span></p>
                 <p><strong className="text-gray-400">Data:</strong> <span className="text-white">{dateStr}</span></p>
                 <p><strong className="text-gray-400">Horário:</strong> <span className="text-white">Às {selection.time}</span></p>
               </div>
@@ -1756,7 +1790,7 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
   const heroSubtitle = g("hero.subtitle", "Escolha os serviços e agende com facilidade.");
   const heroLogo = g("hero.logo", "") || g("loading.logo", "");
   const showLogo = g("hero.show_logo", "true") !== "false";
-  const allSelected = selection.unit && selection.barber && selection.service && selection.date && selection.time;
+  const allSelected = selection.unit && selection.barber && selection.services.length > 0 && selection.date && selection.time;
 
   const openAppts = allEvents.filter((e: CalendarEvent) => {
     if (e.status === "cancelled" || e.status === "completed" || e.status === "no_show") return false;
@@ -2117,13 +2151,13 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
           disabled={!selection.unit} onClick={onBarberClick} cardBg={cardBg} />
 
         {/* Service card — locked during redemption */}
-        {selection.isFromCreditRedemption && selection.service ? (
+        {selection.isFromCreditRedemption && selection.services.length > 0 ? (
           <div className="booking-selection-item flex items-center justify-between p-3.5 rounded-lg booking-slide-up booking-delay-300"
             style={{ backgroundColor: cardBg, borderColor: primary, borderWidth: 2 }}>
             <div className="flex items-center gap-3">
               <Gift className="w-5 h-5" style={{ color: primary }} />
               <div>
-                <span className="text-white font-bold">{selection.service.name}</span>
+                <span className="text-white font-bold">{selection.services.map(s => s.name).join(' + ')}</span>
                 <p className="text-xs text-gray-400">Recompensa de indicação!</p>
               </div>
             </div>
@@ -2131,13 +2165,13 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
           </div>
         ) : (
           <SelectionCard delay="300" icon={<Scissors className="w-5 h-5" style={{ color: primary }} />}
-            text={selection.service ? `${selection.service.name}${showPrices ? ` — R$ ${selection.service.price.toFixed(2)}` : ""}` : g("booking.label_service", "Selecionar serviço")}
-            selected={!!selection.service} disabled={!selection.barber} onClick={onServiceClick} cardBg={cardBg} />
+            text={selection.services.length > 0 ? `${selection.services.map(s => s.name).join(' + ')}${showPrices ? ` — R$ ${selection.services.reduce((sum, s) => sum + s.price, 0).toFixed(2)}` : ""}` : g("booking.label_service", "Selecionar serviço")}
+            selected={selection.services.length > 0} disabled={!selection.barber} onClick={onServiceClick} cardBg={cardBg} />
         )}
 
         <SelectionCard delay="400" icon={<Calendar className="w-5 h-5" style={{ color: primary }} />}
           text={selection.date && selection.time ? `${selection.time} — ${WEEKDAYS_FULL[selection.date.getDay()]}, ${selection.date.getDate()} de ${MONTHS_PT[selection.date.getMonth()]}` : g("booking.label_datetime", "Selecionar data e hora")}
-          selected={!!selection.time} disabled={!selection.service} onClick={onDateClick} cardBg={cardBg} />
+          selected={!!selection.time} disabled={selection.services.length === 0} onClick={onDateClick} cardBg={cardBg} />
 
         <button onClick={onAgendarClick} disabled={!allSelected || isMaxed}
           className={`w-full py-3 mt-3 rounded-xl font-bold text-sm tracking-wide booking-slide-up booking-delay-500 ${allSelected && !isMaxed ? "booking-btn-active" : "booking-btn-inactive"}`}
@@ -2166,7 +2200,7 @@ function SelectionCard({ delay, icon, text, selected, disabled, onClick, cardBg 
 // ============================================================
 // CALENDAR MODAL
 // ============================================================
-function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, maxDays, closedDays, slotInterval, g, onSelect }: any) {
+function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, maxDays, closedDays, slotInterval, g, serviceDuration, onSelect }: any) {
   const [viewDate, setViewDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [periodo, setPeriodo] = useState<"manha" | "tarde">("manha");
@@ -2241,15 +2275,17 @@ function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, max
       if (barberDayCount >= maxPerDay) return []; // No slots — barber is full for the day
     }
 
-    // Filter out slots that would overlap with existing events (considering duration)
+    // Filter out slots that would overlap with existing events (bidirectional overlap check)
+    const svcDur = serviceDuration || slotInterval;
     slots = slots.filter((slot) => {
       const [sh, sm] = slot.split(":").map(Number);
       const slotStart = sh * 60 + sm;
+      const slotEnd = slotStart + svcDur;
       return !dayEvents.some((e: any) => {
         const [eH, eM] = (e.startTime || "00:00").split(":").map(Number);
         const eventStart = eH * 60 + eM;
         const eventEnd = eventStart + (e.duration || slotInterval);
-        return slotStart >= eventStart && slotStart < eventEnd;
+        return slotStart < eventEnd && slotEnd > eventStart;
       });
     });
 
@@ -2385,7 +2421,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
   const [couponMsg, setCouponMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [couponLoading, setCouponLoading] = useState(false);
 
-  const price = selection.service?.price || 0;
+  const price = selection.services.reduce((sum, s) => sum + (s.price || 0), 0);
   const dateStr = selection.date?.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" });
 
   const isCreditRedemption = !!selection.isFromCreditRedemption;
@@ -2395,6 +2431,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
   let quotaExceeded = false; // true when monthly usage limit reached
   let quotaMax = 0; // max uses per month
   let quotaUsed = 0; // uses this month
+  let quotaIncrement = 1; // combo full = 1, partial = 0.5
   try {
     if (!isCreditRedemption && clientSubscription?.plan) {
       const isActive = clientSubscription.status === 'active';
@@ -2420,21 +2457,46 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
       const dayOk = disabledDays.length === 0 || !disabledDays.includes(selDay);
 
       if (unitOk && barberOk && dayOk) {
-        const rule = planServices.find((r: any) => r.serviceId === selection.service?.id);
-        if (rule && Number(rule.discount) > 0) {
-          const discount = Number(rule.discount);
-          if (!rule.monthlyLimit) {
-            subscriptionDiscount = discount;
+        // Multi-service: compute weighted average discount and combo quota
+        let totalDiscount = 0;
+        let coveredPrice = 0;
+        let matchedCount = 0;
+        const comboMode = !!plan.comboMode;
+        const comboServiceIds: string[] = safeParseJsonArray(plan.comboServiceIds);
+
+        for (const svc of (selection.services || [])) {
+          const rule = planServices.find((r: any) => r.serviceId === svc.id);
+          if (rule && Number(rule.discount) > 0) {
+            matchedCount++;
+            const svcDisc = Number(rule.discount);
+            coveredPrice += (svc.price || 0) * svcDisc / 100;
+          }
+        }
+
+        if (matchedCount > 0 && price > 0) {
+          // Weighted average discount based on actual price coverage
+          const weightedDiscount = Math.round((coveredPrice / price) * 100);
+
+          // Quota check
+          const usesThisMonth = clientSubscription.usesThisMonth || 0;
+          const maxUses = plan.maxUsesPerMonth || 0;
+
+          // Compute fractional increment for combo mode
+          if (comboMode && comboServiceIds.length > 0) {
+            const selectedIds = (selection.services || []).map((s: any) => s.id);
+            const comboMatches = comboServiceIds.filter((id: string) => selectedIds.includes(id)).length;
+            const isFullCombo = comboMatches === comboServiceIds.length;
+            quotaIncrement = isFullCombo ? 1 : 0.5;
+          }
+
+          if (!maxUses) {
+            subscriptionDiscount = weightedDiscount;
+          } else if (usesThisMonth + quotaIncrement <= maxUses) {
+            subscriptionDiscount = weightedDiscount;
           } else {
-            const usesThisMonth = clientSubscription.usesThisMonth || 0;
-            const maxUses = plan.maxUsesPerMonth || rule.monthlyLimit;
-            if (usesThisMonth < maxUses) {
-              subscriptionDiscount = discount;
-            } else {
-              quotaExceeded = true;
-              quotaMax = maxUses;
-              quotaUsed = usesThisMonth;
-            }
+            quotaExceeded = true;
+            quotaMax = maxUses;
+            quotaUsed = usesThisMonth;
           }
         }
       }
@@ -2562,7 +2624,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
         <p><strong className="text-gray-400">Unidade:</strong><br /><span className="text-white">{selection.unit?.name}</span></p>
         <p><strong className="text-gray-400">Data:</strong><br /><span className="text-white">{dateStr} às {selection.time}</span></p>
         <p><strong className="text-gray-400">Profissional:</strong><br /><span className="text-white">{selection.barber?.name}</span></p>
-        <p><strong className="text-gray-400">Serviço:</strong><br /><span className="text-white">{selection.service?.name}</span></p>
+        <p><strong className="text-gray-400">Serviço:</strong><br /><span className="text-white">{selection.services?.map((s: any) => s.name).join(' + ') || '—'}</span></p>
       </div>
 
       {/* ═══ Informational banners for overdue / quota exceeded ═══ */}
@@ -2582,7 +2644,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#fbbf24' }} />
           <div className="flex-1">
             <p className="text-xs font-bold" style={{ color: '#fbbf24' }}>Cota mensal atingida</p>
-            <p className="text-[11px] text-gray-400 mt-0.5">Você já utilizou {quotaUsed} de {quotaMax} usos do seu plano este mês. Sua cota será renovada no próximo mês.</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">Você já utilizou {Number(quotaUsed) % 1 === 0 ? quotaUsed : Number(quotaUsed).toFixed(1)} de {quotaMax} usos do seu plano este mês. Sua cota será renovada no próximo mês.</p>
           </div>
         </div>
       )}
@@ -2626,7 +2688,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
         <button onClick={async () => {
           setLoading(true);
           try {
-            await onConfirm({ couponCode, couponDiscount, finalPrice: computedFinal, subscriptionDiscount });
+            await onConfirm({ couponCode, couponDiscount, finalPrice: computedFinal, subscriptionDiscount, quotaIncrement });
           } catch (e) {
             console.error("Booking error:", e);
           } finally {
@@ -2816,7 +2878,18 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
           // ── Decrement subscription usage if this booking used plan discount ──
           if ((ev as any).usedInPlan && clientSubscription?.id && (clientSubscription.usesThisMonth || 0) > 0) {
             try {
-              const newUses = Math.max(0, (clientSubscription.usesThisMonth || 0) - 1);
+              // Compute fractional decrement matching the booking increment logic
+              let decrement = 1;
+              const plan = clientSubscription.plan;
+              if (plan?.comboMode) {
+                const comboIds: string[] = safeParseJsonArray(plan.comboServiceIds);
+                if (comboIds.length > 0) {
+                  const evServiceIds: string[] = safeParseJsonArray((ev as any).serviceIds);
+                  const comboMatches = comboIds.filter(id => evServiceIds.includes(id)).length;
+                  decrement = comboMatches === comboIds.length ? 1 : 0.5;
+                }
+              }
+              const newUses = Math.max(0, Math.round(((clientSubscription.usesThisMonth || 0) - decrement) * 10) / 10);
               const { error: updErr } = await supabase.from("subscriptions").update({
                 usesThisMonth: newUses,
                 updatedAt: new Date().toISOString(),
@@ -3090,15 +3163,17 @@ function RemarcarModal({ ev, primary, bgColor, cardBg, barbers, schedules, event
     let slots = generateTimeSlots(st, et, slotInterval);
     slots = slots.filter((s) => !isInBreak(s, bs, be));
     const dayEvts = events.filter((e: any) => e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear() && e.status !== "cancelled" && e.id !== ev.id && (!barberId || e.barberId === barberId) && (!ev.unitId || e.unitId === ev.unitId));
-    // Duration-aware overlap check
+    // Duration-aware overlap check (bidirectional)
+    const evDur = ev.duration || slotInterval;
     slots = slots.filter((slot) => {
       const [sh, sm] = slot.split(":").map(Number);
       const slotStart = sh * 60 + sm;
+      const slotEnd = slotStart + evDur;
       return !dayEvts.some((e: any) => {
         const [eH, eM] = (e.startTime || "00:00").split(":").map(Number);
         const eventStart = eH * 60 + eM;
         const eventEnd = eventStart + (e.duration || slotInterval);
-        return slotStart >= eventStart && slotStart < eventEnd;
+        return slotStart < eventEnd && slotEnd > eventStart;
       });
     });
     if (selectedDate.toDateString() === new Date().toDateString()) {
@@ -3591,8 +3666,10 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     const planServicesList = subscription?.plan?.planServices
       ? safeParseJsonArray(subscription.plan.planServices)
       : [];
+    const usedTotal = subscription.usesThisMonth || 0;
+    const usedStr = Number(usedTotal) % 1 === 0 ? usedTotal : Number(usedTotal).toFixed(1);
     const usesInfo = subscription?.plan?.maxUsesPerMonth
-      ? `${subscription.usesThisMonth || 0} de ${subscription.plan.maxUsesPerMonth} usos este mês`
+      ? `${usedStr} de ${subscription.plan.maxUsesPerMonth} usos este mês`
       : 'Uso ilimitado';
     openModal(
       <div className="p-6" style={{ borderRadius: "1rem" }}>
@@ -3633,10 +3710,16 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
             <div className="space-y-2">
               {planServicesList.map((s: any, i: number) => {
                 const svc = (services || []).find((sv: any) => sv.id === s.serviceId);
+                const disc = Number(s.discount) || 0;
                 return svc ? (
                   <div key={i} className="flex items-center justify-between p-3 rounded-lg" style={{ backgroundColor: '#2a2a2a' }}>
-                    <span className="text-sm text-white">{svc.name}</span>
-                    <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${primary}20`, color: primary }}>{Number(s.discount)}% off</span>
+                    <div className="flex items-center gap-2">
+                      <Scissors className="w-3.5 h-3.5" style={{ color: primary }} />
+                      <span className="text-sm text-white">{svc.name}</span>
+                    </div>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: disc === 100 ? '#22c55e20' : `${primary}20`, color: disc === 100 ? '#4ade80' : primary }}>
+                      {disc === 100 ? 'Incluso' : `${disc}% off`}
+                    </span>
                   </div>
                 ) : null;
               })}
@@ -4086,7 +4169,11 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                     </div>
                     <div className="text-right">
                       <p className="text-white font-bold">R$ {Number(ev.amount || 0).toFixed(2)}</p>
-                      {ev.invoiceUrl && <a href={ev.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline" style={{ color: primary }}>Ver fatura</a>}
+                      {ev.netValue != null && ev.netValue !== '' && <p className="text-[10px] text-gray-500">Líquido: R$ {Number(ev.netValue).toFixed(2)}</p>}
+                      <div className="flex gap-2 justify-end mt-1">
+                        {ev.invoiceUrl && <a href={ev.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline" style={{ color: primary }}>Fatura</a>}
+                        {ev.transactionReceiptUrl && <a href={ev.transactionReceiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline" style={{ color: primary }}>Comprovante</a>}
+                      </div>
                     </div>
                   </div>
                 );
@@ -4526,43 +4613,109 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
               </div>
             )}
             <div className="mt-4 space-y-4">
-              {subscription.plan.maxUsesPerMonth ? (
-                <>
-                  <div className="grid grid-cols-4 gap-3">
-                    {Array.from({ length: subscription.plan.maxUsesPerMonth }).map((_: any, i: number) => {
-                      const isUsed = i < (subscription.usesThisMonth || 0);
-                      return (
-                        <div key={i} className="booking-service-icon" style={{
-                          backgroundColor: isSuspended ? "#2a2a2a" : (isUsed ? "#374151" : "#1e1e1e"),
-                          color: isSuspended ? "#555" : (isUsed ? "#9ca3af" : primary),
-                          border: isSuspended ? "1px solid #333" : (isUsed ? "none" : `1px solid ${primary}`),
-                          opacity: isSuspended ? 0.5 : 1,
-                        }}>
-                          <Scissors className="w-5 h-5" />
-                          <span className="text-xs mt-1">{isSuspended ? "—" : (isUsed ? "Usado" : "Livre")}</span>
+              {(() => {
+                const planSvcs = safeParseJsonArray(subscription.plan.planServices);
+                const hasPerServiceLimits = planSvcs.some((ps: any) => ps.monthlyLimit || ps.discount);
+                const globalMax = subscription.plan.maxUsesPerMonth;
+                const usedTotal = subscription.usesThisMonth || 0;
+
+                if (hasPerServiceLimits && planSvcs.length > 0) {
+                  // Per-service grid
+                  return (
+                    <>
+                      <div className={`grid ${planSvcs.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
+                        {planSvcs.map((ps: any) => {
+                          const svc = (services || []).find((s: any) => s.id === ps.serviceId);
+                          if (!svc) return null;
+                          const limit = ps.monthlyLimit;
+                          const disc = Number(ps.discount) || 0;
+                          return (
+                            <div key={ps.serviceId} className="p-3 rounded-xl" style={{ backgroundColor: '#2a2a2a', opacity: isSuspended ? 0.5 : 1 }}>
+                              <div className="flex items-center gap-2 mb-2">
+                                <Scissors className="w-3.5 h-3.5" style={{ color: primary }} />
+                                <span className="text-xs font-semibold text-white truncate">{svc.name}</span>
+                              </div>
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: disc === 100 ? '#22c55e20' : `${primary}20`, color: disc === 100 ? '#4ade80' : primary }}>
+                                {disc === 100 ? 'Incluso' : `${disc}% OFF`}
+                              </span>
+                              {limit ? (
+                                <div className="mt-2">
+                                  <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                                    <span>Limite</span>
+                                    <span>{limit}x/mês</span>
+                                  </div>
+                                  <div className="w-full bg-gray-700 rounded-full h-1.5">
+                                    <div className="h-1.5 rounded-full" style={{ backgroundColor: isSuspended ? '#555' : primary, width: `${Math.min(100, (usedTotal / limit) * 100)}%` }} />
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="mt-2 flex items-center gap-1">
+                                  <InfinityIcon className="w-3 h-3 text-gray-500" />
+                                  <span className="text-[10px] text-gray-500">Ilimitado</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* Global progress bar */}
+                      {globalMax ? (
+                        <div>
+                          <div className="flex justify-between mb-1 text-xs font-medium" style={{ color: "#d1d5db" }}>
+                            <span>Uso total</span>
+                            <span>{usedTotal} de {globalMax}</span>
+                          </div>
+                          <div className="w-full bg-gray-700 rounded-full h-2.5">
+                            <div className="h-2.5 rounded-full booking-progress-bar" style={{ backgroundColor: isSuspended ? "#555" : primary, width: `${Math.min(100, (usedTotal / globalMax) * 100)}%` }} />
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                  <div>
-                    <div className="flex justify-between mb-1 text-xs font-medium" style={{ color: "#d1d5db" }}>
-                      <span>Progresso</span>
-                      <span>{subscription.usesThisMonth || 0} de {subscription.plan.maxUsesPerMonth}</span>
+                      ) : null}
+                    </>
+                  );
+                } else if (globalMax) {
+                  // Legacy global-only view
+                  return (
+                    <>
+                      <div className="grid grid-cols-4 gap-3">
+                        {Array.from({ length: globalMax }).map((_: any, i: number) => {
+                          const isUsed = i < usedTotal;
+                          return (
+                            <div key={i} className="booking-service-icon" style={{
+                              backgroundColor: isSuspended ? "#2a2a2a" : (isUsed ? "#374151" : "#1e1e1e"),
+                              color: isSuspended ? "#555" : (isUsed ? "#9ca3af" : primary),
+                              border: isSuspended ? "1px solid #333" : (isUsed ? "none" : `1px solid ${primary}`),
+                              opacity: isSuspended ? 0.5 : 1,
+                            }}>
+                              <Scissors className="w-5 h-5" />
+                              <span className="text-xs mt-1">{isSuspended ? "—" : (isUsed ? "Usado" : "Livre")}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div>
+                        <div className="flex justify-between mb-1 text-xs font-medium" style={{ color: "#d1d5db" }}>
+                          <span>Progresso</span>
+                          <span>{usedTotal} de {globalMax}</span>
+                        </div>
+                        <div className="w-full bg-gray-700 rounded-full h-2.5">
+                          <div className="h-2.5 rounded-full booking-progress-bar" style={{ backgroundColor: isSuspended ? "#555" : primary, width: `${Math.min(100, (usedTotal / globalMax) * 100)}%` }} />
+                        </div>
+                      </div>
+                    </>
+                  );
+                } else {
+                  // Unlimited
+                  return (
+                    <div className="flex items-center gap-3 p-4 rounded-lg" style={{ backgroundColor: '#2a2a2a' }}>
+                      <InfinityIcon className="w-6 h-6" style={{ color: primary }} />
+                      <div>
+                        <p className="text-white font-semibold">Uso ilimitado</p>
+                        <p className="text-xs text-gray-400">{usedTotal} utilizações este mês</p>
+                      </div>
                     </div>
-                    <div className="w-full bg-gray-700 rounded-full h-2.5">
-                      <div className="h-2.5 rounded-full booking-progress-bar" style={{ backgroundColor: isSuspended ? "#555" : primary, width: `${Math.min(100, ((subscription.usesThisMonth || 0) / subscription.plan.maxUsesPerMonth) * 100)}%` }} />
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="flex items-center gap-3 p-4 rounded-lg" style={{ backgroundColor: '#2a2a2a' }}>
-                  <InfinityIcon className="w-6 h-6" style={{ color: primary }} />
-                  <div>
-                    <p className="text-white font-semibold">Uso ilimitado</p>
-                    <p className="text-xs text-gray-400">{subscription.usesThisMonth || 0} utilizações este mês</p>
-                  </div>
-                </div>
-              )}
+                  );
+                }
+              })()}
             </div>
             {/* Next payment date */}
             {subscription.nextPaymentDate && (subscription.status === 'active' || subscription.status === 'pending_payment') && (
@@ -4644,11 +4797,35 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                   <span className="text-4xl font-bold" style={{ color: primary }}>R${plan.price.toFixed(2)}</span>
                   <span className="text-gray-400 ml-1">/{plan.recurrence === "monthly" ? "mês" : plan.recurrence}</span>
                 </div>
-                <ul className="space-y-3 mb-8 text-gray-300 text-sm">
+                <ul className="space-y-3 mb-4 text-gray-300 text-sm">
                   {(plan.benefits || []).map((b: string, i: number) => (
                     <li key={i} className="flex items-start"><Check className="w-4 h-4 mr-3 mt-0.5 flex-shrink-0" style={{ color: primary }} /><span>{b}</span></li>
                   ))}
                 </ul>
+                {/* Services with discount */}
+                {(() => {
+                  const psvcs = safeParseJsonArray(plan.planServices);
+                  return psvcs.length > 0 ? (
+                    <div className="space-y-2 mb-6">
+                      {psvcs.map((ps: any, i: number) => {
+                        const svc = (services || []).find((sv: any) => sv.id === ps.serviceId);
+                        if (!svc) return null;
+                        const disc = Number(ps.discount) || 0;
+                        return (
+                          <div key={i} className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: '#1a1a1a' }}>
+                            <div className="flex items-center gap-2">
+                              <Scissors className="w-3.5 h-3.5" style={{ color: primary }} />
+                              <span className="text-sm text-gray-300">{svc.name}</span>
+                            </div>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: disc === 100 ? '#22c55e20' : `${primary}20`, color: disc === 100 ? '#4ade80' : primary }}>
+                              {disc === 100 ? 'Incluso' : `${disc}% OFF`}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : <div className="mb-6" />;
+                })()}
                 {isCurrent && (subscription?.status === 'overdue' || subscription?.status === 'paused' || subscription?.status === 'cancelled') ? (
                   <button onClick={() => subscription.status === 'cancelled' ? showReativarModal() : subscription.status === 'overdue' ? showRegularizarModal() : showReativarModal()}
                     className="w-full py-2.5 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
@@ -4765,6 +4942,35 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, clie
               clientName: saveData.name,
               updatedAt: new Date().toISOString(),
             }).eq("clientId", clientProfile.id);
+          }
+
+          // N1c: Sync profile data to ASAAS gateway (fire-and-forget, only on success)
+          if (!updateErr) {
+            syncCustomerData({
+              name: saveData.name || clientProfile.name,
+              email: saveData.email || clientProfile.email,
+              phone: saveData.phone || clientProfile.phone,
+            }).catch(() => {}); // silent — don't block UI
+
+            // Update Supabase Auth profile (email for login + user_metadata for name/phone)
+            const authUpdates: Record<string, string> = {};
+            if (saveData.email && saveData.email.trim().toLowerCase() !== clientProfile.email?.trim().toLowerCase()) {
+              authUpdates.newEmail = saveData.email.trim();
+            }
+            if (saveData.name && saveData.name.trim() !== clientProfile.name?.trim()) {
+              authUpdates.name = saveData.name.trim();
+            }
+            if (saveData.phone && saveData.phone.trim() !== clientProfile.phone?.trim()) {
+              authUpdates.phone = saveData.phone.trim();
+            }
+            if (Object.keys(authUpdates).length > 0) {
+              try {
+                await updateAuthEmail(authUpdates);
+                console.log('[Profile] Auth profile synced:', Object.keys(authUpdates));
+              } catch (authErr: any) {
+                console.warn('[Profile] Auth profile sync failed:', authErr.message);
+              }
+            }
           }
 
           if (updateErr) {

@@ -277,7 +277,7 @@ export default async function handler(req, res) {
         const updatePayload = {};
         if (value !== undefined) updatePayload.value = value;
         if (description) updatePayload.description = description;
-        updatePayload.updatePendingPayments = false;
+        updatePayload.updatePendingPayments = value !== undefined;
         
         const updated = await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'PUT', updatePayload);
         return res.status(200).json({ success: true, value: updated.value });
@@ -338,7 +338,9 @@ export default async function handler(req, res) {
           'PAYMENT_CREATED', 'PAYMENT_UPDATED', 'PAYMENT_CONFIRMED',
           'PAYMENT_RECEIVED', 'PAYMENT_OVERDUE', 'PAYMENT_REFUNDED',
           'PAYMENT_DELETED', 'PAYMENT_RECEIVED_IN_CASH_UNDONE',
-          'PAYMENT_CHARGEBACK_REQUESTED',
+          'PAYMENT_CHARGEBACK_REQUESTED', 'PAYMENT_RESTORED',
+          // Subscription lifecycle — detect cancellations/changes from ASAAS panel
+          'SUBSCRIPTION_DELETED', 'SUBSCRIPTION_INACTIVATED', 'SUBSCRIPTION_UPDATED',
         ];
         
         // Generate secure authToken (ASAAS rules: 32-255 chars, no 4+ repeated, no numeric sequences, no spaces)
@@ -439,6 +441,43 @@ export default async function handler(req, res) {
         } catch (e) {
           return res.status(200).json({ configured: false, error: e.message });
         }
+      }
+
+      // ═══ N6: Financial Dashboard (live ASAAS data) ═══
+      case 'getFinancialDashboard': {
+        const config = await getConfig();
+        if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
+
+        const today = new Date().toISOString().split('T')[0];
+        const monthStart = `${today.substring(0, 7)}-01`;
+
+        // 5 requests in parallel for fast response (~800ms)
+        const [balance, stats, overdue, activeSubs, webhookRes] = await Promise.all([
+          asaasRequest(config, '/finance/balance').catch(() => ({ balance: 0 })),
+          asaasRequest(config, `/finance/payment/statistics?dateCreatedInitial=${monthStart}&dateCreatedFinal=${today}`).catch(() => ({ quantity: 0, totalValue: 0, netValue: 0 })),
+          asaasRequest(config, '/payments?status=OVERDUE&limit=1').catch(() => ({ totalCount: 0 })),
+          asaasRequest(config, '/subscriptions?status=ACTIVE&limit=1').catch(() => ({ totalCount: 0 })),
+          asaasRequest(config, '/webhooks').catch(() => ({ data: [] })),
+        ]);
+
+        // Extract webhook health
+        const webhook = (webhookRes?.data || []).find(w => w.url?.includes('/api/asaas-webhook'));
+
+        return res.status(200).json({
+          success: true,
+          balance: balance.balance || 0,
+          monthlyRevenue: stats.totalValue || 0,
+          monthlyNetRevenue: stats.netValue || 0,
+          paymentsCount: stats.quantity || 0,
+          overdueCount: overdue.totalCount || 0,
+          activeSubscriptions: activeSubs.totalCount || 0,
+          webhookHealth: webhook ? {
+            enabled: webhook.enabled,
+            interrupted: webhook.interrupted || false,
+            eventsCount: webhook.events?.length || 0,
+          } : null,
+          lastReconcileReport: config.lastReconcileReport || null,
+        });
       }
 
       default:

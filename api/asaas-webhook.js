@@ -59,6 +59,65 @@ export default async function handler(req, res) {
     const payload = req.body;
     const { event, payment } = payload;
 
+    // ═══ SUBSCRIPTION_* events have different payload structure ═══
+    if (event?.startsWith('SUBSCRIPTION_')) {
+      const subData = payload.subscription;
+      if (!subData?.id) {
+        return res.status(200).json({ status: 'ignored', reason: 'no_subscription_data' });
+      }
+      console.log(`[asaas-webhook] Subscription event: ${event}, Sub: ${subData.id}, Status: ${subData.status}`);
+
+      // Find local subscription by gateway ID
+      const subRes = await sbQuery(
+        `subscriptions?gatewaySubscriptionId=eq.${subData.id}&select=*&limit=1`,
+        { headers: { Prefer: 'return=representation' } }
+      );
+      const subs = await subRes.json();
+      const localSub = subs?.[0];
+      if (!localSub) {
+        console.warn(`[asaas-webhook] No local subscription for ASAAS sub ${subData.id}`);
+        return res.status(200).json({ status: 'no_local_sub' });
+      }
+
+      const subUpdates = { lastWebhookAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+
+      switch (event) {
+        case 'SUBSCRIPTION_DELETED':
+        case 'SUBSCRIPTION_INACTIVATED':
+          // Only cancel if not already cancelled (avoid re-processing)
+          if (localSub.status !== 'cancelled') {
+            subUpdates.status = 'cancelled';
+            subUpdates.cancelledAt = new Date().toISOString();
+            // Set endDate to end of current billing cycle if not already set
+            if (!localSub.endDate && localSub.nextPaymentDate) {
+              subUpdates.endDate = localSub.nextPaymentDate;
+            }
+            console.log(`[asaas-webhook] Subscription ${localSub.id} cancelled via ASAAS panel`);
+          }
+          break;
+        case 'SUBSCRIPTION_UPDATED':
+          // Sync changes from ASAAS panel
+          // Note: price lives on subscription_plans, not subscriptions — value changes are logged only
+          if (subData.value) {
+            console.log(`[asaas-webhook] SUBSCRIPTION_UPDATED: ASAAS value=${subData.value} for sub ${localSub.id} (price lives on plan, not synced here)`);
+          }
+          if (subData.nextDueDate) {
+            subUpdates.nextPaymentDate = subData.nextDueDate;
+          }
+          break;
+      }
+
+      if (Object.keys(subUpdates).length > 2) { // more than just lastWebhookAt + updatedAt
+        await sbQuery(`subscriptions?id=eq.${localSub.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(subUpdates),
+        });
+        console.log(`[asaas-webhook] Subscription ${localSub.id} updated:`, Object.keys(subUpdates));
+      }
+
+      return res.status(200).json({ status: 'processed_subscription_event' });
+    }
+
     if (!event || !payment) {
       return res.status(400).json({ error: 'Invalid payload: missing event or payment' });
     }
@@ -98,26 +157,46 @@ export default async function handler(req, res) {
 
     // Log the billing event
     const eventId = crypto.randomUUID();
-    await sbQuery('billing_events', {
-      method: 'POST',
-      body: JSON.stringify({
-        id: eventId,
-        subscriptionId: subscription?.id || null,
-        clientId: subscription?.clientId || payment.customer || null,
-        asaasPaymentId: payment.id,
-        event: event,
-        status: payment.status,
-        amount: payment.value || null,
-        billingType: payment.billingType || null,
-        dueDate: payment.dueDate || null,
-        paymentDate: payment.paymentDate || null,
-        invoiceUrl: payment.invoiceUrl || null,
-        bankSlipUrl: payment.bankSlipUrl || null,
-        pixQrCode: payment.pixQrCodePayload ? `https://api.asaas.com/v3/payments/${payment.id}/pixQrCode` : null,
-        raw: payload,
-        processedAt: new Date().toISOString(),
-      }),
-    });
+    const baseEvent = {
+      id: eventId,
+      subscriptionId: subscription?.id || null,
+      clientId: subscription?.clientId || payment.customer || null,
+      asaasPaymentId: payment.id,
+      event: event,
+      status: payment.status,
+      amount: payment.value ?? null,
+      billingType: payment.billingType || null,
+      dueDate: payment.dueDate || null,
+      paymentDate: payment.paymentDate || null,
+      invoiceUrl: payment.invoiceUrl || null,
+      bankSlipUrl: payment.bankSlipUrl || null,
+      pixQrCode: payment.pixQrCodePayload ? `https://api.asaas.com/v3/payments/${payment.id}/pixQrCode` : null,
+      raw: payload,
+      processedAt: new Date().toISOString(),
+    };
+    // Financial fields (F4) — may not exist if SQL migration hasn't run
+    const extendedEvent = {
+      ...baseEvent,
+      netValue: payment.netValue ?? null,
+      transactionReceiptUrl: payment.transactionReceiptUrl || null,
+      creditDate: payment.creditDate || null,
+      confirmedDate: payment.confirmedDate || null,
+      invoiceNumber: payment.invoiceNumber || null,
+    };
+
+    try {
+      await sbQuery('billing_events', {
+        method: 'POST',
+        body: JSON.stringify(extendedEvent),
+      });
+    } catch (insertErr) {
+      // Fallback: retry without new columns (migration not yet applied)
+      console.warn('[asaas-webhook] Extended INSERT failed, retrying base-only:', insertErr.message);
+      await sbQuery('billing_events', {
+        method: 'POST',
+        body: JSON.stringify(baseEvent),
+      });
+    }
 
     // Update subscription based on event type
     if (subscription) {
@@ -246,7 +325,15 @@ export default async function handler(req, res) {
         case 'PAYMENT_UPDATED':
           updates.currentInvoiceUrl = payment.invoiceUrl || subscription.currentInvoiceUrl;
           updates.currentBankSlipUrl = payment.bankSlipUrl || subscription.currentBankSlipUrl;
-          if (payment.dueDate) updates.nextPaymentDate = payment.dueDate;
+          // F6: Only update nextPaymentDate if the new date is AFTER the current one
+          // Prevents PAYMENT_CREATED from overwriting a correct future date set by PAYMENT_CONFIRMED
+          if (payment.dueDate) {
+            const newDue = new Date(payment.dueDate);
+            const currentNext = subscription.nextPaymentDate ? new Date(subscription.nextPaymentDate) : null;
+            if (!currentNext || newDue > currentNext) {
+              updates.nextPaymentDate = payment.dueDate;
+            }
+          }
 
           // ── F2: Push notification for upcoming payment ──
           if (event === 'PAYMENT_CREATED' && payment.dueDate && subscription.clientId) {

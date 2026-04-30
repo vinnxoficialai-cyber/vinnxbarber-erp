@@ -14,7 +14,7 @@
         },
         {
             "path": "/api/push-cron-hourly",
-            "schedule": "0 9 * * *"
+            "schedule": "0 8-22 * * *"
         }
     ],
     "rewrites": [

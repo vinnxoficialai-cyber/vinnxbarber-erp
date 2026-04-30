@@ -76,6 +76,28 @@ async function getConfig() {
   return configs?.[0] || null;
 }
 
+// Cancel pending charges for a subscription (F11)
+// ASAAS does NOT auto-cancel pending charges when a subscription is deleted
+async function cancelPendingCharges(config, gatewaySubId) {
+  try {
+    const payments = await asaasRequest(config, `/subscriptions/${gatewaySubId}/payments?status=PENDING&limit=50`);
+    let cancelled = 0;
+    for (const p of (payments.data || [])) {
+      try {
+        await asaasRequest(config, `/payments/${p.id}`, 'DELETE');
+        cancelled++;
+      } catch (e) {
+        console.warn(`[asaas-public] Failed to cancel payment ${p.id}:`, e.message);
+      }
+    }
+    if (cancelled > 0) console.log(`[asaas-public] Cancelled ${cancelled} pending charge(s) for sub ${gatewaySubId}`);
+    return cancelled;
+  } catch (e) {
+    console.warn('[asaas-public] cancelPendingCharges failed:', e.message);
+    return 0;
+  }
+}
+
 // ASAAS API call
 async function asaasRequest(config, path, method = 'GET', body = null) {
   const baseUrl = config.environment === 'production'
@@ -446,8 +468,10 @@ export default async function handler(req, res) {
 
       // ═══ Get My Subscription ═══
       case 'getMySubscription': {
+        // F12: Include cancelled subs that still have active benefits (endDate > now)
+        const now = new Date().toISOString();
         const subRes = await sbQuery(
-          `subscriptions?clientId=eq.${client.id}&status=neq.cancelled&select=*,subscription_plans(*)&order=createdAt.desc&limit=1`
+          `subscriptions?clientId=eq.${client.id}&select=*,subscription_plans(*)&order=createdAt.desc&limit=1&or=(status.neq.cancelled,and(status.eq.cancelled,endDate.gt.${now}))`
         );
         const subs = await subRes.json();
         const sub = subs?.[0] || null;
@@ -471,7 +495,9 @@ export default async function handler(req, res) {
           if (config) {
             try {
               await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'DELETE');
-              console.log(`[asaas-public] ASAAS subscription ${sub.gatewaySubscriptionId} cancelled`);
+              // F11: Cancel any pending charges that survived the DELETE
+              await cancelPendingCharges(config, sub.gatewaySubscriptionId);
+              console.log(`[asaas-public] ASAAS subscription ${sub.gatewaySubscriptionId} cancelled + pending charges cleaned`);
             } catch (e) {
               console.error('[asaas-public] ASAAS cancel FAILED:', e.message);
               // Only ignore if already deleted/not found
@@ -524,7 +550,9 @@ export default async function handler(req, res) {
           if (config) {
             try {
               await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'DELETE');
-              console.log(`[asaas-public] ASAAS subscription ${sub.gatewaySubscriptionId} cancelled (pause)`);
+              // F11: Cancel pending charges on pause too
+              await cancelPendingCharges(config, sub.gatewaySubscriptionId);
+              console.log(`[asaas-public] ASAAS subscription ${sub.gatewaySubscriptionId} cancelled (pause) + pending charges cleaned`);
             } catch (e) {
               console.error('[asaas-public] ASAAS pause-cancel FAILED:', e.message);
               if (!e.message?.includes('not_found') && !e.message?.includes('404')) {
@@ -553,12 +581,59 @@ export default async function handler(req, res) {
 
       // ═══ Get My Payment History (F4) ═══
       case 'getMyPaymentHistory': {
-        const eventsRes = await sbQuery(
-          `billing_events?clientId=eq.${client.id}&select=id,event,status,amount,billingType,dueDate,paymentDate,invoiceUrl,bankSlipUrl,processedAt&order=processedAt.desc&limit=30`,
+        // N2: Try ASAAS live data first (has netValue, receipt URLs, real-time status)
+        const subRes = await sbQuery(
+          `subscriptions?clientId=eq.${client.id}&gatewaySubscriptionId=not.is.null&select=gatewaySubscriptionId&limit=1`,
           { headers: { Prefer: 'return=representation' } }
         );
-        const events = await eventsRes.json();
-        return res.status(200).json({ success: true, events: events || [] });
+        const subs = await subRes.json();
+
+        if (subs?.[0]?.gatewaySubscriptionId) {
+          const config = await getConfig();
+          if (config) {
+            try {
+              const payments = await asaasRequest(config,
+                `/subscriptions/${subs[0].gatewaySubscriptionId}/payments?limit=20&sort=dueDate&order=desc`);
+              return res.status(200).json({
+                success: true,
+                events: (payments.data || []).map(p => ({
+                  event: `PAYMENT_${p.status}`,
+                  status: p.status,
+                  amount: p.value,
+                  netValue: p.netValue,
+                  dueDate: p.dueDate,
+                  paymentDate: p.confirmedDate || p.paymentDate,
+                  invoiceUrl: p.invoiceUrl,
+                  transactionReceiptUrl: p.transactionReceiptUrl,
+                  billingType: p.billingType,
+                  creditDate: p.creditDate,
+                  processedAt: p.dateCreated,
+                })),
+                source: 'asaas_live',
+              });
+            } catch (e) {
+              console.warn('[asaas-public] Live payment fetch failed, falling back to local:', e.message);
+            }
+          }
+        }
+
+        // Fallback: local billing_events
+        let events = [];
+        try {
+          const eventsRes = await sbQuery(
+            `billing_events?clientId=eq.${client.id}&select=id,event,status,amount,netValue,billingType,dueDate,paymentDate,invoiceUrl,bankSlipUrl,transactionReceiptUrl,creditDate,processedAt&order=processedAt.desc&limit=30`,
+            { headers: { Prefer: 'return=representation' } }
+          );
+          events = await eventsRes.json();
+        } catch {
+          // Fallback without extended columns (migration not yet applied)
+          const eventsRes = await sbQuery(
+            `billing_events?clientId=eq.${client.id}&select=id,event,status,amount,billingType,dueDate,paymentDate,invoiceUrl,bankSlipUrl,processedAt&order=processedAt.desc&limit=30`,
+            { headers: { Prefer: 'return=representation' } }
+          );
+          events = await eventsRes.json();
+        }
+        return res.status(200).json({ success: true, events: events || [], source: 'local' });
       }
 
       // ═══ Update Payment Method / Change Card (F3) ═══
@@ -757,6 +832,9 @@ export default async function handler(req, res) {
           cycle: recurrenceMap[plan.recurrence] || 'MONTHLY',
           description: `Assinatura ${plan.name} (reativada)`,
           externalReference: sub.id,
+          // F8: Include fine/interest (was missing in reactivation, present in creation)
+          fine: { value: config.finePercent || 0, type: 'PERCENTAGE' },
+          interest: { value: config.interestPercent || 0, type: 'PERCENTAGE' },
         };
 
         // Use token if available, otherwise raw card data
@@ -928,7 +1006,9 @@ export default async function handler(req, res) {
             await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'PUT', {
               value: newPrice,
               description: `Assinatura ${newPlan.name}`,
-              // updatePendingPayments NOT set (default false) — only future bills affected
+              // F9: Include fine/interest to prevent them from being zeroed out
+              fine: { value: config.finePercent || 0, type: 'PERCENTAGE' },
+              interest: { value: config.interestPercent || 0, type: 'PERCENTAGE' },
             });
           } catch (asaasErr) {
             console.warn('[asaas-public] ASAAS value update failed (non-fatal):', asaasErr.message);
@@ -1000,6 +1080,102 @@ export default async function handler(req, res) {
           prefer: 'return=minimal',
         });
         return res.status(200).json({ success: true });
+      }
+
+      // ═══ N1: Sync Customer Data to ASAAS ═══
+      case 'syncCustomerData': {
+        const { name, email, phone } = data || {};
+        if (!client.asaasCustomerId) {
+          return res.status(200).json({ success: true, skipped: true, reason: 'no_gateway_customer' });
+        }
+        const config = await getConfig();
+        if (!config) return res.status(200).json({ success: true, skipped: true, reason: 'no_config' });
+
+        const updateData = {};
+        if (name) updateData.name = name;
+        if (email) updateData.email = email;
+        if (phone) updateData.mobilePhone = phone.replace(/\D/g, '');
+
+        if (Object.keys(updateData).length === 0) {
+          return res.status(200).json({ success: true, skipped: true, reason: 'no_changes' });
+        }
+
+        try {
+          await asaasRequest(config, `/customers/${client.asaasCustomerId}`, 'PUT', updateData);
+          console.log(`[asaas-public] Customer ${client.asaasCustomerId} synced:`, Object.keys(updateData));
+          return res.status(200).json({ success: true, synced: Object.keys(updateData) });
+        } catch (e) {
+          console.warn('[asaas-public] Customer sync failed (non-fatal):', e.message);
+          return res.status(200).json({ success: true, skipped: true, reason: e.message });
+        }
+      }
+      // ═══ Update Auth Profile (Supabase Auth) ═══
+      // Syncs email + user_metadata (name, phone) in Supabase Auth so login
+      // works with new email and metadata stays fresh for auto-create fallback.
+      case 'updateAuthEmail': {
+        const { newEmail, name, phone } = data || {};
+
+        // Get the authUserId linked to this client
+        if (!client.authUserId) {
+          return res.status(400).json({ error: 'Conta sem autenticação vinculada' });
+        }
+
+        // Build the update payload
+        const authPayload = {};
+
+        // ── Email change ──
+        if (newEmail?.trim()) {
+          const normalizedEmail = newEmail.trim().toLowerCase();
+
+          // Validate email format
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+            return res.status(400).json({ error: 'Formato de email inválido' });
+          }
+
+          authPayload.email = normalizedEmail;
+          authPayload.email_confirm = true; // Skip verification — admin-initiated
+        }
+
+        // ── User metadata (name, phone) ──
+        const metadataUpdates = {};
+        if (name?.trim()) metadataUpdates.name = name.trim();
+        if (phone?.trim()) metadataUpdates.phone = phone.trim().replace(/\D/g, '');
+
+        if (Object.keys(metadataUpdates).length > 0) {
+          authPayload.user_metadata = metadataUpdates;
+        }
+
+        // Nothing to update
+        if (Object.keys(authPayload).length === 0) {
+          return res.status(200).json({ success: true, skipped: true, reason: 'no_changes' });
+        }
+
+        // Update Supabase Auth via Admin API
+        // Supabase natively rejects duplicate emails with 422 — no need for pre-check
+        const authUpdateRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${client.authUserId}`, {
+          method: 'PUT',
+          headers: {
+            apikey: SUPABASE_SERVICE_KEY,
+            Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(authPayload),
+        });
+
+        if (!authUpdateRes.ok) {
+          const errBody = await authUpdateRes.text();
+          console.error('[asaas-public] Auth profile update failed:', errBody);
+          // Parse Supabase error for user-friendly message
+          const isDuplicate = errBody.includes('already been registered') || errBody.includes('duplicate') || errBody.includes('unique');
+          if (isDuplicate) {
+            return res.status(409).json({ error: 'Este email já está em uso por outra conta' });
+          }
+          return res.status(500).json({ error: 'Falha ao atualizar dados de autenticação. Tente novamente.' });
+        }
+
+        const updated = Object.keys(authPayload).filter(k => k !== 'email_confirm');
+        console.log(`[asaas-public] Auth profile updated for user ${client.authUserId}:`, updated);
+        return res.status(200).json({ success: true, updated });
       }
 
       default:

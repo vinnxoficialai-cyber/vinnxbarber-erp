@@ -7,7 +7,8 @@ import {
     History, CalendarOff, Gift, UserPlus,
     EyeOff, Receipt, Repeat, UserX, Scissors, Eye,
     Link, Zap, Globe, ExternalLink, Landmark, Shield, Wallet, ArrowRight, Info, Filter,
-    Target, Clock, Activity, ShoppingBag, UserCheck, Award, LayoutDashboard, CalendarDays
+    Target, Clock, Activity, ShoppingBag, UserCheck, Award, LayoutDashboard, CalendarDays,
+    RefreshCw, Wifi, WifiOff
 } from 'lucide-react';
 import { SubscriptionPlan, Subscription, TeamMember, PlanServiceRule, PlanProductRule, Comanda, Transaction } from '../types';
 import { useConfirm } from '../components/ConfirmModal';
@@ -20,7 +21,7 @@ import {
     getSubscriptionInterests, updateSubscriptionInterestStatus, deleteSubscriptionInterest,
 } from '../lib/dataService';
 import type { SubscriptionInterest } from '../lib/dataService';
-import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription, tokenizeCreditCard, updateAsaasSubscription, cancelAsaasSubscription, configureAsaasWebhook, getAsaasWebhookStatus } from '../lib/asaasService';
+import { testAsaasConnection, createAsaasCustomer, createAsaasSubscription, tokenizeCreditCard, updateAsaasSubscription, cancelAsaasSubscription, configureAsaasWebhook, getFinancialDashboard } from '../lib/asaasService';
 import type { BillingGatewayConfig } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppData } from '../context/AppDataContext';
@@ -55,6 +56,7 @@ const defaultPlanForm = (): SubscriptionPlan => ({
     creditEnabled: true, creditPrice: undefined, boletoEnabled: false, boletoPrice: undefined,
     benefits: [], planServices: [], planProducts: [], disabledDays: [], excludedProfessionals: [],
     unitScope: 'all', allowedUnitIds: [],
+    comboMode: false, comboServiceIds: [],
 });
 
 export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMode, currentUser }) => {
@@ -123,6 +125,15 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
     const [integrationConfig, setIntegrationConfig] = useState<BillingGatewayConfig>(defaultBillingConfig);
     const [integrationTesting, setIntegrationTesting] = useState(false);
     const [showApiKey, setShowApiKey] = useState(false);
+    // N7: Financial Dashboard state
+    const [gatewayDash, setGatewayDash] = useState<any>(null);
+    const [dashRefreshing, setDashRefreshing] = useState(false);
+    const loadDashboard = async () => {
+        setDashRefreshing(true);
+        try { const d = await getFinancialDashboard(); setGatewayDash(d); } catch {}
+        finally { setDashRefreshing(false); }
+    };
+    useEffect(() => { if (activeTab === 'integration' && integrationConfig.apiKey && !gatewayDash) { loadDashboard(); } }, [activeTab, integrationConfig.apiKey]);
 
     useEffect(() => { (async () => { setLoading(true); try { const [p, s, bc, si] = await Promise.all([getSubscriptionPlans(), getSubscriptions(), getBillingConfig(), getSubscriptionInterests()]); setPlans(p); setSubscriptions(s); if (bc) setIntegrationConfig(bc); setInterests(si); } finally { setLoading(false); } })(); }, []);
     const formatCurrency = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -236,7 +247,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
         // ═══ SYNC PRICE TO ASAAS (when editing and price changed) ═══
         if (editingPlanId && integrationConfig.apiKey) {
             const oldPlan = plans.find(p => p.id === editingPlanId);
-            if (oldPlan && oldPlan.price !== plan.price) {
+            if (oldPlan && (oldPlan.price !== plan.price || oldPlan.name !== plan.name)) {
                 // Find all active/pending subs for this plan that have a gateway ID
                 const affectedSubs = subscriptions.filter(s => 
                     s.planId === editingPlanId && 
@@ -775,6 +786,46 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
                                         </table>
                                     </div>
                                 )}
+                                {/* Global usage limits & Combo Mode */}
+                                <div className={`p-4 rounded-lg border ${borderCol} space-y-4 mt-4`}>
+                                    <p className={`text-xs font-semibold ${textMain} uppercase`}>Limites & Combo</p>
+                                    <div>
+                                        <label className={labelCls}><Hash size={12} /> Limite mensal global de usos</label>
+                                        <input type="number" value={planForm.maxUsesPerMonth ?? ''} onChange={e => setPlanForm(p => ({ ...p, maxUsesPerMonth: e.target.value ? parseInt(e.target.value) : undefined }))} className={inputCls} min="0" step="1" placeholder="Deixe vazio para ilimitado" />
+                                        <p className={`text-[10px] ${textSub} mt-1`}>Máximo de vezes que o assinante pode usar os serviços do plano por mês.</p>
+                                    </div>
+                                    <div className={`p-3 rounded-lg border ${borderCol}`}>
+                                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                                            <input type="checkbox" checked={!!planForm.comboMode} onChange={e => setPlanForm(p => ({ ...p, comboMode: e.target.checked }))} className="accent-primary w-4 h-4" />
+                                            <span className={`font-medium ${textMain}`}>Modo Combo</span>
+                                        </label>
+                                        <p className={`text-[10px] ${textSub} mt-1 ml-6`}>Quando ativo: combo completo = 1 uso, serviço individual do combo = 0.5 uso.</p>
+                                        {planForm.comboMode && (
+                                            <div className="mt-3 ml-6">
+                                                <label className={labelCls}>Serviços do Combo</label>
+                                                <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                                                    {planForm.planServices.map(ps => {
+                                                        const svc = services.find(s => s.id === ps.serviceId);
+                                                        const checked = (planForm.comboServiceIds || []).includes(ps.serviceId);
+                                                        return (
+                                                            <label key={ps.serviceId} className="flex items-center gap-2 text-sm cursor-pointer">
+                                                                <input type="checkbox" checked={checked}
+                                                                    onChange={e => setPlanForm(p => ({
+                                                                        ...p,
+                                                                        comboServiceIds: e.target.checked
+                                                                            ? [...(p.comboServiceIds || []), ps.serviceId]
+                                                                            : (p.comboServiceIds || []).filter(id => id !== ps.serviceId)
+                                                                    }))} className="accent-primary w-3.5 h-3.5" />
+                                                                <span className={textSub}>{svc?.name || ps.serviceId}</span>
+                                                            </label>
+                                                        );
+                                                    })}
+                                                    {planForm.planServices.length === 0 && <p className={`text-[10px] ${textSub}`}>Adicione serviços primeiro.</p>}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             </>)}
                             {/* Section 4: Produtos */}
                             {planModalSection === 4 && (<>
@@ -2039,6 +2090,71 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
                             </div>
                         </div>
                     </div>
+
+                    {/* ═══ N7: Financial Dashboard (live ASAAS data) ═══ */}
+                    {integrationConfig.apiKey && (
+                        <div>
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className={`text-sm font-bold ${textMain} flex items-center gap-2`}><BarChart3 size={16} className="text-primary" /> Dashboard Financeiro ASAAS</h3>
+                                <button onClick={loadDashboard} disabled={dashRefreshing}
+                                    className={`p-2 rounded-lg hover:bg-muted/50 transition-all ${dashRefreshing ? 'animate-spin' : ''}`}>
+                                    <RefreshCw size={14} className={textSub} />
+                                </button>
+                            </div>
+                            {!gatewayDash ? (
+                                <div className="flex items-center justify-center py-8">
+                                    <Loader2 size={24} className="animate-spin text-primary" />
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                        {[
+                                            { label: 'Saldo ASAAS', value: formatCurrency(gatewayDash.balance || 0), icon: Wallet, color: 'text-emerald-500', bg: 'bg-emerald-500/10', sub: null },
+                                            { label: 'Faturamento Bruto', value: formatCurrency(gatewayDash.monthlyRevenue || 0), icon: DollarSign, color: 'text-blue-500', bg: 'bg-blue-500/10', sub: `${gatewayDash.paymentsCount || 0} cobranças` },
+                                            { label: 'Faturamento Líquido', value: formatCurrency(gatewayDash.monthlyNetRevenue || 0), icon: TrendingUp, color: 'text-cyan-500', bg: 'bg-cyan-500/10', sub: gatewayDash.monthlyRevenue > 0 ? `${((1 - gatewayDash.monthlyNetRevenue / gatewayDash.monthlyRevenue) * 100).toFixed(1)}% taxas` : null },
+                                            { label: 'Inadimplentes', value: String(gatewayDash.overdueCount || 0), icon: AlertCircle, color: gatewayDash.overdueCount > 0 ? 'text-red-500' : 'text-emerald-500', bg: gatewayDash.overdueCount > 0 ? 'bg-red-500/10' : 'bg-emerald-500/10', sub: `${gatewayDash.activeSubscriptions || 0} subs ativas` },
+                                        ].map((k, i) => (
+                                            <div key={i} className={`${bgCard} border ${borderCol} rounded-xl p-4 ${shadowClass}`}>
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <div className={`p-1.5 rounded-lg ${k.bg}`}><k.icon size={14} className={k.color} /></div>
+                                                    <p className={`text-xs ${textSub}`}>{k.label}</p>
+                                                </div>
+                                                <p className={`text-xl font-bold ${textMain}`}>{k.value}</p>
+                                                {k.sub && <p className={`text-[10px] ${textSub} mt-1`}>{k.sub}</p>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {/* Webhook Health Bar */}
+                                    <div className={`${bgCard} border ${borderCol} rounded-xl p-4 ${shadowClass} flex flex-wrap items-center gap-4 text-xs`}>
+                                        {gatewayDash.webhookHealth ? (
+                                            <>
+                                                <div className="flex items-center gap-2">
+                                                    {gatewayDash.webhookHealth.interrupted
+                                                        ? <><WifiOff size={14} className="text-red-500" /><span className="font-bold text-red-500">Webhook INTERROMPIDO</span></>
+                                                        : <><Wifi size={14} className="text-emerald-500" /><span className="font-bold text-emerald-500">Webhook ativo</span></>
+                                                    }
+                                                </div>
+                                                <span className={textSub}>{gatewayDash.webhookHealth.eventsCount} events registrados</span>
+                                                <span className={textSub}>{gatewayDash.activeSubscriptions} subs ativas no ASAAS</span>
+                                            </>
+                                        ) : (
+                                            <div className="flex items-center gap-2">
+                                                <WifiOff size={14} className="text-red-500" />
+                                                <span className="font-bold text-red-500">Webhook não configurado</span>
+                                                <span className={textSub}>— Salve a configuração para registrar automaticamente</span>
+                                            </div>
+                                        )}
+                                        {gatewayDash.lastReconcileReport?.runAt && (
+                                            <span className={`${textSub} ml-auto`}>
+                                                Último reconcile: {new Date(gatewayDash.lastReconcileReport.runAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                                {gatewayDash.lastReconcileReport.divergences > 0 && <span className="text-amber-500 font-bold ml-2">⚠ {gatewayDash.lastReconcileReport.divergences} divergência(s)</span>}
+                                            </span>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
 
                     {/* Section 3: Integration Status */}
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-4">

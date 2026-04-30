@@ -38,8 +38,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Get billing config
-    const configRes = await sbQuery('billing_gateway_config?active=eq.true&select=apiKey,environment&limit=1');
+    // 1. Get billing config (include id for saving report)
+    const configRes = await sbQuery('billing_gateway_config?active=eq.true&select=id,apiKey,environment&limit=1');
     const configs = await configRes.json();
     const config = configs?.[0];
     if (!config) {
@@ -103,10 +103,15 @@ export default async function handler(req, res) {
     const errors = [];
     for (const orphan of orphans) {
       try {
-        await fetch(`${baseUrl}/subscriptions/${orphan.id}`, {
+        // F10: Validate DELETE response
+        const delRes = await fetch(`${baseUrl}/subscriptions/${orphan.id}`, {
           method: 'DELETE',
           headers: { 'access_token': config.apiKey },
         });
+        if (!delRes.ok) {
+          const errText = await delRes.text();
+          throw new Error(`HTTP ${delRes.status}: ${errText}`);
+        }
         cancelled.push({
           id: orphan.id,
           customer: orphan.customer,
@@ -116,6 +121,8 @@ export default async function handler(req, res) {
           reason: localGatewayIds.has(orphan.id) ? 'local_cancelled' : 'no_local_record',
         });
         console.log(`[reconcile] Cancelled orphan: ${orphan.id} (${orphan.description}, R$${orphan.value})`);
+        // F10: Rate limiting — 200ms delay between DELETEs to avoid ASAAS throttling
+        await new Promise(r => setTimeout(r, 200));
       } catch (err) {
         errors.push({ id: orphan.id, error: err.message });
         console.error(`[reconcile] Failed to cancel ${orphan.id}:`, err.message);
@@ -137,15 +144,117 @@ export default async function handler(req, res) {
       });
     }
 
-    return res.status(200).json({
-      success: true,
+    // F13: Detect status divergence (ASAAS ACTIVE but local overdue = lost webhook)
+    const divergences = [];
+    for (const asaasSub of allAsaasSubs) {
+      if (localGatewayIds.has(asaasSub.id) && !cancelledLocalIds.has(asaasSub.id)) {
+        const localSub = (localSubs || []).find(s => s.gatewaySubscriptionId === asaasSub.id);
+        if (localSub && localSub.status === 'overdue' && asaasSub.status === 'ACTIVE') {
+          divergences.push({ gatewayId: asaasSub.id, asaasStatus: 'ACTIVE', localStatus: 'overdue' });
+          console.warn(`[reconcile] DIVERGENCE: ${asaasSub.id} — ASAAS=ACTIVE, local=overdue (possible lost webhook)`);
+        }
+      }
+    }
+    if (divergences.length > 0) {
+      console.warn(`[reconcile] ${divergences.length} status divergence(s) detected`);
+    }
+
+    // N8: Health Monitor — check webhook status
+    let webhookHealth = null;
+    try {
+      const whRes = await fetch(`${baseUrl}/webhooks`, {
+        headers: { 'access_token': config.apiKey },
+      });
+      if (whRes.ok) {
+        const whData = await whRes.json();
+        const ours = (whData.data || []).find(w => w.url?.includes('/api/asaas-webhook'));
+        if (ours) {
+          webhookHealth = {
+            enabled: ours.enabled,
+            interrupted: ours.interrupted || false,
+            penalizedRequestsCount: ours.penalizedRequestsCount || 0,
+            eventsCount: ours.events?.length || 0,
+          };
+          if (ours.interrupted) {
+            console.error('[reconcile] ⚠️ WEBHOOK INTERRUPTED — ASAAS stopped sending events!');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[reconcile] Health check failed:', e.message);
+    }
+
+    // N5: Weekly customer cleanup (Sundays only)
+    let customersCleanedUp = 0;
+    if (new Date().getUTCDay() === 0) {
+      try {
+        const custRes = await fetch(`${baseUrl}/customers?limit=100`, {
+          headers: { 'access_token': config.apiKey },
+        });
+        if (custRes.ok) {
+          const custData = await custRes.json();
+          for (const cust of (custData.data || [])) {
+            if (!cust.canDelete || cust.deleted) continue;
+            // Check if customer has any active subscriptions in ASAAS
+            const custSubRes = await fetch(`${baseUrl}/subscriptions?customer=${cust.id}&status=ACTIVE&limit=1`, {
+              headers: { 'access_token': config.apiKey },
+            });
+            if (custSubRes.ok) {
+              const custSubData = await custSubRes.json();
+              if (custSubData.totalCount === 0) {
+                // No active subs — check if there's a local record
+                const localCustRes = await sbQuery(
+                  `clients?asaasCustomerId=eq.${cust.id}&select=id&limit=1`
+                );
+                const localCust = await localCustRes.json();
+                if (!localCust?.length) {
+                  // No local client either — orphaned customer, safe to delete
+                  const delRes = await fetch(`${baseUrl}/customers/${cust.id}`, {
+                    method: 'DELETE',
+                    headers: { 'access_token': config.apiKey },
+                  });
+                  if (delRes.ok) {
+                    customersCleanedUp++;
+                    console.log(`[reconcile] Cleaned up orphaned customer: ${cust.id} (${cust.name})`);
+                  }
+                  await new Promise(r => setTimeout(r, 200));
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[reconcile] Customer cleanup failed:', e.message);
+      }
+    }
+
+    // Build reconcile report
+    const report = {
+      runAt: new Date().toISOString(),
       totalAsaas: allAsaasSubs.length,
       totalLocal: localGatewayIds.size,
       orphansFound: orphans.length,
       orphansCancelled: cancelled.length,
+      divergences: divergences.length,
+      customersCleanedUp,
+      webhookHealth,
       errors: errors.length,
+    };
+
+    // Save report to config (N8)
+    if (config.id) {
+      await sbQuery(`billing_gateway_config?id=eq.${config.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ lastReconcileReport: report, updatedAt: new Date().toISOString() }),
+        prefer: 'return=minimal',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      ...report,
       cancelled,
-      runAt: new Date().toISOString(),
+      divergences,
     });
 
   } catch (error) {

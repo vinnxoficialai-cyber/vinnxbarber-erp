@@ -923,6 +923,10 @@ export interface SubscriptionPlan {
   unitScope: 'all' | 'specific';   // Funciona em todas ou só em unidades específicas?
   allowedUnitIds: string[];        // Se 'specific': quais unidades?
 
+  // Combo Mode (fractional quota)
+  comboMode?: boolean;             // true = booking all combo services = 1 use, partial = 0.5
+  comboServiceIds?: string[];      // Service IDs that form the combo group
+
   createdAt?: string;
   updatedAt?: string;
 }

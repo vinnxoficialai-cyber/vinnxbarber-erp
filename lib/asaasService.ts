@@ -134,3 +134,18 @@ export async function getAsaasWebhookStatus(): Promise<{
 }> {
     return callApi('getWebhookStatus');
 }
+
+// N6: Financial Dashboard (live ASAAS data)
+export async function getFinancialDashboard(): Promise<{
+    success: boolean;
+    balance: number;
+    monthlyRevenue: number;
+    monthlyNetRevenue: number;
+    paymentsCount: number;
+    overdueCount: number;
+    activeSubscriptions: number;
+    webhookHealth: { enabled: boolean; interrupted: boolean; eventsCount: number } | null;
+    lastReconcileReport: any;
+}> {
+    return callApi('getFinancialDashboard');
+}
