@@ -5,6 +5,10 @@
             "schedule": "0 3 * * *"
         },
         {
+            "path": "/api/subscription-reconcile",
+            "schedule": "0 4 * * *"
+        },
+        {
             "path": "/api/push-cron-daily",
             "schedule": "0 12 * * *"
         },
