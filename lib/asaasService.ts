@@ -106,6 +106,7 @@ export async function updateAsaasSubscription(data: {
 export async function cancelAsaasSubscription(data: {
     gatewaySubscriptionId: string;
     subscriptionId?: string;
+    hardCancel?: boolean; // true = DELETE from Asaas; false (default) = soft cancel (clear charges only)
 }): Promise<{ success: boolean }> {
     return callApi('cancelSubscription', data);
 }

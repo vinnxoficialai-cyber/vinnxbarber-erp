@@ -431,7 +431,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
             if (existingSub?.gatewaySubscriptionId && existingSub.status !== 'cancelled') {
                 try {
                     toast.info('Cancelando no ASAAS...', 'Cancelando cobrança recorrente...');
-                    await cancelAsaasSubscription({ gatewaySubscriptionId: existingSub.gatewaySubscriptionId, subscriptionId: editingSubId });
+                    await cancelAsaasSubscription({ gatewaySubscriptionId: existingSub.gatewaySubscriptionId, subscriptionId: editingSubId, hardCancel: false });
                     toast.success('ASAAS atualizado', 'Cobrança recorrente cancelada no gateway.');
                 } catch (err: any) {
                     console.error('ASAAS cancel sync error:', err);
@@ -618,7 +618,7 @@ export const Assinaturas: React.FC<AssinaturasProps> = ({ isDarkMode: _isDarkMod
         if (sub?.gatewaySubscriptionId && integrationConfig.apiKey) {
             try {
                 toast.info('Cancelando...', 'Cancelando cobrança no ASAAS...');
-                await cancelAsaasSubscription({ gatewaySubscriptionId: sub.gatewaySubscriptionId, subscriptionId: sub.id });
+                await cancelAsaasSubscription({ gatewaySubscriptionId: sub.gatewaySubscriptionId, subscriptionId: sub.id, hardCancel: true });
             } catch (err: any) {
                 console.error('ASAAS cancel error:', err);
                 toast.warning('Aviso', `Cobrança ASAAS não cancelada: ${err.message}. A assinatura local será excluída.`);

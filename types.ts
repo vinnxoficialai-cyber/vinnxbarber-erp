@@ -176,6 +176,18 @@ export interface StatMetric {
 
 export type EventType = 'meeting' | 'work' | 'personal' | 'deadline' | 'delivery' | 'blocked' | 'appointment';
 
+// Sub-service within a compound appointment
+export interface ServiceSlot {
+  serviceId: string;
+  serviceName: string;
+  barberId: string;
+  barberName: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  status: string; // mirrors CalendarEvent status lifecycle
+}
+
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -207,6 +219,9 @@ export interface CalendarEvent {
   ratingComment?: string;    // Client review comment
   usedReferralCredit?: boolean; // Whether referral credit was used
   usedInPlan?: boolean;          // Whether this appointment was covered by a subscription plan
+  // Compound event fields
+  serviceSlots?: ServiceSlot[];  // Sub-services with individual barber/time/status
+  groupId?: string;              // Links events that were split from a single booking
 }
 
 export interface PersonalTask {
@@ -951,6 +966,7 @@ export interface Subscription {
   invoiceUrl?: string;
   cardBrand?: string;           // visa, mastercard, elo...
   cardLast4?: string;           // últimos 4 dígitos
+  creditCardToken?: string;     // token ASAAS para reativação rápida (não é dado sensível)
   billingEmail?: string;        // email de cobrança
 
   // Sales / Commission fields

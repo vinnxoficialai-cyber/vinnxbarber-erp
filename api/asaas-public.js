@@ -425,6 +425,7 @@ export default async function handler(req, res) {
           gatewayCustomerId: customerId,
           cardBrand: tokenBrand || null,
           cardLast4: tokenLast4 || null,
+          creditCardToken: creditCardToken || null,
           updatedAt: new Date().toISOString(),
         };
 
@@ -478,7 +479,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, subscription: sub });
       }
 
-      // ═══ Cancel My Subscription ═══
+      // ═══ Cancel My Subscription (SOFT CANCEL) ═══
       case 'cancelMySubscription': {
         const { reason } = data || {};
         // Find active subscription for this client
@@ -489,28 +490,6 @@ export default async function handler(req, res) {
         const sub = subs?.[0];
         if (!sub) return res.status(400).json({ error: 'Nenhuma assinatura encontrada.' });
 
-        // Cancel in ASAAS if has gateway ID (MUST succeed before local update)
-        if (sub.gatewaySubscriptionId) {
-          const config = await getConfig();
-          if (config) {
-            try {
-              await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'DELETE');
-              // F11: Cancel any pending charges that survived the DELETE
-              await cancelPendingCharges(config, sub.gatewaySubscriptionId);
-              console.log(`[asaas-public] ASAAS subscription ${sub.gatewaySubscriptionId} cancelled + pending charges cleaned`);
-            } catch (e) {
-              console.error('[asaas-public] ASAAS cancel FAILED:', e.message);
-              // Only ignore if already deleted/not found
-              if (!e.message?.includes('not_found') && !e.message?.includes('404')) {
-                return res.status(400).json({
-                  error: 'Não foi possível cancelar a assinatura no gateway de pagamento. Tente novamente ou entre em contato com o suporte.',
-                  errorCode: 'GATEWAY_CANCEL_FAILED',
-                });
-              }
-            }
-          }
-        }
-
         // Calculate when benefits expire (end of current paid period)
         // Only grant benefit period if there was at least one confirmed payment
         const hadSuccessfulPayment = !!sub.lastPaymentDate;
@@ -518,7 +497,42 @@ export default async function handler(req, res) {
           ? (sub.nextPaymentDate || sub.endDate || new Date().toISOString())
           : new Date().toISOString(); // Never paid → no benefit period
 
-        // Update local
+        // SOFT CANCEL: keep ASAAS subscription alive for zero-cost reactivation
+        // Only cancel pending charges to prevent next billing cycle charge
+        // Hard cancel (DELETE) only if client never paid — no benefit period to preserve
+        if (sub.gatewaySubscriptionId) {
+          const config = await getConfig();
+          if (config) {
+            if (!hadSuccessfulPayment) {
+              // Never paid → hard cancel immediately (no benefit period, no reactivation value)
+              try {
+                await cancelPendingCharges(config, sub.gatewaySubscriptionId);
+                await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'DELETE');
+                console.log(`[asaas-public] Hard cancel (never paid): ${sub.gatewaySubscriptionId}`);
+              } catch (e) {
+                console.error('[asaas-public] ASAAS hard cancel FAILED:', e.message);
+                if (!e.message?.includes('not_found') && !e.message?.includes('404')) {
+                  return res.status(400).json({
+                    error: 'Não foi possível cancelar a assinatura no gateway de pagamento. Tente novamente ou entre em contato com o suporte.',
+                    errorCode: 'GATEWAY_CANCEL_FAILED',
+                  });
+                }
+              }
+            } else {
+              // Paid → SOFT CANCEL: cancel pending charges but keep Asaas sub alive
+              // The daily hard-cancel cron will DELETE the Asaas sub when endDate arrives
+              try {
+                const cleared = await cancelPendingCharges(config, sub.gatewaySubscriptionId);
+                console.log(`[asaas-public] Soft cancel: ${cleared} pending charge(s) cleared for ${sub.gatewaySubscriptionId}, Asaas sub kept alive`);
+              } catch (e) {
+                // Non-fatal: charges may already be cleared or sub may be in a state without charges
+                console.warn('[asaas-public] Soft cancel charge cleanup warning:', e.message);
+              }
+            }
+          }
+        }
+
+        // Update local — gatewaySubscriptionId preserved for soft cancel (enables zero-cost reactivation)
         await sbQuery(`subscriptions?id=eq.${sub.id}`, {
           method: 'PATCH',
           body: JSON.stringify({
@@ -535,7 +549,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, endDate });
       }
 
-      // ═══ Pause My Subscription ═══
+      // ═══ Pause My Subscription (SOFT PAUSE) ═══
       case 'pauseMySubscription': {
         const subRes = await sbQuery(
           `subscriptions?clientId=eq.${client.id}&status=eq.active&select=*&order=createdAt.desc&limit=1`
@@ -544,32 +558,32 @@ export default async function handler(req, res) {
         const sub = subs?.[0];
         if (!sub) return res.status(400).json({ error: 'Nenhuma assinatura ativa encontrada.' });
 
-        // ASAAS has no "pause" — cancel the subscription to stop charges
+        // SOFT PAUSE: cancel pending charges but keep Asaas subscription alive
+        // This allows frictionless reactivation without re-creating the Asaas subscription
         if (sub.gatewaySubscriptionId) {
           const config = await getConfig();
           if (config) {
             try {
-              await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'DELETE');
-              // F11: Cancel pending charges on pause too
-              await cancelPendingCharges(config, sub.gatewaySubscriptionId);
-              console.log(`[asaas-public] ASAAS subscription ${sub.gatewaySubscriptionId} cancelled (pause) + pending charges cleaned`);
+              const cleared = await cancelPendingCharges(config, sub.gatewaySubscriptionId);
+              console.log(`[asaas-public] Soft pause: ${cleared} pending charge(s) cleared for ${sub.gatewaySubscriptionId}, Asaas sub kept alive`);
             } catch (e) {
-              console.error('[asaas-public] ASAAS pause-cancel FAILED:', e.message);
-              if (!e.message?.includes('not_found') && !e.message?.includes('404')) {
-                return res.status(400).json({
-                  error: 'Não foi possível pausar a assinatura. Tente novamente.',
-                  errorCode: 'GATEWAY_PAUSE_FAILED',
-                });
-              }
+              console.warn('[asaas-public] Soft pause charge cleanup warning:', e.message);
+              // Non-fatal: proceed with local pause even if charge cleanup fails
             }
           }
         }
+
+        // Calculate pause endDate: when benefits expire (for hard cancel cron)
+        // Use nextPaymentDate if available, otherwise 60-day max pause window
+        const pauseEndDate = sub.nextPaymentDate
+          || new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
 
         await sbQuery(`subscriptions?id=eq.${sub.id}`, {
           method: 'PATCH',
           body: JSON.stringify({
             status: 'paused',
             pausedAt: new Date().toISOString(),
+            endDate: pauseEndDate,
             pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
             updatedAt: new Date().toISOString(),
           }),
@@ -713,6 +727,7 @@ export default async function handler(req, res) {
           body: JSON.stringify({
             cardBrand: token.creditCardBrand || brand,
             cardLast4: last4,
+            creditCardToken: token.creditCardToken || null,
             updatedAt: new Date().toISOString(),
           }),
           prefer: 'return=minimal',
@@ -808,8 +823,63 @@ export default async function handler(req, res) {
           console.log('[asaas-public] Tokenization not available for reactivation, using raw card data');
         }
 
-        // Cancel old ASAAS subscription if exists (prevents duplicates)
-        // For paused/cancelled subs, gateway may already be cancelled — 404 is expected and silenced
+        // ── SOFT CANCEL: Update card on existing Asaas subscription ──
+        // If gateway sub is still alive (soft cancelled/paused), just update the card
+        // This prevents duplicate charges from creating a new subscription
+        if (sub.gatewaySubscriptionId && (sub.status === 'cancelled' || sub.status === 'paused')) {
+          try {
+            const updateCardPayload = { remoteIp };
+            if (creditCardToken) {
+              updateCardPayload.creditCardToken = creditCardToken;
+            } else {
+              updateCardPayload.creditCard = cardData;
+              updateCardPayload.creditCardHolderInfo = holderData;
+            }
+            await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}/creditCard`, 'PUT', updateCardPayload);
+            console.log(`[asaas-public] Updated card on existing Asaas sub ${sub.gatewaySubscriptionId}`);
+          } catch (cardErr) {
+            return res.status(400).json({
+              error: cardErr.message || 'Erro ao atualizar cartão na assinatura existente.',
+              errorCode: 'CARD_UPDATE_FAILED',
+            });
+          }
+
+          // Flip local status to active
+          const last4 = creditCard.number?.replace(/\D/g, '').slice(-4) || '';
+          const finalBrand = tokenBrand || (creditCard.number?.replace(/\D/g, '').substring(0, 1) === '4' ? 'VISA' : 'MASTERCARD');
+          await sbQuery(`subscriptions?id=eq.${sub.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              status: 'active',
+              cardBrand: finalBrand,
+              cardLast4: last4,
+              creditCardToken: creditCardToken || null,
+              cancelledAt: null,
+              endDate: null,
+              cancellationReason: null,
+              pausedAt: null,
+              failedAttempts: 0,
+              pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
+              updatedAt: new Date().toISOString(),
+            }),
+            prefer: 'return=minimal',
+          });
+
+          console.log(`[asaas-public] Reactivation (new card, soft cancel): sub ${sub.id} flipped to active`);
+          return res.status(200).json({
+            success: true,
+            subscriptionId: sub.id,
+            paymentStatus: 'ACTIVE',
+            finalStatus: 'active',
+            cardBrand: finalBrand,
+            cardLast4: last4,
+            planName: plan.name,
+            planPrice: Number(plan.creditPrice) || Number(plan.price) || 0,
+          });
+        }
+
+        // ── HARD CANCEL: Delete old sub + create new ──
+        // Gateway sub already deleted or never existed — need to create fresh
         if (sub.gatewaySubscriptionId) {
           try {
             await asaasRequest(config, `/subscriptions/${sub.gatewaySubscriptionId}`, 'DELETE');
@@ -888,6 +958,7 @@ export default async function handler(req, res) {
             gatewayCustomerId: customerId,
             cardBrand: finalBrand,
             cardLast4: last4,
+            creditCardToken: creditCardToken || null,
             // Clear stale cancellation/pause fields
             cancelledAt: null,
             endDate: null,
@@ -912,6 +983,144 @@ export default async function handler(req, res) {
           cardLast4: last4,
           planName: plan.name,
           planPrice,
+        });
+      }
+
+      // ═══ Reactivate with Saved Card Token (no card data required) ═══
+      case 'reactivateWithSavedCard': {
+        // Find cancelled/paused/overdue subscription with saved token
+        const scSubRes = await sbQuery(
+          `subscriptions?clientId=eq.${client.id}&status=in.(paused,overdue,cancelled)&select=*,subscription_plans(*)&order=createdAt.desc&limit=1`
+        );
+        const scSubs = await scSubRes.json();
+        const scSub = scSubs?.[0];
+        if (!scSub) return res.status(400).json({ error: 'Nenhuma assinatura encontrada para reativar.' });
+        if (!scSub.creditCardToken) {
+          return res.status(400).json({ error: 'Nenhum cartão salvo encontrado. Use a opção de cadastrar novo cartão.', errorCode: 'NO_SAVED_CARD' });
+        }
+
+        const scPlan = scSub.subscription_plans;
+        if (!scPlan) return res.status(400).json({ error: 'Plano da assinatura não encontrado.' });
+
+        const scConfig = await getConfig();
+        if (!scConfig) return res.status(500).json({ error: 'Gateway não configurado.' });
+
+        // ── SOFT CANCEL ZERO-COST REACTIVATION ──
+        // If Asaas subscription is still alive (soft cancelled), just flip local status
+        // No API calls, no new charges — instant reactivation
+        if (scSub.gatewaySubscriptionId) {
+          await sbQuery(`subscriptions?id=eq.${scSub.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              status: 'active',
+              cancelledAt: null,
+              endDate: null,
+              cancellationReason: null,
+              pausedAt: null,
+              failedAttempts: 0,
+              pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
+              updatedAt: new Date().toISOString(),
+            }),
+            prefer: 'return=minimal',
+          });
+
+          console.log(`[asaas-public] Zero-cost reactivation: sub ${scSub.id} flipped to active (Asaas sub ${scSub.gatewaySubscriptionId} still alive)`);
+
+          return res.status(200).json({
+            success: true,
+            subscriptionId: scSub.id,
+            paymentStatus: 'ACTIVE',
+            finalStatus: 'active',
+            cardBrand: scSub.cardBrand,
+            cardLast4: scSub.cardLast4,
+            planName: scPlan.name,
+            planPrice: Number(scPlan.creditPrice) || Number(scPlan.price) || 0,
+          });
+        }
+
+        // ── HARD CANCEL REACTIVATION (Asaas sub deleted, must create new) ──
+        let scCustomerId = scSub.gatewayCustomerId;
+        if (!scCustomerId) {
+          return res.status(400).json({ error: 'Dados do cliente no gateway não encontrados. Use a opção de cadastrar novo cartão.', errorCode: 'NO_CUSTOMER' });
+        }
+
+        // Create new subscription using saved token
+        const scRemoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.headers['x-real-ip'] || '127.0.0.1';
+        const scPlanPrice = Number(scPlan.creditPrice) || Number(scPlan.price) || 0;
+        const scRecMap = { monthly: 'MONTHLY', quarterly: 'QUARTERLY', semiannual: 'SEMIANNUALLY', annual: 'YEARLY' };
+
+        let scAsaasSub;
+        try {
+          scAsaasSub = await asaasRequest(scConfig, '/subscriptions', 'POST', {
+            customer: scCustomerId,
+            billingType: 'CREDIT_CARD',
+            value: scPlanPrice,
+            nextDueDate: new Date().toISOString().split('T')[0],
+            cycle: scRecMap[scPlan.recurrence] || 'MONTHLY',
+            description: `Assinatura ${scPlan.name} (reassinada)`,
+            externalReference: scSub.id,
+            creditCardToken: scSub.creditCardToken,
+            remoteIp: scRemoteIp,
+            fine: { value: scConfig.finePercent || 0, type: 'PERCENTAGE' },
+            interest: { value: scConfig.interestPercent || 0, type: 'PERCENTAGE' },
+          });
+        } catch (scSubErr) {
+          // Token may be expired/invalid — tell frontend to use full card flow
+          return res.status(400).json({
+            error: scSubErr.message || 'Não foi possível reativar com o cartão salvo. Tente cadastrar um novo cartão.',
+            errorCode: 'SAVED_CARD_FAILED',
+          });
+        }
+
+        // Check first payment status
+        let scPaymentStatus = null;
+        try {
+          const scPayments = await asaasRequest(scConfig, `/subscriptions/${scAsaasSub.id}/payments?limit=1`, 'GET');
+          if (scPayments?.data?.length > 0) scPaymentStatus = scPayments.data[0].status;
+        } catch (e) {
+          console.log('[asaas-public] Could not fetch saved-card reactivation payment:', e.message);
+        }
+
+        let scFinalStatus = 'pending_payment';
+        let scLastPayment = null;
+        if (scPaymentStatus === 'CONFIRMED' || scPaymentStatus === 'RECEIVED') {
+          scFinalStatus = 'active';
+          scLastPayment = new Date().toISOString();
+        } else if (scPaymentStatus === 'REFUSED' || scPaymentStatus === 'OVERDUE') {
+          scFinalStatus = 'overdue';
+        }
+
+        // Update local subscription
+        await sbQuery(`subscriptions?id=eq.${scSub.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            status: scFinalStatus,
+            gatewaySubscriptionId: scAsaasSub.id,
+            cancelledAt: null,
+            endDate: null,
+            cancellationReason: null,
+            pausedAt: null,
+            lastPaymentDate: scLastPayment,
+            failedAttempts: 0,
+            usesThisMonth: 0,
+            startDate: new Date().toISOString(),
+            pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
+            updatedAt: new Date().toISOString(),
+          }),
+          prefer: 'return=minimal',
+        });
+
+        console.log(`[asaas-public] Subscription ${scSub.id} reactivated with saved card. Status: ${scFinalStatus}`);
+
+        return res.status(200).json({
+          success: true,
+          subscriptionId: scSub.id,
+          paymentStatus: scPaymentStatus || 'PENDING',
+          finalStatus: scFinalStatus,
+          cardBrand: scSub.cardBrand,
+          cardLast4: scSub.cardLast4,
+          planName: scPlan.name,
+          planPrice: scPlanPrice,
         });
       }
 
@@ -1176,6 +1385,194 @@ export default async function handler(req, res) {
         const updated = Object.keys(authPayload).filter(k => k !== 'email_confirm');
         console.log(`[asaas-public] Auth profile updated for user ${client.authUserId}:`, updated);
         return res.status(200).json({ success: true, updated });
+      }
+
+      // ═══ Change Unit (Automated Transfer) ═══
+      case 'changeUnit': {
+        const { newUnitId } = data || {};
+        if (!newUnitId) return res.status(400).json({ error: 'Nova unidade não selecionada.' });
+
+        // Find current active subscription
+        const cuSubRes = await sbQuery(
+          `subscriptions?clientId=eq.${client.id}&status=in.(active,pending_payment)&select=*,subscription_plans(*)&order=createdAt.desc&limit=1`
+        );
+        const cuSubs = await cuSubRes.json();
+        const cuSub = cuSubs?.[0];
+        if (!cuSub) return res.status(400).json({ error: 'Nenhuma assinatura ativa encontrada.' });
+
+        // Can't transfer to same unit
+        if (cuSub.unitId === newUnitId) {
+          return res.status(400).json({ error: 'Você já está nesta unidade.' });
+        }
+
+        const cuPlan = cuSub.subscription_plans;
+        if (!cuPlan) return res.status(400).json({ error: 'Plano da assinatura não encontrado.' });
+
+        // Validate unit scope — plan must be allowed at new unit
+        const allowedUnits = Array.isArray(cuPlan.allowedUnitIds) ? cuPlan.allowedUnitIds : [];
+        if (cuPlan.unitScope === 'specific' && allowedUnits.length > 0 && !allowedUnits.includes(newUnitId)) {
+          return res.status(400).json({
+            error: 'Seu plano não está disponível nesta unidade. Entre em contato com o suporte.',
+            errorCode: 'UNIT_NOT_ALLOWED',
+          });
+        }
+
+        // Check for existing active subscription at new unit
+        const existingRes = await sbQuery(
+          `subscriptions?clientId=eq.${client.id}&unitId=eq.${newUnitId}&status=in.(active,pending_payment)&select=id&limit=1`
+        );
+        const existingSubs = await existingRes.json();
+        if (existingSubs?.length > 0) {
+          return res.status(400).json({ error: 'Você já possui uma assinatura ativa nesta unidade.' });
+        }
+
+        // Calculate benefit period
+        const hadPayment = !!cuSub.lastPaymentDate;
+        const endDate = hadPayment
+          ? (cuSub.nextPaymentDate || cuSub.endDate || new Date().toISOString())
+          : new Date().toISOString();
+        const benefitsRemaining = new Date(endDate) > new Date();
+
+        // Step 1: Soft cancel current subscription
+        if (cuSub.gatewaySubscriptionId) {
+          const config = await getConfig();
+          if (config) {
+            try {
+              await cancelPendingCharges(config, cuSub.gatewaySubscriptionId);
+              console.log(`[asaas-public] changeUnit: cleared charges for ${cuSub.gatewaySubscriptionId}`);
+            } catch (e) {
+              console.warn('[asaas-public] changeUnit: charge cleanup warning:', e.message);
+            }
+          }
+        }
+
+        await sbQuery(`subscriptions?id=eq.${cuSub.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            status: 'cancelled',
+            cancelledAt: new Date().toISOString(),
+            endDate: endDate,
+            cancellationReason: `Transferência para unidade ${newUnitId}`,
+            pendingPlanId: null, pendingPlanName: null, planChangeScheduledAt: null,
+            updatedAt: new Date().toISOString(),
+          }),
+          prefer: 'return=minimal',
+        });
+
+        // Step 2: Create new subscription at the new unit
+        const cuConfig = await getConfig();
+        if (!cuConfig) return res.status(500).json({ error: 'Gateway não configurado.' });
+
+        const cuPlanPrice = Number(cuPlan.creditPrice) || Number(cuPlan.price) || 0;
+        const cuRecMap = { monthly: 'MONTHLY', quarterly: 'QUARTERLY', semiannual: 'SEMIANNUALLY', annual: 'YEARLY' };
+        const cuRemoteIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.headers['x-real-ip'] || '127.0.0.1';
+
+        // If benefits remaining: schedule first charge for endDate (no immediate charge)
+        // If no benefits: charge immediately (today)
+        const nextDueDate = benefitsRemaining
+          ? new Date(endDate).toISOString().split('T')[0]
+          : new Date().toISOString().split('T')[0];
+
+        const newSubId = crypto.randomUUID();
+        const now = new Date().toISOString();
+
+        // Create local subscription record
+        await sbQuery('subscriptions', {
+          method: 'POST',
+          body: JSON.stringify({
+            id: newSubId,
+            planId: cuSub.planId,
+            clientId: client.id,
+            clientName: client.name,
+            status: benefitsRemaining ? 'pending_payment' : 'pending_payment',
+            startDate: benefitsRemaining ? endDate : now,
+            usesThisMonth: 0,
+            paymentDay: new Date(nextDueDate).getDate(),
+            paymentMethod: 'credit',
+            gatewayCustomerId: cuSub.gatewayCustomerId,
+            billingEmail: cuSub.billingEmail || client.email || null,
+            autoRenew: true,
+            unitId: newUnitId,
+            saleChannel: 'site',
+            cancelledAt: null, endDate: null, cancellationReason: null,
+            failedAttempts: 0, lastPaymentDate: null, nextPaymentDate: null,
+            pausedAt: null, lastWebhookAt: null,
+            createdAt: now, updatedAt: now,
+          }),
+          prefer: 'return=minimal',
+        });
+
+        // Create Asaas subscription with scheduled charge
+        if (cuSub.creditCardToken && cuSub.gatewayCustomerId) {
+          try {
+            const asaasSub = await asaasRequest(cuConfig, '/subscriptions', 'POST', {
+              customer: cuSub.gatewayCustomerId,
+              billingType: 'CREDIT_CARD',
+              value: cuPlanPrice,
+              nextDueDate: nextDueDate,
+              cycle: cuRecMap[cuPlan.recurrence] || 'MONTHLY',
+              description: `Plano ${cuPlan.name} (transferência de unidade)`,
+              externalReference: newSubId,
+              creditCardToken: cuSub.creditCardToken,
+              remoteIp: cuRemoteIp,
+              fine: { value: cuConfig.finePercent || 0, type: 'PERCENTAGE' },
+              interest: { value: cuConfig.interestPercent || 0, type: 'PERCENTAGE' },
+            });
+
+            // Update local with gateway ID
+            await sbQuery(`subscriptions?id=eq.${newSubId}`, {
+              method: 'PATCH',
+              body: JSON.stringify({
+                gatewaySubscriptionId: asaasSub.id,
+                gatewayCustomerId: cuSub.gatewayCustomerId,
+                cardBrand: cuSub.cardBrand,
+                cardLast4: cuSub.cardLast4,
+                creditCardToken: cuSub.creditCardToken,
+                updatedAt: new Date().toISOString(),
+              }),
+              prefer: 'return=minimal',
+            });
+
+            // If not deferred, check payment status
+            if (!benefitsRemaining) {
+              try {
+                const payments = await asaasRequest(cuConfig, `/subscriptions/${asaasSub.id}/payments?limit=1`);
+                if (payments?.data?.[0]?.status === 'CONFIRMED' || payments?.data?.[0]?.status === 'RECEIVED') {
+                  await sbQuery(`subscriptions?id=eq.${newSubId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status: 'active', lastPaymentDate: now, updatedAt: now }),
+                    prefer: 'return=minimal',
+                  });
+                }
+              } catch {}
+            }
+
+            console.log(`[asaas-public] changeUnit: new sub ${newSubId} created at unit ${newUnitId}, dueDate=${nextDueDate}`);
+          } catch (asaasErr) {
+            console.error('[asaas-public] changeUnit: Asaas create failed:', asaasErr.message);
+            // Local sub was created, but Asaas failed — mark it
+            await sbQuery(`subscriptions?id=eq.${newSubId}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ status: 'overdue', updatedAt: now }),
+              prefer: 'return=minimal',
+            });
+            return res.status(400).json({
+              error: 'Assinatura transferida localmente, mas falhou no gateway. Entre em contato com o suporte.',
+              errorCode: 'GATEWAY_CREATE_FAILED',
+            });
+          }
+        } else {
+          console.log(`[asaas-public] changeUnit: local-only sub ${newSubId} (no token/customer for Asaas)`);
+        }
+
+        return res.status(200).json({
+          success: true,
+          newSubscriptionId: newSubId,
+          oldSubscriptionId: cuSub.id,
+          benefitsRemaining,
+          benefitsEndDate: benefitsRemaining ? endDate : null,
+          nextChargeDate: nextDueDate,
+        });
       }
 
       default:

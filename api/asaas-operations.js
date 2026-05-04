@@ -283,17 +283,49 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, value: updated.value });
       }
 
-      // ═══ Cancel Subscription in ASAAS ═══
+      // ═══ Cancel Subscription in ASAAS (Soft Cancel by default) ═══
       case 'cancelSubscription': {
         const config = await getConfig();
         if (!config) return res.status(400).json({ error: 'Gateway não configurado' });
         
-        const { gatewaySubscriptionId, subscriptionId } = data;
+        const { gatewaySubscriptionId, subscriptionId, hardCancel } = data;
         if (!gatewaySubscriptionId) {
           return res.status(400).json({ error: 'gatewaySubscriptionId obrigatório' });
         }
         
-        await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'DELETE');
+        // Cancel pending charges first (works for both soft and hard cancel)
+        try {
+          const payments = await asaasRequest(config,
+            `/subscriptions/${gatewaySubscriptionId}/payments?status=PENDING&limit=50`);
+          let cleared = 0;
+          for (const p of (payments.data || [])) {
+            try {
+              await asaasRequest(config, `/payments/${p.id}`, 'DELETE');
+              cleared++;
+            } catch (cpErr) {
+              console.warn(`[asaas-ops] Failed to cancel payment ${p.id}:`, cpErr.message);
+            }
+          }
+          if (cleared > 0) console.log(`[asaas-ops] Cancelled ${cleared} pending charge(s) for sub ${gatewaySubscriptionId}`);
+        } catch (e) {
+          console.warn('[asaas-ops] Pending charges cleanup failed:', e.message);
+        }
+
+        if (hardCancel) {
+          // Hard cancel: DELETE the Asaas subscription entirely (used when admin deletes subscription)
+          try {
+            await asaasRequest(config, `/subscriptions/${gatewaySubscriptionId}`, 'DELETE');
+            console.log(`[asaas-ops] Hard cancel: Asaas sub ${gatewaySubscriptionId} deleted`);
+          } catch (delErr) {
+            // Ignore if already deleted
+            if (!delErr.message?.includes('not_found') && !delErr.message?.includes('404')) {
+              console.warn(`[asaas-ops] Hard cancel failed: ${delErr.message}`);
+            }
+          }
+        } else {
+          // Soft cancel (default): keep Asaas sub alive for zero-cost reactivation
+          console.log(`[asaas-ops] Soft cancel: Asaas sub ${gatewaySubscriptionId} kept alive (charges cleared)`);
+        }
         
         if (subscriptionId) {
           await sbQuery(`subscriptions?id=eq.${subscriptionId}`, {
@@ -301,6 +333,8 @@ export default async function handler(req, res) {
             body: JSON.stringify({
               status: 'cancelled',
               cancelledAt: new Date().toISOString(),
+              // Only clear gatewaySubscriptionId on hard cancel (soft cancel keeps it for reactivation)
+              ...(hardCancel ? { gatewaySubscriptionId: null } : {}),
               updatedAt: new Date().toISOString(),
             }),
             prefer: 'return=minimal',

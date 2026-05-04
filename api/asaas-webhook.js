@@ -206,6 +206,12 @@ export default async function handler(req, res) {
       switch (event) {
         case 'PAYMENT_CONFIRMED':
         case 'PAYMENT_RECEIVED':
+          // SOFT CANCEL GUARD: don't reactivate cancelled or paused subscriptions
+          // When a subscription is soft-cancelled, Asaas may still confirm a pre-generated charge
+          if (subscription.status === 'cancelled' || subscription.status === 'paused') {
+            console.log(`[asaas-webhook] ${event} ignored — sub ${subscription.id} is ${subscription.status} (soft cancel guard)`);
+            break;
+          }
           updates.status = 'active';
           updates.lastPaymentDate = payment.paymentDate || new Date().toISOString();
           updates.failedAttempts = 0;
@@ -247,6 +253,11 @@ export default async function handler(req, res) {
           break;
 
         case 'PAYMENT_OVERDUE':
+          // SOFT CANCEL GUARD: don't process overdue for already cancelled/paused subs
+          if (subscription.status === 'cancelled' || subscription.status === 'paused') {
+            console.log(`[asaas-webhook] PAYMENT_OVERDUE ignored — sub ${subscription.id} is ${subscription.status} (soft cancel guard)`);
+            break;
+          }
           updates.status = 'overdue';
           updates.failedAttempts = (subscription.failedAttempts || 0) + 1;
 
@@ -291,8 +302,10 @@ export default async function handler(req, res) {
             console.log(`[asaas-webhook] Auto-cancelling subscription ${subscription.id} after ${updates.failedAttempts} failed attempts`);
             updates.status = 'cancelled';
             updates.cancelledAt = new Date().toISOString();
+            updates.endDate = subscription.nextPaymentDate || new Date().toISOString();
             updates.cancellationReason = 'Cancelado automaticamente por inadimplência (3 tentativas de pagamento falharam)';
-            // Cancel in ASAAS gateway
+            // SOFT CANCEL: cancel pending charges but keep Asaas sub alive
+            // The daily hard-cancel cron will DELETE when endDate arrives
             if (subscription.gatewaySubscriptionId) {
               try {
                 const configs = await sbQuery(
@@ -302,11 +315,24 @@ export default async function handler(req, res) {
                 const config = (await configs.json())?.[0];
                 if (config) {
                   const baseUrl = config.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://api-sandbox.asaas.com/v3';
-                  await fetch(`${baseUrl}/subscriptions/${subscription.gatewaySubscriptionId}`, {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json', 'access_token': config.apiKey },
-                  });
-                  console.log(`[asaas-webhook] ASAAS subscription ${subscription.gatewaySubscriptionId} auto-cancelled`);
+                  // Cancel pending charges (soft cancel approach)
+                  try {
+                    const pendingRes = await fetch(`${baseUrl}/subscriptions/${subscription.gatewaySubscriptionId}/payments?status=PENDING&limit=50`, {
+                      headers: { 'Content-Type': 'application/json', 'access_token': config.apiKey },
+                    });
+                    if (pendingRes.ok) {
+                      const pendingData = await pendingRes.json();
+                      for (const p of (pendingData.data || [])) {
+                        await fetch(`${baseUrl}/payments/${p.id}`, {
+                          method: 'DELETE',
+                          headers: { 'Content-Type': 'application/json', 'access_token': config.apiKey },
+                        });
+                      }
+                    }
+                  } catch (chErr) {
+                    console.warn('[asaas-webhook] Pending charges cleanup failed:', chErr.message);
+                  }
+                  console.log(`[asaas-webhook] Soft auto-cancel: charges cleared for ${subscription.gatewaySubscriptionId}`);
                 }
               } catch (gwErr) {
                 console.warn('[asaas-webhook] ASAAS auto-cancel failed (non-fatal):', gwErr.message);
@@ -323,6 +349,12 @@ export default async function handler(req, res) {
 
         case 'PAYMENT_CREATED':
         case 'PAYMENT_UPDATED':
+          // SOFT CANCEL GUARD: don't update metadata for cancelled/paused subs
+          // Asaas may generate new charges for soft-cancelled subs (40 days before next due date)
+          if (subscription.status === 'cancelled' || subscription.status === 'paused') {
+            console.log(`[asaas-webhook] ${event} ignored — sub ${subscription.id} is ${subscription.status} (soft cancel guard)`);
+            break;
+          }
           updates.currentInvoiceUrl = payment.invoiceUrl || subscription.currentInvoiceUrl;
           updates.currentBankSlipUrl = payment.bankSlipUrl || subscription.currentBankSlipUrl;
           // F6: Only update nextPaymentDate if the new date is AFTER the current one

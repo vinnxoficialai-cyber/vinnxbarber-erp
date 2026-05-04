@@ -147,6 +147,10 @@ export async function reactivateSubscription(data: {
     return callApi('reactivateSubscription', data);
 }
 
+export async function reactivateWithSavedCard(): Promise<SubscribeResult> {
+    return callApi('reactivateWithSavedCard');
+}
+
 export async function changePlan(newPlanId: string): Promise<{
     success: boolean;
     scheduled: boolean;
@@ -175,11 +179,23 @@ export async function syncCustomerData(data: {
     return callApi('syncCustomerData', data);
 }
 
-// Update auth profile in Supabase Auth (email + user_metadata via service_role)
 export async function updateAuthEmail(data: {
     newEmail?: string;
     name?: string;
     phone?: string;
 }): Promise<{ success: boolean; updated?: string[]; error?: string }> {
     return callApi('updateAuthEmail', data);
+}
+
+// Change subscription unit (automated soft-cancel + new sub at target unit)
+export async function changeUnit(newUnitId: string): Promise<{
+    success: boolean;
+    newSubscriptionId?: string;
+    oldSubscriptionId?: string;
+    benefitsRemaining?: boolean;
+    benefitsEndDate?: string | null;
+    nextChargeDate?: string;
+    error?: string;
+}> {
+    return callApi('changeUnit', { newUnitId });
 }

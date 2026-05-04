@@ -40,6 +40,54 @@ async function getConfig(id) {
   return configs?.[0] || null;
 }
 
+// ── ASAAS API helpers (needed for hard cancel cron) ──
+// These are duplicated from asaas-public.js because Vercel serverless functions
+// are independent modules and cannot share code at runtime.
+async function getBillingConfig() {
+  const configs = await sbQuery(`billing_gateway_config?active=eq.true&select=*&limit=1`);
+  return configs?.[0] || null;
+}
+
+async function asaasRequest(config, path, method = 'GET', body = null) {
+  const baseUrl = config.environment === 'production'
+    ? 'https://api.asaas.com/v3'
+    : 'https://api-sandbox.asaas.com/v3';
+  const options = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'access_token': config.apiKey,
+    },
+  };
+  if (body) options.body = JSON.stringify(body);
+  const res = await fetch(`${baseUrl}${path}`, options);
+  if (res.status === 204) return null;
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.errors?.[0]?.description || `ASAAS ${res.status}: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+async function cancelPendingChargesForSub(config, gatewaySubId) {
+  try {
+    const payments = await asaasRequest(config, `/subscriptions/${gatewaySubId}/payments?status=PENDING&limit=50`);
+    let cancelled = 0;
+    for (const p of (payments.data || [])) {
+      try {
+        await asaasRequest(config, `/payments/${p.id}`, 'DELETE');
+        cancelled++;
+      } catch (e) {
+        console.warn(`[push-cron] Failed to cancel payment ${p.id}:`, e.message);
+      }
+    }
+    return cancelled;
+  } catch (e) {
+    console.warn('[push-cron] cancelPendingCharges failed:', e.message);
+    return 0;
+  }
+}
+
 // ══════════════════════════════════════
 // FLOW 1: REMINDERS (hourly)
 // ══════════════════════════════════════
@@ -386,6 +434,75 @@ async function processInactiveClients() {
 }
 
 // ══════════════════════════════════════
+// FLOW 7: HARD CANCEL CRON (daily)
+// Finds soft-cancelled/paused subscriptions whose endDate has arrived
+// and permanently deletes them from Asaas gateway
+// ══════════════════════════════════════
+async function processHardCancellations() {
+  const billingConfig = await getBillingConfig();
+  if (!billingConfig) {
+    console.log('[push-cron] Hard cancel skipped: no active billing config');
+    return { flow: 'hardCancel', skipped: true, reason: 'no_billing_config' };
+  }
+
+  // Find subscriptions that are soft-cancelled/paused AND have a live Asaas subscription
+  // AND their benefit period ends within the next 2 days (safety margin)
+  const twoDaysFromNow = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+  const subsRes = await sbFetch(
+    `subscriptions?status=in.(cancelled,paused)&gatewaySubscriptionId=not.is.null&endDate=lte.${encodeURIComponent(twoDaysFromNow)}&select=id,gatewaySubscriptionId,status,endDate,clientName`,
+    { headers: { Prefer: 'return=representation' } }
+  );
+  const subs = subsRes.ok ? await subsRes.json() : [];
+
+  if (subs.length === 0) {
+    console.log('[push-cron] Hard cancel: no subscriptions to process');
+    return { flow: 'hardCancel', processed: 0 };
+  }
+
+  let processed = 0;
+  let errors = 0;
+
+  for (const sub of subs) {
+    try {
+      // Step 1: Cancel any pending charges (MUST happen before DELETE)
+      const cleared = await cancelPendingChargesForSub(billingConfig, sub.gatewaySubscriptionId);
+
+      // Step 2: DELETE the Asaas subscription permanently
+      try {
+        await asaasRequest(billingConfig, `/subscriptions/${sub.gatewaySubscriptionId}`, 'DELETE');
+        console.log(`[push-cron] Hard cancel: deleted Asaas sub ${sub.gatewaySubscriptionId} (${sub.clientName || sub.id}), cleared ${cleared} charges`);
+      } catch (delErr) {
+        // Ignore 404/not_found — already deleted
+        if (!delErr.message?.includes('not_found') && !delErr.message?.includes('404')) {
+          throw delErr;
+        }
+        console.log(`[push-cron] Hard cancel: Asaas sub ${sub.gatewaySubscriptionId} already deleted`);
+      }
+
+      // Step 3: Clear gatewaySubscriptionId locally (prevents re-processing)
+      await sbFetch(`subscriptions?id=eq.${sub.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          gatewaySubscriptionId: null,
+          updatedAt: new Date().toISOString(),
+        }),
+        headers: { Prefer: 'return=minimal' },
+      });
+
+      processed++;
+      // Rate limit: 200ms between Asaas API calls
+      await new Promise(r => setTimeout(r, 200));
+    } catch (e) {
+      console.error(`[push-cron] Hard cancel failed for ${sub.id}:`, e.message);
+      errors++;
+    }
+  }
+
+  console.log(`[push-cron] Hard cancel complete: ${processed} processed, ${errors} errors`);
+  return { flow: 'hardCancel', processed, errors, total: subs.length };
+}
+
+// ══════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════
 export default async function handler(req, res) {
@@ -412,6 +529,7 @@ export default async function handler(req, res) {
       results.push(await processIncompleteProfiles());
       results.push(await processBirthdays());
       results.push(await processInactiveClients());
+      results.push(await processHardCancellations());
     } else {
       return res.status(400).json({ error: 'Invalid type. Use hourly or daily.' });
     }

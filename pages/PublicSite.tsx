@@ -13,7 +13,7 @@ import {
 import type { CalendarEvent, WorkSchedule, Service, SubscriptionPlan, Subscription } from "../types";
 import { usePlatform } from "../hooks/usePlatform";
 import { safeParseJsonArray } from "../lib/utils";
-import { subscribeToPlan, cancelMySubscription, pauseMySubscription, getMyPaymentHistory, updatePaymentMethod, reactivateSubscription, changePlan, cancelPendingPlanChange, retryPayment, setAsaasPublicTokenProvider, setAsaasPublicRefreshCallback, syncCustomerData, updateAuthEmail } from "../lib/asaasPublicService";
+import { subscribeToPlan, cancelMySubscription, pauseMySubscription, getMyPaymentHistory, updatePaymentMethod, reactivateSubscription, reactivateWithSavedCard, changePlan, cancelPendingPlanChange, retryPayment, setAsaasPublicTokenProvider, setAsaasPublicRefreshCallback, syncCustomerData, updateAuthEmail, changeUnit } from "../lib/asaasPublicService";
 
 // ============================================================
 // DEDICATED Supabase client for PublicSite
@@ -1005,6 +1005,8 @@ function PublicSiteApp() {
           date: d.getDate(),
           month: d.getMonth(),
           year: d.getFullYear(),
+          serviceSlots: row.serviceSlots ? (typeof row.serviceSlots === 'string' ? JSON.parse(row.serviceSlots) : row.serviceSlots) : undefined,
+          groupId: row.groupId || undefined,
         };
       });
       setAllEvents(mapped);
@@ -1012,7 +1014,7 @@ function PublicSiteApp() {
       const hasPending = mapped.some((e: any) => {
         const eventDate = new Date(e.year, e.month, e.date);
         const today = new Date(); today.setHours(0, 0, 0, 0);
-        return eventDate < today && !e.rating && e.status !== "cancelled";
+        return eventDate < today && !e.rating && e.status !== "cancelled" && e.status !== "no_show";
       });
       setNeedsReview(hasPending);
     }
@@ -1300,6 +1302,7 @@ function PublicSiteApp() {
     openModal(<CalendarModal
       primary={primary} cardBg={cardBg} barber={selection.barber}
       unitId={selection.unit?.id}
+      allBarbers={barbers.filter(b => b.id !== "__no_pref__")}
       schedules={schedules} events={availabilityEvents} maxDays={maxAdvDays}
       closedDays={closedDays} slotInterval={slotInterval} g={g}
       serviceDuration={totalDur}
@@ -1334,8 +1337,17 @@ function PublicSiteApp() {
     }
 
     // Check max open
-    const openAppts = allEvents.filter((e) => e.status !== "cancelled" && e.status !== "completed");
-    if (openAppts.length >= maxOpenAppts) {
+    const openAppts = allEvents.filter((e) => e.status !== "cancelled" && e.status !== "completed" && e.status !== "no_show");
+    // Deduplicate by groupId: grouped events count as 1 appointment
+    const seenGroups = new Set<string>();
+    const uniqueOpenCount = openAppts.filter((e: any) => {
+      if (e.groupId) {
+        if (seenGroups.has(e.groupId)) return false;
+        seenGroups.add(e.groupId);
+      }
+      return true;
+    }).length;
+    if (uniqueOpenCount >= maxOpenAppts) {
       openModal(
         <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
           <AlertTriangle className="w-12 h-12 mx-auto mb-4" style={{ color: "#eab308" }} />
@@ -1362,6 +1374,26 @@ function PublicSiteApp() {
         const totalDuration = selection.services.reduce((sum, s) => sum + (s.duration || 30), 0);
         const totalPrice = selection.services.reduce((sum, s) => sum + (s.price || 0), 0);
         const serviceNames = selection.services.map(s => s.name).join(' + ');
+        // F1: Generate serviceSlots for compound appointments
+        let serviceSlots: any[] | null = null;
+        if (selection.services.length > 1) {
+          let cumTime = selection.time!;
+          serviceSlots = selection.services.map((svc: any) => {
+            const dur = svc.duration || 30;
+            const slot = {
+              serviceId: svc.id,
+              serviceName: svc.name,
+              barberId: selection.barber.id === "__no_pref__" ? null : selection.barber.id,
+              barberName: selection.barber.name,
+              startTime: cumTime,
+              endTime: addMinutesToTime(cumTime, dur),
+              duration: dur,
+              status: "confirmed",
+            };
+            cumTime = slot.endTime;
+            return slot;
+          });
+        }
         const newEvent = {
           id: crypto.randomUUID(),
           title: `${clientProfile?.name || "Cliente"} - ${serviceNames}`,
@@ -1376,6 +1408,7 @@ function PublicSiteApp() {
           serviceId: selection.services[0]?.id,
           serviceName: serviceNames,
           serviceIds: JSON.stringify(selection.services.map(s => s.id)),
+          ...(serviceSlots ? { serviceSlots: JSON.stringify(serviceSlots) } : {}),
           duration: totalDuration,
           unitId: selection.unit.id,
           source: "app",
@@ -1800,12 +1833,21 @@ function AgendarView({ g, primary, bgColor, cardBg, animateReady, selection, all
     if (evDate < new Date()) return false;
     return true;
   });
-  const isMaxed = openAppts.length >= maxOpenAppts;
+  // Deduplicate by groupId: grouped events count as 1 appointment
+  const seenGroupsView = new Set<string>();
+  const uniqueOpenAppts = openAppts.filter((e: any) => {
+    if (e.groupId) {
+      if (seenGroupsView.has(e.groupId)) return false;
+      seenGroupsView.add(e.groupId);
+    }
+    return true;
+  });
+  const isMaxed = uniqueOpenAppts.length >= maxOpenAppts;
 
   // Today's appointment reminder
   const today = new Date();
   const todaysAppt = allEvents.find((e: CalendarEvent) => {
-    if (e.status === "cancelled" || e.status === "completed") return false;
+    if (e.status === "cancelled" || e.status === "completed" || e.status === "no_show") return false;
     return e.date === today.getDate() && e.month === today.getMonth() && e.year === today.getFullYear();
   });
   const [reminderDismissed, setReminderDismissed] = useState(() => sessionStorage.getItem("vinnx_reminder_dismissed") === "true");
@@ -2200,7 +2242,7 @@ function SelectionCard({ delay, icon, text, selected, disabled, onClick, cardBg 
 // ============================================================
 // CALENDAR MODAL
 // ============================================================
-function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, maxDays, closedDays, slotInterval, g, serviceDuration, onSelect }: any) {
+function CalendarModal({ primary, cardBg, barber, unitId, allBarbers, schedules, events, maxDays, closedDays, slotInterval, g, serviceDuration, onSelect }: any) {
   const [viewDate, setViewDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [periodo, setPeriodo] = useState<"manha" | "tarde">("manha");
@@ -2213,20 +2255,31 @@ function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, max
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
+  // Helper: which barbers work on a given date?
+  function getWorkingBarbers(d: Date): any[] {
+    if (!allBarbers || allBarbers.length === 0) return [];
+    return allBarbers.filter((b: any) => {
+      const ws = schedules.find((s: WorkSchedule) => s.memberId === b.id && s.dayOfWeek === d.getDay());
+      return !ws?.isOff;
+    });
+  }
+
   // Auto-select first available date on mount
   useEffect(() => {
     for (let i = 0; i <= maxDays; i++) {
       const d = new Date();
       d.setDate(d.getDate() + i);
       d.setHours(0, 0, 0, 0);
-      if (!closedDays.includes(d.getDay())) {
-        if (barber && barber.id !== "__no_pref__") {
-          const ws = schedules.find((s: WorkSchedule) => s.memberId === barber.id && s.dayOfWeek === d.getDay());
-          if (ws && ws.isOff) continue;
-        }
-        setSelectedDate(d);
-        break;
+      if (closedDays.includes(d.getDay())) continue;
+      if (barber && barber.id !== "__no_pref__") {
+        const ws = schedules.find((s: WorkSchedule) => s.memberId === barber.id && s.dayOfWeek === d.getDay());
+        if (ws && ws.isOff) continue;
+      } else {
+        // __no_pref__: skip days where NO barber works (C3)
+        if (getWorkingBarbers(d).length === 0) continue;
       }
+      setSelectedDate(d);
+      break;
     }
   }, []);
 
@@ -2237,20 +2290,26 @@ function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, max
     if (barber && barber.id !== "__no_pref__") {
       const ws = schedules.find((s: WorkSchedule) => s.memberId === barber.id && s.dayOfWeek === d.getDay());
       if (ws && ws.isOff) return false;
+    } else {
+      // __no_pref__: day unavailable if NO barber works (C2)
+      if (getWorkingBarbers(d).length === 0) return false;
     }
     return true;
   }
 
-  function getAvailableSlots(): string[] {
+  function getAvailableSlots(): { time: string; isEncaixe: boolean }[] {
     if (!selectedDate) return [];
-    const barberId = barber?.id === "__no_pref__" ? null : barber?.id;
+    const isNoPref = barber?.id === "__no_pref__";
+    const barberId = isNoPref ? null : barber?.id;
     // Use store_settings defaults when barber has no individual schedule
     const defStart = g("booking.default_start_time", "08:00");
     const defEnd = g("booking.default_end_time", "19:00");
     const defBreakS = g("booking.default_break_start", "12:00");
     const defBreakE = g("booking.default_break_end", "13:00");
     let startTime = defStart, endTime = defEnd, breakStart = defBreakS, breakEnd = defBreakE;
+
     if (barberId) {
+      // Specific barber: use their schedule
       const ws = schedules.find((s: WorkSchedule) => s.memberId === barberId && s.dayOfWeek === selectedDate.getDay());
       if (ws) {
         startTime = ws.startTime || defStart;
@@ -2258,36 +2317,117 @@ function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, max
         breakStart = ws.breakStart || "";
         breakEnd = ws.breakEnd || "";
       }
+    } else if (isNoPref) {
+      // __no_pref__: use UNION of all active barbers' schedules for widest window (C4)
+      const workingBarbers = getWorkingBarbers(selectedDate);
+      if (workingBarbers.length === 0) return [];
+      let earliestStart = 24 * 60, latestEnd = 0;
+      for (const b of workingBarbers) {
+        const ws = schedules.find((s: WorkSchedule) => s.memberId === b.id && s.dayOfWeek === selectedDate.getDay());
+        const bStart = ws?.startTime || defStart;
+        const bEnd = ws?.endTime || defEnd;
+        const [bsH, bsM] = bStart.split(":").map(Number);
+        const [beH, beM] = bEnd.split(":").map(Number);
+        earliestStart = Math.min(earliestStart, bsH * 60 + bsM);
+        latestEnd = Math.max(latestEnd, beH * 60 + beM);
+      }
+      startTime = `${String(Math.floor(earliestStart / 60)).padStart(2, "0")}:${String(earliestStart % 60).padStart(2, "0")}`;
+      endTime = `${String(Math.floor(latestEnd / 60)).padStart(2, "0")}:${String(latestEnd % 60).padStart(2, "0")}`;
+      // For no_pref, we don't apply a single break — individual barber breaks are handled in the overlap check below
+      breakStart = ""; breakEnd = "";
     }
     let slots = generateTimeSlots(startTime, endTime, slotInterval);
-    slots = slots.filter((s) => !isInBreak(s, breakStart, breakEnd));
 
-    const dayEvents = events.filter((e: any) =>
-      e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear()
-      && e.status !== "cancelled" && (!barberId || e.barberId === barberId)
-      && (!unitId || e.unitId === unitId)
-    );
-
-    // Max per barber per day
-    const maxPerDay = parseInt(g("booking.max_per_barber_day", "0"), 10);
-    if (maxPerDay > 0 && barberId) {
-      const barberDayCount = dayEvents.length;
-      if (barberDayCount >= maxPerDay) return []; // No slots — barber is full for the day
+    // Duration-aware break overlap check (B2)
+    const svcDur = serviceDuration || slotInterval;
+    if (breakStart && breakEnd) {
+      const [bsH, bsM] = breakStart.split(":").map(Number);
+      const [beH, beM] = breakEnd.split(":").map(Number);
+      const breakS = bsH * 60 + bsM;
+      const breakE = beH * 60 + beM;
+      slots = slots.filter((s) => {
+        const [sh, sm] = s.split(":").map(Number);
+        const slotStart = sh * 60 + sm;
+        const slotEnd = slotStart + svcDur;
+        return !(slotStart < breakE && slotEnd > breakS);
+      });
     }
 
-    // Filter out slots that would overlap with existing events (bidirectional overlap check)
-    const svcDur = serviceDuration || slotInterval;
-    slots = slots.filter((slot) => {
-      const [sh, sm] = slot.split(":").map(Number);
-      const slotStart = sh * 60 + sm;
-      const slotEnd = slotStart + svcDur;
-      return !dayEvents.some((e: any) => {
-        const [eH, eM] = (e.startTime || "00:00").split(":").map(Number);
-        const eventStart = eH * 60 + eM;
-        const eventEnd = eventStart + (e.duration || slotInterval);
-        return slotStart < eventEnd && slotEnd > eventStart;
-      });
+    // End-of-day overflow check (B1)
+    const [etH, etM] = endTime.split(":").map(Number);
+    const endTimeMin = etH * 60 + etM;
+    slots = slots.filter((s) => {
+      const [sh, sm] = s.split(":").map(Number);
+      return (sh * 60 + sm) + svcDur <= endTimeMin;
     });
+
+    if (isNoPref) {
+      // __no_pref__ (C4): a slot is available if ANY barber is free at that time
+      const workingBarbers = getWorkingBarbers(selectedDate);
+      const dayEventsAll = events.filter((e: any) =>
+        e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear()
+        && e.status !== "cancelled" && e.status !== "no_show"
+        && (!unitId || e.unitId === unitId)
+      );
+      slots = slots.filter((slot) => {
+        const [sh, sm] = slot.split(":").map(Number);
+        const slotStart = sh * 60 + sm;
+        const slotEnd = slotStart + svcDur;
+        // Check if at least ONE barber is free AND working during this slot
+        return workingBarbers.some((b: any) => {
+          // Barber must be working at this hour
+          const ws = schedules.find((s: WorkSchedule) => s.memberId === b.id && s.dayOfWeek === selectedDate.getDay());
+          const bStart = ws?.startTime || defStart;
+          const bEnd = ws?.endTime || defEnd;
+          const [bsH2, bsM2] = bStart.split(":").map(Number);
+          const [beH2, beM2] = bEnd.split(":").map(Number);
+          if (slotStart < bsH2 * 60 + bsM2 || slotEnd > beH2 * 60 + beM2) return false;
+          // Check barber's break
+          const bBreakS = ws?.breakStart, bBreakE = ws?.breakEnd;
+          if (bBreakS && bBreakE) {
+            const [bbsH, bbsM] = bBreakS.split(":").map(Number);
+            const [bbeH, bbeM] = bBreakE.split(":").map(Number);
+            if (slotStart < bbeH * 60 + bbeM && slotEnd > bbsH * 60 + bbsM) return false;
+          }
+          // Check if this barber has a conflicting event
+          const barberEvents = dayEventsAll.filter((e: any) => e.barberId === b.id);
+          const hasConflict = barberEvents.some((e: any) => {
+            const [eH, eM] = (e.startTime || "00:00").split(":").map(Number);
+            const eventStart = eH * 60 + eM;
+            const eventEnd = eventStart + (e.duration || slotInterval);
+            return slotStart < eventEnd && slotEnd > eventStart;
+          });
+          return !hasConflict;
+        });
+      });
+    } else {
+      // Specific barber: existing logic
+      const dayEvents = events.filter((e: any) =>
+        e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear()
+        && e.status !== "cancelled" && e.status !== "no_show" && (!barberId || e.barberId === barberId)
+        && (!unitId || e.unitId === unitId)
+      );
+
+      // Max per barber per day
+      const maxPerDay = parseInt(g("booking.max_per_barber_day", "0"), 10);
+      if (maxPerDay > 0 && barberId) {
+        const barberDayCount = dayEvents.length;
+        if (barberDayCount >= maxPerDay) return [];
+      }
+
+      // Bidirectional overlap check with existing events
+      slots = slots.filter((slot) => {
+        const [sh, sm] = slot.split(":").map(Number);
+        const slotStart = sh * 60 + sm;
+        const slotEnd = slotStart + svcDur;
+        return !dayEvents.some((e: any) => {
+          const [eH, eM] = (e.startTime || "00:00").split(":").map(Number);
+          const eventStart = eH * 60 + eM;
+          const eventEnd = eventStart + (e.duration || slotInterval);
+          return slotStart < eventEnd && slotEnd > eventStart;
+        });
+      });
+    }
 
     // Filter by min advance hours and block same day
     const now = new Date();
@@ -2307,12 +2447,110 @@ function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, max
       });
     }
 
-    return slots;
+    return slots.map(s => ({ time: s, isEncaixe: false }));
   }
 
-  const slots = getAvailableSlots();
-  const morningSlots = slots.filter((s) => parseInt(s) < 12);
-  const afternoonSlots = slots.filter((s) => parseInt(s) >= 12);
+  // ── Gap slot (encaixe) generation for specific barber ──
+  function getEncaixeSlots(): { time: string; isEncaixe: boolean }[] {
+    if (!selectedDate || barber?.id === "__no_pref__" || !barber?.id) return [];
+    const barberId = barber.id;
+    const svcDur = serviceDuration || slotInterval;
+
+    // Get barber's work schedule for this day
+    const defStart = g("booking.default_start_time", "08:00");
+    const defEnd = g("booking.default_end_time", "19:00");
+    const ws = schedules.find((s: WorkSchedule) => s.memberId === barberId && s.dayOfWeek === selectedDate.getDay());
+    const startTime = ws?.startTime || defStart;
+    const endTime = ws?.endTime || defEnd;
+    const [stH, stM] = startTime.split(":").map(Number);
+    const [etH2, etM2] = endTime.split(":").map(Number);
+    const dayStartMin = stH * 60 + stM;
+    const dayEndMin = etH2 * 60 + etM2;
+    const breakS = ws?.breakStart, breakE = ws?.breakEnd;
+    let breakStartMin = 0, breakEndMin = 0;
+    if (breakS && breakE) {
+      const [bsH, bsM] = breakS.split(":").map(Number);
+      const [beH, beM] = breakE.split(":").map(Number);
+      breakStartMin = bsH * 60 + bsM;
+      breakEndMin = beH * 60 + beM;
+    }
+
+    // Get this barber's events for the day, sorted
+    const dayEvents = events.filter((e: any) =>
+      e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear()
+      && e.status !== "cancelled" && e.status !== "no_show" && e.barberId === barberId
+      && (!unitId || e.unitId === unitId)
+    ).sort((a: any, b: any) => {
+      const [aH, aM] = (a.startTime || "00:00").split(":").map(Number);
+      const [bH2, bM2] = (b.startTime || "00:00").split(":").map(Number);
+      return (aH * 60 + aM) - (bH2 * 60 + bM2);
+    });
+
+    if (dayEvents.length === 0) return []; // No events = no gaps to detect
+
+    // Build list of occupied intervals
+    const occupied: { start: number; end: number }[] = dayEvents.map((e: any) => {
+      const [eH, eM] = (e.startTime || "00:00").split(":").map(Number);
+      return { start: eH * 60 + eM, end: eH * 60 + eM + (e.duration || slotInterval) };
+    });
+
+    // Add break as occupied if exists
+    if (breakStartMin > 0) occupied.push({ start: breakStartMin, end: breakEndMin });
+    occupied.sort((a, b) => a.start - b.start);
+
+    // Regular slot times (to avoid duplicating)
+    const regularSlots = generateTimeSlots(startTime, endTime, slotInterval);
+    const regularSet = new Set(regularSlots);
+
+    // Detect gaps and generate encaixe slots
+    const encaixeSlots: { time: string; isEncaixe: boolean }[] = [];
+    let cursor = dayStartMin;
+    for (const occ of occupied) {
+      if (occ.start > cursor) {
+        // Gap from cursor to occ.start
+        const gapSize = occ.start - cursor;
+        if (gapSize >= svcDur) {
+          const gapTime = `${String(Math.floor(cursor / 60)).padStart(2, "0")}:${String(cursor % 60).padStart(2, "0")}`;
+          // Only add if it's NOT already a regular slot and passes all checks
+          if (!regularSet.has(gapTime) && cursor + svcDur <= dayEndMin) {
+            // Check break overlap
+            const noBreakConflict = !breakStartMin || !(cursor < breakEndMin && cursor + svcDur > breakStartMin);
+            if (noBreakConflict) encaixeSlots.push({ time: gapTime, isEncaixe: true });
+          }
+        }
+      }
+      cursor = Math.max(cursor, occ.end);
+    }
+    // Gap after last event until end of day
+    if (cursor < dayEndMin && (dayEndMin - cursor) >= svcDur) {
+      const gapTime = `${String(Math.floor(cursor / 60)).padStart(2, "0")}:${String(cursor % 60).padStart(2, "0")}`;
+      if (!regularSet.has(gapTime)) {
+        const noBreakConflict = !breakStartMin || !(cursor < breakEndMin && cursor + svcDur > breakStartMin);
+        if (noBreakConflict) encaixeSlots.push({ time: gapTime, isEncaixe: true });
+      }
+    }
+
+    // Filter past slots if today
+    const now = new Date();
+    if (selectedDate.toDateString() === now.toDateString()) {
+      const cutoff = now.getHours() * 60 + now.getMinutes();
+      return encaixeSlots.filter(s => {
+        const [h, m] = s.time.split(":").map(Number);
+        return h * 60 + m > cutoff;
+      });
+    }
+    return encaixeSlots;
+  }
+
+  const regularSlots = getAvailableSlots();
+  const encaixeSlots = getEncaixeSlots();
+  const allSlots = [...regularSlots, ...encaixeSlots].sort((a, b) => {
+    const [aH, aM] = a.time.split(":").map(Number);
+    const [bH, bM] = b.time.split(":").map(Number);
+    return (aH * 60 + aM) - (bH * 60 + bM);
+  });
+  const morningSlots = allSlots.filter((s) => parseInt(s.time) < 12);
+  const afternoonSlots = allSlots.filter((s) => parseInt(s.time) >= 12);
   const displaySlots = periodo === "manha" ? morningSlots : afternoonSlots;
 
   return (
@@ -2359,7 +2597,12 @@ function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, max
 
         {/* Time period section */}
         <div className="mt-1 mb-2">
-          <h3 className="font-bold text-center mb-3 text-white text-sm tracking-wide" style={{ letterSpacing: "0.05em" }}>Escolha o melhor horário</h3>
+          <h3 className="font-bold text-center mb-1 text-white text-sm tracking-wide" style={{ letterSpacing: "0.05em" }}>Escolha o melhor horário</h3>
+          {serviceDuration > slotInterval && (
+            <p className="text-center text-xs mb-3 flex items-center justify-center gap-1.5" style={{ color: primary }}>
+              <Clock className="w-3.5 h-3.5" /> Duração total: {serviceDuration} min
+            </p>
+          )}
           
           {/* Elegant pill toggle */}
           <div className="relative flex mb-4 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.06)", padding: 3, border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -2394,11 +2637,12 @@ function CalendarModal({ primary, cardBg, barber, unitId, schedules, events, max
           className="grid grid-cols-4 gap-2 max-h-40 overflow-y-auto booking-scrollbar"
           style={{ animation: "slotsFadeIn 0.25s ease-out both" }}
         >
-          {selectedDate ? (displaySlots.length > 0 ? displaySlots.map((t, i) => (
-            <div key={t} onClick={() => onSelect(selectedDate, t)}
-              className="booking-time-slot-elegant p-2.5 rounded-xl text-center text-sm font-medium cursor-pointer"
-              style={{ animationDelay: `${i * 30}ms` }}>
-              {t}
+          {selectedDate ? (displaySlots.length > 0 ? displaySlots.map((slot, i) => (
+            <div key={slot.time} onClick={() => onSelect(selectedDate, slot.time)}
+              className={`booking-time-slot-elegant p-2.5 rounded-xl text-center cursor-pointer ${slot.isEncaixe ? 'border border-dashed' : ''}`}
+              style={{ animationDelay: `${i * 30}ms`, ...(slot.isEncaixe ? { borderColor: primary + '50' } : {}) }}>
+              <span className="text-sm font-medium">{slot.time}</span>
+              {slot.isEncaixe && <div className="text-[9px] mt-0.5 opacity-70" style={{ color: primary }}>⚡ Encaixe</div>}
             </div>
           )) : (
             <p className="col-span-4 text-gray-500 text-sm text-center py-4" style={{ fontStyle: "italic" }}>Não há horários disponíveis para este período.</p>
@@ -2722,14 +2966,14 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   const abertos = events.filter((e: CalendarEvent) => {
-    if (e.status === "cancelled" || e.status === "completed") return false;
+    if (e.status === "cancelled" || e.status === "completed" || e.status === "no_show") return false;
     const eventDate = new Date(e.year, e.month, e.date);
     return eventDate >= todayStart;
   });
   const historico = events.filter((e: CalendarEvent) => {
     if (e.status === "cancelled") return false;
     const eventDate = new Date(e.year, e.month, e.date);
-    return eventDate < todayStart || e.status === "completed";
+    return eventDate < todayStart || e.status === "completed" || e.status === "no_show";
   });
 
   // Resolve barber name — fallback to barbers array if barberName looks like a UUID
@@ -2743,7 +2987,7 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
   function showDetalhes(ev: CalendarEvent) {
     const eventDate = new Date(ev.year, ev.month, ev.date);
     const dateStr = eventDate.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
-    const isOpen = eventDate >= todayStart && ev.status !== "completed";
+    const isOpen = eventDate >= todayStart && ev.status !== "completed" && ev.status !== "no_show";
     const unit = units.find((u: any) => u.id === ev.unitId);
 
     // Use the shared resolveBarberName helper (defined in HistoricoView scope)
@@ -2777,23 +3021,40 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
           </div>
           <div>
             <p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Horário:</p>
-            <p className="text-white">{ev.startTime}</p>
+            <p className="text-white">{ev.startTime} - {ev.endTime}</p>
+            {(ev.duration || 0) > 0 && <p className="text-gray-500 text-xs mt-0.5">{ev.duration} minutos</p>}
           </div>
           <div>
             <p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Barbeiro:</p>
             <p className="text-white">{resolvedBarber}</p>
           </div>
           <div className="border-t border-gray-700 pt-4">
-            <div className="flex items-center justify-between">
-              <p className="text-white">{ev.serviceName || ev.title}</p>
-              {price != null && <p className="text-white font-bold">R$ {price.toFixed(2)}</p>}
-            </div>
+            {ev.serviceSlots && ev.serviceSlots.length > 1 ? (
+              <div className="space-y-2">
+                {ev.serviceSlots.map((ss: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between">
+                    <div>
+                      <p className="text-white text-sm">{ss.serviceName}</p>
+                      <p className="text-gray-500 text-xs">{ss.startTime} - {ss.endTime} · {ss.duration}min</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <p className="text-white">{ev.serviceName || ev.title}</p>
+                {price != null && <p className="text-white font-bold">R$ {price.toFixed(2)}</p>}
+              </div>
+            )}
           </div>
           {price != null && (
             <div className="flex items-center justify-between border-t border-gray-700 pt-3">
               <p className="text-white font-bold text-base">Total</p>
               <p className="font-bold text-base" style={{ color: primary }}>R$ {price.toFixed(2)}</p>
             </div>
+          )}
+          {(ev as any).usedInPlan && (
+            <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(59,130,246,0.2)", color: "#60a5fa" }}>Desconto do plano</span>
           )}
           {ev.usedReferralCredit && (
             <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${primary}20`, color: primary }}>Crédito de indicação</span>
@@ -2846,7 +3107,7 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
               }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
                 Agendar Novamente
               </button>
-              {!ev.rating && g("review.enabled", "true") !== "false" && (
+              {!ev.rating && ev.status !== "no_show" && g("review.enabled", "true") !== "false" && (
                 <button onClick={() => closeModal(() => showAvaliacaoModal(ev))} className="w-full py-3 font-bold rounded-lg"
                   style={{ backgroundColor: "transparent", color: primary, border: `2px solid ${primary}` }}>
                   <Star className="w-4 h-4 inline mr-1" />Avaliar
@@ -2874,7 +3135,13 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
     openModal(
       <CancelConfirmModal ev={ev} primary={primary} bgColor={bgColor} onBack={() => closeModal(() => showDetalhes(ev))}
         onConfirm={async () => {
-          await supabase.from("calendar_events").update({ status: "cancelled", updatedAt: new Date().toISOString() }).eq("id", ev.id);
+          const now = new Date().toISOString();
+          // F5: Cancel all events in the group if this is a split appointment
+          if ((ev as any).groupId) {
+            await supabase.from("calendar_events").update({ status: "cancelled", updatedAt: now }).eq("groupId", (ev as any).groupId);
+          } else {
+            await supabase.from("calendar_events").update({ status: "cancelled", updatedAt: now }).eq("id", ev.id);
+          }
           // ── Decrement subscription usage if this booking used plan discount ──
           if ((ev as any).usedInPlan && clientSubscription?.id && (clientSubscription.usesThisMonth || 0) > 0) {
             try {
@@ -2884,7 +3151,16 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
               if (plan?.comboMode) {
                 const comboIds: string[] = safeParseJsonArray(plan.comboServiceIds);
                 if (comboIds.length > 0) {
-                  const evServiceIds: string[] = safeParseJsonArray((ev as any).serviceIds);
+                  // For grouped events (split), combine serviceIds from ALL group members
+                  // to reconstruct the original booking's full service list
+                  let evServiceIds: string[];
+                  if ((ev as any).groupId) {
+                    const { data: groupEvts } = await supabase.from("calendar_events")
+                      .select("serviceIds").eq("groupId", (ev as any).groupId);
+                    evServiceIds = (groupEvts || []).flatMap((ge: any) => safeParseJsonArray(ge.serviceIds));
+                  } else {
+                    evServiceIds = safeParseJsonArray((ev as any).serviceIds);
+                  }
                   const comboMatches = comboIds.filter(id => evServiceIds.includes(id)).length;
                   decrement = comboMatches === comboIds.length ? 1 : 0.5;
                 }
@@ -2926,12 +3202,53 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
         onBack={() => closeModal(() => showDetalhes(ev))}
         onConfirm={async (newDate: Date, newTime: string) => {
           const isoDate = new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate()).toISOString();
-          await supabase.from("calendar_events").update({
+          const now = new Date().toISOString();
+          const newEnd = addMinutesToTime(newTime, ev.duration || 30);
+
+          // G3: Recalculate serviceSlots with new start time
+          let updatedSlots: any = undefined;
+          if ((ev as any).serviceSlots && (ev as any).serviceSlots.length > 0) {
+            let cumTime = newTime;
+            updatedSlots = (ev as any).serviceSlots.map((ss: any) => {
+              const dur = ss.duration || 30;
+              const slot = { ...ss, startTime: cumTime, endTime: addMinutesToTime(cumTime, dur) };
+              cumTime = slot.endTime;
+              return slot;
+            });
+          }
+
+          const basePayload: any = {
             date: isoDate,
             startTime: newTime,
-            endTime: addMinutesToTime(newTime, ev.duration || 30),
-            updatedAt: new Date().toISOString(),
-          }).eq("id", ev.id);
+            endTime: newEnd,
+            updatedAt: now,
+          };
+
+          // F6: Propagate reschedule to all events in the group
+          if ((ev as any).groupId) {
+            // Fetch all group events to recalculate endTime per event (each has different duration)
+            const { data: groupEvts } = await supabase.from("calendar_events")
+              .select("id, duration").eq("groupId", (ev as any).groupId);
+            if (groupEvts && groupEvts.length > 0) {
+              for (const ge of groupEvts) {
+                await supabase.from("calendar_events").update({
+                  date: isoDate,
+                  startTime: newTime,
+                  endTime: addMinutesToTime(newTime, ge.duration || 30),
+                  updatedAt: now,
+                }).eq("id", ge.id);
+              }
+            }
+            // Update serviceSlots only for THIS event (each split event has different slots)
+            if (updatedSlots) {
+              await supabase.from("calendar_events").update({ serviceSlots: JSON.stringify(updatedSlots) }).eq("id", ev.id);
+            }
+          } else {
+            await supabase.from("calendar_events").update({
+              ...basePayload,
+              ...(updatedSlots ? { serviceSlots: JSON.stringify(updatedSlots) } : {}),
+            }).eq("id", ev.id);
+          }
           closeModal(() => {
             openModal(
               <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
@@ -3011,7 +3328,7 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
                     </div>
                     <div className="flex justify-between text-sm mt-2 mb-4" style={{ color: "#d1d5db" }}>
                       <span><Calendar className="w-3 h-3 inline mr-2" style={{ color: primary }} />{dateStr}</span>
-                      <span><Clock className="w-3 h-3 inline mr-2" style={{ color: primary }} />{e.startTime}</span>
+                      <span><Clock className="w-3 h-3 inline mr-2" style={{ color: primary }} />{e.startTime} - {e.endTime || (() => { const [h, m] = (e.startTime || "00:00").split(":").map(Number); const end = h * 60 + m + (e.duration || 30); return `${String(Math.floor(end / 60)).padStart(2, "0")}:${String(end % 60).padStart(2, "0")}`; })()}</span>
                     </div>
                     <div className="flex items-center">
                       <div className="w-10 h-10 rounded-full mr-4 flex items-center justify-center text-sm font-bold" style={{ backgroundColor: "#374151", color: primary }}>
@@ -3021,10 +3338,10 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
                         <p className="text-sm text-gray-400">Barbeiro</p>
                         <p className="font-semibold text-white">{resolveBarberName(e)}</p>
                       </div>
-                      <div className="ml-auto text-right">
-                        <p className="text-sm text-gray-400">Serviço</p>
-                        <p className="font-semibold text-white">{e.serviceName || e.title}</p>
-                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <p className="text-sm text-gray-400 mb-1">Serviço</p>
+                      <p className="font-semibold text-white">{e.serviceName || e.title}</p>
                     </div>
                   </div>
                   <div className="border-t border-gray-700 mt-3 pt-3 text-center">
@@ -3045,34 +3362,62 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
               const eventDate = new Date(e.year, e.month, e.date);
               const dateStr = eventDate.toLocaleDateString("pt-BR", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
               const unit = units.find((u: any) => u.id === e.unitId);
-              const tagHtml = e.usedInPlan
+              // Badge priority: rating > no_show > usedInPlan > usedReferralCredit
+              const topBadge = e.rating
+                ? <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: "rgba(251,191,36,0.15)", color: "#fbbf24" }}>
+                    <Star className="w-3 h-3" style={{ fill: "#fbbf24" }} />{e.rating}
+                  </span>
+                : e.status === "no_show"
+                ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#f87171" }}>Não compareceu</span>
+                : e.usedInPlan
                 ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(59,130,246,0.2)", color: "#60a5fa" }}>Plano</span>
                 : e.usedReferralCredit
                 ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(34,197,94,0.2)", color: "#4ade80" }}>Crédito</span>
                 : null;
               return (
                 <div key={e.id} className="booking-history-card" style={{ backgroundColor: cardBg }}>
-                  <p className="text-sm text-gray-400 mb-2"><Calendar className="w-3 h-3 inline mr-2" style={{ color: primary }} />{dateStr}</p>
-                  <p className="text-sm text-gray-400 mb-4"><Clock className="w-3 h-3 inline mr-2" style={{ color: primary }} />{e.startTime}</p>
+                  <div className="flex items-start justify-between mb-2">
+                    <p className="text-sm text-gray-400"><Calendar className="w-3 h-3 inline mr-2" style={{ color: primary }} />{dateStr}</p>
+                    {topBadge}
+                  </div>
+                  <p className="text-sm text-gray-400 mb-4"><Clock className="w-3 h-3 inline mr-2" style={{ color: primary }} />{e.startTime} - {e.endTime}</p>
                   <div className="border-t border-gray-700 pt-3">
-                    <div className="flex justify-between items-start">
-                      <p className="font-semibold text-white mb-2">{unit?.name || e.serviceName || e.title}</p>
-                      {tagHtml}
-                    </div>
-                    <div className="flex justify-between text-sm">
+                    <p className="font-semibold text-white mb-2">{unit?.name || e.serviceName || e.title}</p>
+                    <div className="text-sm">
                       <div>
                         <p className="text-gray-400">Barbeiro</p>
                         <p className="text-white">{resolveBarberName(e)}</p>
                       </div>
-                      <div>
-                        <p className="text-gray-400">Serviço</p>
-                        <p className="text-white">{e.serviceName || e.title}</p>
-                      </div>
+                    </div>
+                    <div className="mt-2 text-sm">
+                      <p className="text-gray-400">Serviço</p>
+                      <p className="text-white">{e.serviceName || e.title}</p>
                     </div>
                   </div>
                   {e.rating ? (
-                    <div className="flex justify-center items-center mt-3 pt-3 border-t border-gray-700">
-                      {[1, 2, 3, 4, 5].map((s) => <Star key={s} className="w-4 h-4" style={{ color: s <= e.rating! ? "#fbbf24" : "#6b7280", fill: s <= e.rating! ? "#fbbf24" : "none" }} />)}
+                    <div className="mt-3 pt-3 border-t border-gray-700 grid grid-cols-2 gap-3">
+                      <button onClick={() => showDetalhes(e)} className="py-2 text-sm font-bold rounded-lg border-2 transition-colors" style={{ borderColor: primary, color: primary, backgroundColor: "transparent" }}>Ver detalhes</button>
+                      <button onClick={() => {
+                        const svc = services.find((s: Service) => s.id === e.serviceId);
+                        const barber = barbers.find((b: any) => b.id === e.barberId);
+                        resetSelection();
+                        if (unit) updateSelection({ unit });
+                        if (barber) updateSelection({ barber });
+                        if (svc) updateSelection({ service: svc });
+                        setActiveView("agendar");
+                      }} className="py-2 text-sm font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Agendar Novamente</button>
+                    </div>
+                  ) : e.status === "no_show" ? (
+                    <div className="mt-3 pt-3 border-t border-gray-700">
+                      <button onClick={() => {
+                        const svc = services.find((s: Service) => s.id === e.serviceId);
+                        const barber = barbers.find((b: any) => b.id === e.barberId);
+                        resetSelection();
+                        if (unit) updateSelection({ unit });
+                        if (barber) updateSelection({ barber });
+                        if (svc) updateSelection({ service: svc });
+                        setActiveView("agendar");
+                      }} className="w-full py-2 text-sm font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>Agendar Novamente</button>
                     </div>
                   ) : (
                     <div className="mt-3 pt-3 border-t border-gray-700 grid grid-cols-2 gap-3">
@@ -3112,7 +3457,12 @@ function CancelConfirmModal({ ev, primary, bgColor, onBack, onConfirm }: any) {
     <div className="p-6 text-center" style={{ borderRadius: "1rem" }}>
       <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-red-500" />
       <h3 className="text-xl font-bold mb-3 text-white">Confirmar Cancelamento</h3>
-      <p className="text-gray-300 mb-6">Você tem certeza que deseja cancelar este agendamento? Esta ação não pode ser desfeita.</p>
+      <p className="text-gray-300 mb-4">Você tem certeza que deseja cancelar este agendamento? Esta ação não pode ser desfeita.</p>
+      {ev.groupId && (
+        <p className="text-xs text-amber-400 mb-4 px-3 py-2 rounded-lg" style={{ backgroundColor: "rgba(251,191,36,0.1)" }}>
+          ⚠️ Este agendamento possui serviços vinculados. Todos serão cancelados juntos.
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-4">
         <button onClick={onBack} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
         <button onClick={async () => { setLoading(true); await onConfirm(); }} disabled={loading}
@@ -3152,7 +3502,7 @@ function RemarcarModal({ ev, primary, bgColor, cardBg, barbers, schedules, event
     return true;
   }
 
-  function getSlots(): string[] {
+  function getSlots(): { time: string; isEncaixe: boolean }[] {
     if (!selectedDate) return [];
     const barberId = barber?.id;
     let st = "08:00", et = "19:00", bs = "", be = "";
@@ -3161,10 +3511,32 @@ function RemarcarModal({ ev, primary, bgColor, cardBg, barbers, schedules, event
       if (ws) { st = ws.startTime || st; et = ws.endTime || et; bs = ws.breakStart || ""; be = ws.breakEnd || ""; }
     }
     let slots = generateTimeSlots(st, et, slotInterval);
-    slots = slots.filter((s) => !isInBreak(s, bs, be));
-    const dayEvts = events.filter((e: any) => e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear() && e.status !== "cancelled" && e.id !== ev.id && (!barberId || e.barberId === barberId) && (!ev.unitId || e.unitId === ev.unitId));
-    // Duration-aware overlap check (bidirectional)
+
+    // Duration-aware break overlap check (B2)
     const evDur = ev.duration || slotInterval;
+    if (bs && be) {
+      const [bsH, bsM] = bs.split(":").map(Number);
+      const [beH, beM] = be.split(":").map(Number);
+      const breakS = bsH * 60 + bsM;
+      const breakE = beH * 60 + beM;
+      slots = slots.filter((s) => {
+        const [sh, sm] = s.split(":").map(Number);
+        const slotStart = sh * 60 + sm;
+        const slotEnd = slotStart + evDur;
+        return !(slotStart < breakE && slotEnd > breakS);
+      });
+    }
+
+    // End-of-day overflow check (B1)
+    const [retH, retM] = et.split(":").map(Number);
+    const endTimeMinR = retH * 60 + retM;
+    slots = slots.filter((s) => {
+      const [sh, sm] = s.split(":").map(Number);
+      return (sh * 60 + sm) + evDur <= endTimeMinR;
+    });
+
+    const dayEvts = events.filter((e: any) => e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear() && e.status !== "cancelled" && e.status !== "no_show" && e.id !== ev.id && (!barberId || e.barberId === barberId) && (!ev.unitId || e.unitId === ev.unitId));
+    // Bidirectional overlap check with existing events
     slots = slots.filter((slot) => {
       const [sh, sm] = slot.split(":").map(Number);
       const slotStart = sh * 60 + sm;
@@ -3180,18 +3552,91 @@ function RemarcarModal({ ev, primary, bgColor, cardBg, barbers, schedules, event
       const now = new Date();
       slots = slots.filter((s) => { const [h, m] = s.split(":").map(Number); return h * 60 + m > now.getHours() * 60 + now.getMinutes(); });
     }
-    return slots;
+    return slots.map(s => ({ time: s, isEncaixe: false }));
   }
 
-  const slots = getSlots();
-  const morningSlots = slots.filter((s) => parseInt(s) < 12);
-  const afternoonSlots = slots.filter((s) => parseInt(s) >= 12);
+  // D2: Gap slot (encaixe) generation for RemarcarModal
+  function getEncaixeSlotsR(): { time: string; isEncaixe: boolean }[] {
+    if (!selectedDate || !barber?.id) return [];
+    const barberId = barber.id;
+    const evDur = ev.duration || slotInterval;
+    let st = "08:00", et = "19:00", bs = "", be = "";
+    const ws = schedules.find((s: WorkSchedule) => s.memberId === barberId && s.dayOfWeek === selectedDate.getDay());
+    if (ws) { st = ws.startTime || st; et = ws.endTime || et; bs = ws.breakStart || ""; be = ws.breakEnd || ""; }
+    const [stH, stM] = st.split(":").map(Number);
+    const [etH2, etM2] = et.split(":").map(Number);
+    const dayStartMin = stH * 60 + stM;
+    const dayEndMin = etH2 * 60 + etM2;
+    let breakStartMin = 0, breakEndMin = 0;
+    if (bs && be) {
+      const [bsH2, bsM2] = bs.split(":").map(Number);
+      const [beH2, beM2] = be.split(":").map(Number);
+      breakStartMin = bsH2 * 60 + bsM2;
+      breakEndMin = beH2 * 60 + beM2;
+    }
+    const dayEvts = events.filter((e: any) =>
+      e.date === selectedDate.getDate() && e.month === selectedDate.getMonth() && e.year === selectedDate.getFullYear()
+      && e.status !== "cancelled" && e.status !== "no_show" && e.id !== ev.id && e.barberId === barberId
+      && (!ev.unitId || e.unitId === ev.unitId)
+    ).sort((a: any, b: any) => {
+      const [aH, aM] = (a.startTime || "00:00").split(":").map(Number);
+      const [bH2, bM2] = (b.startTime || "00:00").split(":").map(Number);
+      return (aH * 60 + aM) - (bH2 * 60 + bM2);
+    });
+    if (dayEvts.length === 0) return [];
+    const occupied: { start: number; end: number }[] = dayEvts.map((e: any) => {
+      const [eH, eM] = (e.startTime || "00:00").split(":").map(Number);
+      return { start: eH * 60 + eM, end: eH * 60 + eM + (e.duration || slotInterval) };
+    });
+    if (breakStartMin > 0) occupied.push({ start: breakStartMin, end: breakEndMin });
+    occupied.sort((a, b) => a.start - b.start);
+    const regularSet = new Set(generateTimeSlots(st, et, slotInterval));
+    const encaixeSlots: { time: string; isEncaixe: boolean }[] = [];
+    let cursor = dayStartMin;
+    for (const occ of occupied) {
+      if (occ.start > cursor && (occ.start - cursor) >= evDur) {
+        const gapTime = `${String(Math.floor(cursor / 60)).padStart(2, "0")}:${String(cursor % 60).padStart(2, "0")}`;
+        if (!regularSet.has(gapTime) && cursor + evDur <= dayEndMin) {
+          const noBreakConflict = !breakStartMin || !(cursor < breakEndMin && cursor + evDur > breakStartMin);
+          if (noBreakConflict) encaixeSlots.push({ time: gapTime, isEncaixe: true });
+        }
+      }
+      cursor = Math.max(cursor, occ.end);
+    }
+    if (cursor < dayEndMin && (dayEndMin - cursor) >= evDur) {
+      const gapTime = `${String(Math.floor(cursor / 60)).padStart(2, "0")}:${String(cursor % 60).padStart(2, "0")}`;
+      if (!regularSet.has(gapTime)) {
+        const noBreakConflict = !breakStartMin || !(cursor < breakEndMin && cursor + evDur > breakStartMin);
+        if (noBreakConflict) encaixeSlots.push({ time: gapTime, isEncaixe: true });
+      }
+    }
+    if (selectedDate.toDateString() === new Date().toDateString()) {
+      const cutoff = new Date().getHours() * 60 + new Date().getMinutes();
+      return encaixeSlots.filter(s => { const [h, m] = s.time.split(":").map(Number); return h * 60 + m > cutoff; });
+    }
+    return encaixeSlots;
+  }
+
+  const regularSlots = getSlots();
+  const encaixeSlotsR = getEncaixeSlotsR();
+  const allSlots = [...regularSlots, ...encaixeSlotsR].sort((a, b) => {
+    const [aH, aM] = a.time.split(":").map(Number);
+    const [bH, bM] = b.time.split(":").map(Number);
+    return (aH * 60 + aM) - (bH * 60 + bM);
+  });
+  const morningSlots = allSlots.filter((s) => parseInt(s.time) < 12);
+  const afternoonSlots = allSlots.filter((s) => parseInt(s.time) >= 12);
   const displaySlots = periodo === "manha" ? morningSlots : afternoonSlots;
 
   return (
     <div className="p-6" style={{ borderRadius: "1rem" }}>
-      <h3 className="text-xl font-bold mb-4 text-center" style={{ color: primary }}>Remarcar Horário</h3>
-
+      <h3 className="text-xl font-bold mb-2 text-center" style={{ color: primary }}>Remarcar Horário</h3>
+      <p className="text-center text-sm text-gray-400 mb-3">{ev.serviceName || ev.title}</p>
+      {(ev as any).groupId && (
+        <p className="text-xs text-amber-400 mb-3 px-3 py-2 rounded-lg text-center" style={{ backgroundColor: "rgba(251,191,36,0.1)" }}>
+          ⚠️ Todos os serviços vinculados serão remarcados juntos.
+        </p>
+      )}
       <div className="flex items-center justify-between mb-4 px-2">
         <button onClick={() => { const prev = new Date(year, month - 1); if (prev >= new Date(today.getFullYear(), today.getMonth())) setViewDate(prev); }} className="p-1"><ChevronLeft className="w-5 h-5 text-white" /></button>
         <span className="font-bold text-lg text-white">{MONTHS_PT[month]} {year}</span>
@@ -3223,7 +3668,12 @@ function RemarcarModal({ ev, primary, bgColor, cardBg, barbers, schedules, event
         })}
       </div>
 
-      <h3 className="font-bold text-center mb-4 text-white">Escolha o novo horário</h3>
+      <h3 className="font-bold text-center mb-1 text-white">Escolha o novo horário</h3>
+      {(ev.duration || 30) > slotInterval && (
+        <p className="text-center text-xs mb-3 flex items-center justify-center gap-1.5" style={{ color: primary }}>
+          <Clock className="w-3.5 h-3.5" /> Duração: {ev.duration} min
+        </p>
+      )}
       <div className="flex gap-2 mb-4">
         {(["manha", "tarde"] as const).map((p) => (
           <button key={p} onClick={() => setPeriodo(p)} className="flex-1 py-2 rounded-lg font-semibold text-sm"
@@ -3234,11 +3684,12 @@ function RemarcarModal({ ev, primary, bgColor, cardBg, barbers, schedules, event
       </div>
 
       <div className="grid grid-cols-4 gap-2 mb-6">
-        {selectedDate ? (displaySlots.length > 0 ? displaySlots.map((t) => (
-          <div key={t} onClick={() => setSelectedTime(t)}
-            className="booking-time-slot p-3 rounded-lg text-center text-sm font-medium cursor-pointer"
-            style={{ backgroundColor: selectedTime === t ? primary : "#374151", color: selectedTime === t ? "#111" : "#fff" }}>
-            {t}
+        {selectedDate ? (displaySlots.length > 0 ? displaySlots.map((slot) => (
+          <div key={slot.time} onClick={() => setSelectedTime(slot.time)}
+            className={`booking-time-slot p-3 rounded-lg text-center cursor-pointer ${slot.isEncaixe ? 'border border-dashed' : ''}`}
+            style={{ backgroundColor: selectedTime === slot.time ? primary : "#374151", color: selectedTime === slot.time ? "#111" : "#fff", ...(slot.isEncaixe ? { borderColor: primary + '50' } : {}) }}>
+            <span className="text-sm font-medium">{slot.time}</span>
+            {slot.isEncaixe && <div className="text-[9px] mt-0.5 opacity-70" style={{ color: selectedTime === slot.time ? "#111" : primary }}>⚡ Encaixe</div>}
           </div>
         )) : <p className="col-span-4 text-gray-400 text-sm text-center">Sem horários disponíveis.</p>
         ) : <p className="col-span-4 text-gray-400 text-sm text-center">Selecione uma data.</p>}
@@ -4112,6 +4563,12 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                 <span className="flex items-center gap-3"><ArrowUpDown className="w-5 h-5" style={{ color: primary }} />Trocar plano</span>
                 <ChevronRight className="w-4 h-4 text-gray-500" />
               </button>
+              {units.length > 1 && (
+                <button onClick={() => closeModal(() => showTrocarUnidadeModal())} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
+                  <span className="flex items-center gap-3"><MapPin className="w-5 h-5" style={{ color: primary }} />Trocar unidade</span>
+                  <ChevronRight className="w-4 h-4 text-gray-500" />
+                </button>
+              )}
               {subscription.pendingPlanId && (
                 <button onClick={async () => { try { await cancelPendingPlanChange(); const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single(); if (s && onSubscriptionChange) onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined }); closeModal(); } catch(e: any) { alert(e.message || 'Erro'); } }} className="w-full text-left p-4 rounded-lg flex items-center justify-between hover:opacity-80 transition-opacity" style={{ backgroundColor: "#2a2a2a" }}>
                   <span className="flex items-center gap-3 text-amber-400"><XCircle className="w-5 h-5" />Cancelar troca agendada ({subscription.pendingPlanName})</span>
@@ -4169,7 +4626,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                     </div>
                     <div className="text-right">
                       <p className="text-white font-bold">R$ {Number(ev.amount || 0).toFixed(2)}</p>
-                      {ev.netValue != null && ev.netValue !== '' && <p className="text-[10px] text-gray-500">Líquido: R$ {Number(ev.netValue).toFixed(2)}</p>}
+
                       <div className="flex gap-2 justify-end mt-1">
                         {ev.invoiceUrl && <a href={ev.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline" style={{ color: primary }}>Fatura</a>}
                         {ev.transactionReceiptUrl && <a href={ev.transactionReceiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline" style={{ color: primary }}>Comprovante</a>}
@@ -4247,6 +4704,108 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
       );
     };
     openModal(<CardForm />, "center");
+  }
+
+  // ═══ TROCAR UNIDADE (F8) ═══
+  function showTrocarUnidadeModal() {
+    const UnitSelector = () => {
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [selectedUnit, setSelectedUnit] = useState('');
+      const [success, setSuccess] = useState<any>(null);
+
+      const currentUnitId = subscription?.unitId;
+      const currentPlan = subscription?.plan;
+      const allowedUnitIds = Array.isArray(currentPlan?.allowedUnitIds) ? currentPlan.allowedUnitIds : [];
+      const availableUnits = (units || []).filter((u: any) => {
+        if (u.id === currentUnitId) return false; // Exclude current
+        if (currentPlan?.unitScope === 'specific' && allowedUnitIds.length > 0) {
+          return allowedUnitIds.includes(u.id);
+        }
+        return true;
+      });
+
+      // Check if there are remaining benefits
+      const endDate = subscription?.endDate || subscription?.nextPaymentDate;
+      const benefitsRemaining = endDate ? new Date(endDate) > new Date() : false;
+
+      const handleTransfer = async () => {
+        if (!selectedUnit) return;
+        setLoading(true); setError('');
+        try {
+          const result = await changeUnit(selectedUnit);
+          setSuccess(result);
+          // Reload subscription
+          const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single();
+          if (s && onSubscriptionChange) {
+            onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined });
+          }
+        } catch (err: any) { setError(err.message || 'Erro ao trocar unidade.'); setLoading(false); }
+      };
+
+      if (success) {
+        const targetUnit = (units || []).find((u: any) => u.id === selectedUnit);
+        return (
+          <div className="p-6" style={{ borderRadius: "1rem" }}>
+            <div className="text-center space-y-4">
+              <div className="w-16 h-16 mx-auto rounded-full flex items-center justify-center" style={{ backgroundColor: `${primary}20` }}>
+                <Check className="w-8 h-8" style={{ color: primary }} />
+              </div>
+              <h3 className="text-xl font-bold text-white">Transferência realizada!</h3>
+              <p className="text-gray-400 text-sm">Sua assinatura foi transferida para <strong className="text-white">{targetUnit?.name || 'nova unidade'}</strong>.</p>
+              {success.benefitsRemaining && (
+                <div className="p-3 rounded-lg" style={{ backgroundColor: '#2a2a2a' }}>
+                  <p className="text-amber-400 text-xs">⚠️ Seus benefícios na unidade anterior continuam válidos até <strong>{new Date(success.benefitsEndDate).toLocaleDateString('pt-BR')}</strong>. A cobrança na nova unidade será feita somente após essa data.</p>
+                </div>
+              )}
+              <button onClick={() => closeModal()} className="w-full py-3 font-semibold rounded-lg text-white" style={{ backgroundColor: primary }}>Entendi</button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="p-6" style={{ borderRadius: "1rem" }}>
+          <h3 className="text-2xl font-bold text-center mb-2" style={{ color: primary }}>Trocar Unidade</h3>
+          <p className="text-gray-400 text-center text-sm mb-6">Selecione a unidade para onde deseja transferir sua assinatura.</p>
+          {error && <div className="p-3 mb-4 rounded-lg bg-red-500/20 text-red-400 text-sm text-center">{error}</div>}
+          {benefitsRemaining && (
+            <div className="p-3 mb-4 rounded-lg" style={{ backgroundColor: '#332200' }}>
+              <p className="text-amber-400 text-xs">⚠️ Você ainda possui benefícios até <strong>{endDate ? new Date(endDate).toLocaleDateString('pt-BR') : '—'}</strong>. Ao trocar, seus benefícios atuais continuarão válidos até essa data, e a cobrança na nova unidade será feita somente depois.</p>
+            </div>
+          )}
+          {availableUnits.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">Seu plano não está disponível em outras unidades.</p>
+          ) : (
+            <div className="space-y-3 max-h-[40vh] overflow-y-auto mb-6">
+              {availableUnits.map((u: any) => (
+                <button key={u.id} onClick={() => setSelectedUnit(u.id)}
+                  className="w-full p-4 rounded-lg flex items-center gap-3 transition-all"
+                  style={{ backgroundColor: selectedUnit === u.id ? `${primary}20` : '#2a2a2a', borderWidth: 2, borderColor: selectedUnit === u.id ? primary : 'transparent' }}
+                >
+                  <MapPin className="w-5 h-5 flex-shrink-0" style={{ color: selectedUnit === u.id ? primary : '#888' }} />
+                  <div className="text-left">
+                    <p className="text-white text-sm font-semibold">{u.name}</p>
+                    {u.address && <p className="text-gray-400 text-xs mt-0.5">{u.address}</p>}
+                  </div>
+                  {selectedUnit === u.id && <Check className="w-4 h-4 ml-auto" style={{ color: primary }} />}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => closeModal(() => showGerenciarModal())} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+            <button onClick={handleTransfer} disabled={!selectedUnit || loading}
+              className="py-3 font-semibold rounded-lg text-white transition-opacity disabled:opacity-50"
+              style={{ backgroundColor: primary }}
+            >
+              {loading ? <Loader2 className="w-5 h-5 booking-spin mx-auto" /> : 'Transferir'}
+            </button>
+          </div>
+        </div>
+      );
+    };
+    openModal(<UnitSelector />, "center");
   }
 
   // ═══ TROCAR PLANO (F6) ═══
@@ -4527,22 +5086,172 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
     openModal(<RegularizarFlow />, "center");
   }
 
-  // ═══ REATIVAR ASSINATURA (F1) ═══
+  // ═══ REATIVAR ASSINATURA (F1) — Modal Dedicado ═══
   function showReativarModal() {
     if (!subscription?.plan) return;
-    // Reuse AssinarModal flow — user needs to enter card info again
-    openModal(
-      <AssinarModal plan={subscription.plan as SubscriptionPlan} primary={primary} bgColor={bgColor} clientProfile={clientProfile} services={services}
-        units={units} g={g} openTermosModal={showTermosModal}
-        onClose={() => closeModal()}
-        isReactivation={true}
-        onSuccess={async (result: any) => {
+    const hasSavedCard = !!(subscription.creditCardToken && subscription.cardBrand && subscription.cardLast4);
+    const whatsappNumber = g("footer.whatsapp", "") || g("extras.whatsapp_number", "");
+    const planPrice = Number((subscription.plan as SubscriptionPlan).creditPrice) || Number((subscription.plan as SubscriptionPlan).price) || 0;
+
+    const ReativarFlow = () => {
+      const [step, setStep] = useState<'options' | 'confirm' | 'processing' | 'result'>('options');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [result, setResult] = useState<any>(null);
+
+      const handleSavedCard = async () => {
+        setLoading(true);
+        setError('');
+        setStep('processing');
+        try {
+          const res = await reactivateWithSavedCard();
+          setResult(res);
+          setStep('result');
+          // Refresh subscription state
           const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single();
           if (s) onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined });
-          if (result.finalStatus === 'active') setActiveView('agendar');
-        }}
-      />, "center"
-    );
+        } catch (err: any) {
+          setError(err.message || 'Erro ao reativar.');
+          // If saved card failed, go back to options
+          setStep('options');
+        } finally { setLoading(false); }
+      };
+
+      const handleNewCard = () => {
+        closeModal(() => {
+          openModal(
+            <AssinarModal plan={subscription!.plan as SubscriptionPlan} primary={primary} bgColor={bgColor} clientProfile={clientProfile} services={services}
+              units={units} g={g} openTermosModal={showTermosModal}
+              onClose={() => closeModal()}
+              isReactivation={true}
+              onSuccess={async (result: any) => {
+                const { data: s } = await supabase.from("subscriptions").select("*, subscription_plans(*)").eq("clientId", clientProfile?.id).neq("status", "cancelled").order("createdAt", { ascending: false }).limit(1).single();
+                if (s) onSubscriptionChange({ ...s, plan: s.subscription_plans ? { ...s.subscription_plans, price: Number(s.subscription_plans.price) || 0 } : undefined });
+                if (result.finalStatus === 'active') setActiveView('agendar');
+              }}
+            />, "center"
+          );
+        });
+      };
+
+      // Processing screen
+      if (step === 'processing') return (
+        <div className="p-8 text-center" style={{ borderRadius: '1rem' }}>
+          <Loader2 className="w-10 h-10 mx-auto mb-4 booking-spin" style={{ color: primary }} />
+          <h3 className="text-lg font-bold text-white mb-2">Processando reassinatura...</h3>
+          <p className="text-sm text-gray-400">Estamos reativando seu plano com o cartão salvo.</p>
+        </div>
+      );
+
+      // Result screen
+      if (step === 'result' && result) return (
+        <div className="p-6 text-center" style={{ borderRadius: '1rem' }}>
+          <div className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center" style={{ backgroundColor: '#22c55e20' }}>
+            <Check className="w-8 h-8 text-green-400" />
+          </div>
+          <h3 className="text-xl font-bold text-white mb-2">Plano Reativado!</h3>
+          <p className="text-sm text-gray-400 mb-4">Sua assinatura foi reativada com sucesso.</p>
+          <div className="p-4 rounded-xl mb-6" style={{ backgroundColor: '#2a2a2a' }}>
+            <div className="flex justify-between text-sm mb-2"><span className="text-gray-400">Plano</span><span className="text-white font-semibold">{result.planName}</span></div>
+            <div className="flex justify-between text-sm mb-2"><span className="text-gray-400">Valor</span><span className="text-white font-semibold">R$ {Number(result.planPrice).toFixed(2)}/mês</span></div>
+            {result.cardBrand && <div className="flex justify-between text-sm"><span className="text-gray-400">Cartão</span><span className="text-white">{result.cardBrand} •••• {result.cardLast4}</span></div>}
+          </div>
+          <button onClick={() => { closeModal(); if (result.finalStatus === 'active') setActiveView('agendar'); }} className="w-full py-3 text-sm font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor }}>
+            {result.finalStatus === 'active' ? 'Agendar Agora' : 'Entendido'}
+          </button>
+        </div>
+      );
+
+      // Confirm screen (saved card)
+      if (step === 'confirm') return (
+        <div className="p-6" style={{ borderRadius: '1rem' }}>
+          <h3 className="text-xl font-bold text-center mb-1" style={{ color: primary }}>Confirmar Reassinatura</h3>
+          <p className="text-gray-400 text-center text-sm mb-6">Revise os dados antes de confirmar</p>
+          <div className="p-4 rounded-xl mb-4" style={{ backgroundColor: '#2a2a2a' }}>
+            <div className="flex justify-between text-sm mb-3"><span className="text-gray-400">Plano</span><span className="text-white font-semibold">{subscription!.plan!.name}</span></div>
+            <div className="flex justify-between text-sm mb-3"><span className="text-gray-400">Valor</span><span className="text-white font-semibold">R$ {planPrice.toFixed(2)}<span className="text-xs text-gray-500 font-normal">/mês</span></span></div>
+            <div className="border-t border-gray-700 my-3" />
+            <div className="flex items-center gap-3">
+              <CreditCard className="w-5 h-5 text-gray-400" />
+              <div>
+                <p className="text-sm font-semibold text-white">{subscription!.cardBrand} •••• {subscription!.cardLast4}</p>
+                <p className="text-[11px] text-gray-500">Cartão salvo</p>
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 text-center mb-4">
+            <AlertTriangle className="w-3 h-3 inline mr-1" />A cobrança será realizada imediatamente
+          </p>
+          {error && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{error}</div>}
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => setStep('options')} className="py-3 font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+            <button disabled={loading} onClick={handleSavedCard} className="py-3 font-bold rounded-lg flex items-center justify-center gap-2" style={{ backgroundColor: primary, color: bgColor }}>
+              {loading ? <Loader2 className="w-5 h-5 booking-spin" /> : <><RefreshCw className="w-4 h-4" />Confirmar</>}
+            </button>
+          </div>
+        </div>
+      );
+
+      // Options screen (main)
+      return (
+        <div className="p-6" style={{ borderRadius: '1rem' }}>
+          <h3 className="text-2xl font-bold text-center mb-1" style={{ color: primary }}>Reassinar Plano</h3>
+          <p className="text-gray-400 text-center text-sm mb-6">Escolha como deseja reativar sua assinatura</p>
+          {/* Plan summary */}
+          <div className="p-4 rounded-xl mb-5 flex items-center justify-between" style={{ backgroundColor: '#2a2a2a' }}>
+            <div>
+              <p className="text-sm font-bold text-white">{subscription!.plan!.name}</p>
+              {hasSavedCard && <p className="text-[11px] text-gray-500 mt-0.5">{subscription!.cardBrand} •••• {subscription!.cardLast4}</p>}
+            </div>
+            <p className="text-sm font-bold text-white">R$ {planPrice.toFixed(2)}<span className="text-xs text-gray-500 font-normal">/mês</span></p>
+          </div>
+          {error && <div className="p-3 rounded-lg mb-4 text-sm text-red-400 border border-red-500/30" style={{ backgroundColor: '#ef444410' }}><AlertTriangle className="w-4 h-4 inline mr-2" />{error}</div>}
+          <div className="space-y-3">
+            {/* Option 1: Saved card (only if token exists) */}
+            {hasSavedCard && (
+              <button onClick={() => setStep('confirm')} className="w-full text-left p-4 rounded-xl flex items-center gap-4 hover:opacity-80 transition-opacity" style={{ backgroundColor: `${primary}10`, border: `1px solid ${primary}30` }}>
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${primary}20` }}>
+                  <CreditCard className="w-5 h-5" style={{ color: primary }} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-white">Reassinar com cartão salvo</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">{subscription!.cardBrand} •••• {subscription!.cardLast4} — reativar em 1 clique</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-gray-500 flex-shrink-0" />
+              </button>
+            )}
+            {/* Option 2: New card */}
+            <button onClick={handleNewCard} className="w-full text-left p-4 rounded-xl flex items-center gap-4 hover:opacity-80 transition-opacity" style={{ backgroundColor: '#2a2a2a' }}>
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${primary}15` }}>
+                <RefreshCw className="w-5 h-5" style={{ color: primary }} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-white">{hasSavedCard ? 'Usar outro cartão' : 'Cadastrar cartão'}</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">{hasSavedCard ? 'Cadastrar novo método de pagamento' : 'Informe os dados do cartão de crédito'}</p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-gray-500 flex-shrink-0" />
+            </button>
+            {/* Option 3: WhatsApp */}
+            {whatsappNumber && (
+              <a href={`https://wa.me/${whatsappNumber.replace(/\D/g, "")}?text=${encodeURIComponent("Olá! Gostaria de tirar dúvidas sobre minha assinatura.")}`} target="_blank" rel="noopener noreferrer"
+                className="w-full text-left p-4 rounded-xl flex items-center gap-4 hover:opacity-80 transition-opacity block" style={{ backgroundColor: '#2a2a2a' }}>
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#25D36615' }}>
+                  <Phone className="w-5 h-5 text-green-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-white">Tirar dúvidas</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Falar via WhatsApp</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-gray-500 flex-shrink-0" />
+              </a>
+            )}
+          </div>
+          <button onClick={() => closeModal()} className="w-full mt-4 py-2.5 text-sm font-semibold rounded-lg border border-gray-600" style={{ backgroundColor: "#1a1a1a", color: "#fff" }}>Voltar</button>
+        </div>
+      );
+    };
+
+    openModal(<ReativarFlow />, "center");
   }
 
   const isSuspended = subscription?.status === 'overdue' || subscription?.status === 'paused';
@@ -4906,14 +5615,33 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, clie
   const memberSince = clientProfile?.createdAt ? new Date(clientProfile.createdAt).toLocaleDateString("pt-BR", { month: "long", year: "numeric" }) : null;
 
   // Client stats from events
-  const myEvents = (allEvents || []).filter((e: any) => e.clientId === clientProfile?.id && e.status !== "cancelled");
+  const myEvents = (allEvents || []).filter((e: any) => e.clientId === clientProfile?.id && e.status !== "cancelled" && e.status !== "no_show");
   const completedEvents = myEvents.filter((e: any) => { const d = new Date(e.year, e.month, e.date); return d < new Date(); });
-  const futureEvents = myEvents.filter((e: any) => { const d = new Date(e.year, e.month, e.date); d.setHours(23,59); return d >= new Date(); }).sort((a: any, b: any) => new Date(a.year, a.month, a.date).getTime() - new Date(b.year, b.month, b.date).getTime());
+  // Deduplicate by groupId for stats: grouped events count as 1 visit
+  const seenGroupsStats = new Set<string>();
+  const uniqueCompletedEvents = completedEvents.filter((e: any) => {
+    if (e.groupId) {
+      if (seenGroupsStats.has(e.groupId)) return false;
+      seenGroupsStats.add(e.groupId);
+    }
+    return true;
+  });
+  const futureEvents = myEvents.filter((e: any) => {
+    if (e.status === "completed" || e.status === "no_show") return false;
+    const d = new Date(e.year, e.month, e.date);
+    const [eH, eM] = (e.startTime || "23:59").split(":").map(Number);
+    d.setHours(eH, eM, 0, 0);
+    return d > new Date();
+  }).sort((a: any, b: any) => {
+    const da = new Date(a.year, a.month, a.date); const [aH, aM] = (a.startTime || "00:00").split(":").map(Number); da.setHours(aH, aM);
+    const db = new Date(b.year, b.month, b.date); const [bH, bM] = (b.startTime || "00:00").split(":").map(Number); db.setHours(bH, bM);
+    return da.getTime() - db.getTime();
+  });
   const nextEvent = futureEvents[0];
 
-  // Favorite barber
+  // Favorite barber (uses deduplicated visits)
   const barberCounts: Record<string, number> = {};
-  completedEvents.forEach((e: any) => { if (e.barberId) barberCounts[e.barberId] = (barberCounts[e.barberId] || 0) + 1; });
+  uniqueCompletedEvents.forEach((e: any) => { if (e.barberId) barberCounts[e.barberId] = (barberCounts[e.barberId] || 0) + 1; });
   const favBarberId = Object.entries(barberCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
   const favBarber = favBarberId ? (barbers || []).find((b: any) => b.id === favBarberId) : null;
   const favBarberCount = favBarberId ? barberCounts[favBarberId] : 0;
@@ -5217,7 +5945,7 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, clie
               const dateStrFull = eventDate.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
               const unit = (units || []).find((u: any) => u.id === nextEvent.unitId);
               const price = nextEvent.finalPrice != null ? Number(nextEvent.finalPrice) : (nSvc?.price ?? null);
-              const isOpen = eventDate >= new Date(new Date().setHours(0,0,0,0)) && nextEvent.status !== "completed";
+              const isOpen = eventDate >= new Date(new Date().setHours(0,0,0,0)) && nextEvent.status !== "completed" && nextEvent.status !== "no_show";
               const evDate2 = new Date(nextEvent.year, nextEvent.month, nextEvent.date);
               const [evH, evM] = (nextEvent.startTime || "00:00").split(":").map(Number);
               evDate2.setHours(evH, evM, 0, 0);
@@ -5226,22 +5954,81 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, clie
               const reschedMin = parseInt(g("booking.reschedule_hours", "0"), 10);
               const canCancel = cancelMin <= 0 || hoursUntil >= cancelMin;
               const canReschedule = reschedMin <= 0 || hoursUntil >= reschedMin;
+              const isUUID = (s: string) => /^[0-9a-f]{8}-/.test(s || "");
+              const resolvedBarber = nBarber?.name || (nextEvent.barberName && !isUUID(nextEvent.barberName) ? nextEvent.barberName : null) || "A definir";
               openModal(
-                <div className="p-6" style={{ borderRadius: "1rem" }}>
+                <div className="p-6" style={{ borderRadius: "1rem", maxHeight: "85vh", overflowY: "auto" }}>
                   <h3 className="text-xl font-bold mb-6 text-center" style={{ color: primary }}>Detalhes do Agendamento</h3>
                   <div className="space-y-5 text-sm mb-6">
-                    {unit && (<div><p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Unidade:</p><p className="text-white font-medium">{unit.tradeName || unit.name}</p></div>)}
+                    {unit && (
+                      <div>
+                        <p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Unidade:</p>
+                        <p className="text-white font-medium">{unit.tradeName || unit.name}</p>
+                        {unit.address && <p className="text-gray-500 text-xs mt-0.5">{unit.address}{unit.city ? `, ${unit.city}` : ""}{unit.state ? ` - ${unit.state}` : ""}</p>}
+                        {unit.address && (
+                          <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${unit.address}, ${unit.city || ""} - ${unit.state || ""}`)}`} target="_blank" rel="noopener noreferrer"
+                            className="mt-2 block w-full text-center py-2 rounded-lg text-sm font-semibold"
+                            style={{ backgroundColor: "#1a1a1a", color: "#fff", border: "1px solid rgba(255,255,255,0.15)" }}>
+                            Ver localização
+                          </a>
+                        )}
+                      </div>
+                    )}
                     <div><p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Data:</p><p className="text-white capitalize">{dateStrFull}</p></div>
-                    <div><p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Horário:</p><p className="text-white">{nextEvent.startTime}</p></div>
-                    <div><p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Barbeiro:</p><p className="text-white">{nBarber?.name || nextEvent.barberName || "A definir"}</p></div>
-                    <div className="border-t border-gray-700 pt-4"><div className="flex items-center justify-between"><p className="text-white">{nextEvent.serviceName || nextEvent.title}</p>{price != null && <p className="text-white font-bold">R$ {price.toFixed(2)}</p>}</div></div>
-                    {price != null && (<div className="flex items-center justify-between border-t border-gray-700 pt-3"><p className="text-white font-bold text-base">Total</p><p className="font-bold text-base" style={{ color: primary }}>R$ {price.toFixed(2)}</p></div>)}
+                    <div>
+                      <p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Horário:</p>
+                      <p className="text-white">{nextEvent.startTime} - {nextEvent.endTime}</p>
+                      {(nextEvent.duration || 0) > 0 && <p className="text-gray-500 text-xs mt-0.5">{nextEvent.duration} minutos</p>}
+                    </div>
+                    <div><p className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-1">Barbeiro:</p><p className="text-white">{resolvedBarber}</p></div>
+                    <div className="border-t border-gray-700 pt-4">
+                      {nextEvent.serviceSlots && nextEvent.serviceSlots.length > 1 ? (
+                        <div className="space-y-2">
+                          {nextEvent.serviceSlots.map((ss: any, idx: number) => (
+                            <div key={idx} className="flex items-center justify-between">
+                              <div>
+                                <p className="text-white text-sm">{ss.serviceName}</p>
+                                <p className="text-gray-500 text-xs">{ss.startTime} - {ss.endTime} · {ss.duration}min</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <p className="text-white">{nextEvent.serviceName || nextEvent.title}</p>
+                          {price != null && <p className="text-white font-bold">R$ {price.toFixed(2)}</p>}
+                        </div>
+                      )}
+                    </div>
+                    {price != null && (
+                      <div className="flex items-center justify-between border-t border-gray-700 pt-3">
+                        <p className="text-white font-bold text-base">Total</p>
+                        <p className="font-bold text-base" style={{ color: primary }}>R$ {price.toFixed(2)}</p>
+                      </div>
+                    )}
+                    {(nextEvent as any).usedInPlan && (
+                      <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(59,130,246,0.2)", color: "#60a5fa" }}>Desconto do plano</span>
+                    )}
+                    {nextEvent.usedReferralCredit && (
+                      <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${primary}20`, color: primary }}>Crédito de indicação</span>
+                    )}
                   </div>
+                  {(nextEvent as any).groupId && (
+                    <p className="text-xs text-amber-400 mb-4 px-3 py-2 rounded-lg text-center" style={{ backgroundColor: "rgba(251,191,36,0.1)" }}>
+                      ⚠️ Este agendamento possui serviços vinculados.
+                    </p>
+                  )}
                   {isOpen ? (
                     <div className="space-y-3">
                       <button onClick={() => { if (canReschedule) { closeModal(); setActiveView("historico"); } }} className="w-full py-3 font-bold rounded-lg" style={{ backgroundColor: primary, color: bgColor, opacity: canReschedule ? 1 : 0.4 }} disabled={!canReschedule}>Remarcar</button>
                       <button onClick={() => { if (canCancel) { closeModal(); setActiveView("historico"); } }} className={`w-full py-3 font-bold rounded-lg bg-red-600 text-white ${canCancel ? "" : "opacity-40"}`} disabled={!canCancel}>Cancelar agendamento</button>
                       <button onClick={closeModal} className="w-full py-3 font-semibold rounded-lg" style={{ backgroundColor: "#1a1a1a", color: "#fff", border: "1px solid rgba(255,255,255,0.15)" }}>Voltar</button>
+                      {(!canCancel || !canReschedule) && (
+                        <p className="text-xs text-gray-500 text-center">
+                          {!canCancel && `Cancelamento requer ${cancelMin}h de antecedência. `}
+                          {!canReschedule && `Remarcação requer ${reschedMin}h de antecedência.`}
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <button onClick={closeModal} className="w-full py-3 font-semibold rounded-lg" style={{ backgroundColor: "#1a1a1a", color: "#fff", border: "1px solid rgba(255,255,255,0.15)" }}>Fechar</button>
@@ -5254,7 +6041,7 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, clie
               </div>
               <div className="flex-grow min-w-0">
                 <p className="text-[11px] text-gray-500 font-medium">Próximo agendamento</p>
-                <p className="text-white text-sm font-bold truncate">{nDateStr.charAt(0).toUpperCase() + nDateStr.slice(1)} às {nextEvent.startTime}</p>
+                <p className="text-white text-sm font-bold truncate">{nDateStr.charAt(0).toUpperCase() + nDateStr.slice(1)} às {nextEvent.startTime} - {nextEvent.endTime}</p>
                 <p className="text-[11px] text-gray-500 truncate">{nextEvent.serviceName || nextEvent.title} • {nBarber?.name || ""}</p>
               </div>
               <ChevronRight className="w-4 h-4 text-gray-600 flex-shrink-0" />
@@ -5264,10 +6051,10 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, clie
       })()}
 
       {/* Quick stats */}
-      {completedEvents.length > 0 && (
+      {uniqueCompletedEvents.length > 0 && (
         <div className="grid grid-cols-3 gap-3 mb-6">
           <div className="p-3 rounded-lg text-center border border-gray-800" style={{ backgroundColor: "#1e1e1e" }}>
-            <p className="text-xl font-bold" style={{ color: primary }}>{completedEvents.length}</p>
+            <p className="text-xl font-bold" style={{ color: primary }}>{uniqueCompletedEvents.length}</p>
             <p className="text-[10px] text-gray-500 mt-0.5">Visitas</p>
           </div>
           <div className="p-3 rounded-lg text-center border border-gray-800" style={{ backgroundColor: "#1e1e1e" }}>
