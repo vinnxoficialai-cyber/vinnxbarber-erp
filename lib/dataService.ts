@@ -582,6 +582,10 @@ export async function saveCalendarEvent(event: CalendarEvent): Promise<{ success
             status: event.status || 'confirmed',
             serviceIds: event.serviceIds && event.serviceIds.length > 0 ? JSON.stringify(event.serviceIds) : '[]',
             comandaId: event.comandaId || null,
+            ...(event.serviceSlots ? {
+                serviceSlots: typeof event.serviceSlots === 'string' ? event.serviceSlots : JSON.stringify(event.serviceSlots)
+            } : {}),
+            ...(event.groupId ? { groupId: event.groupId } : {}),
         };
 
         const { data: existing } = await supabase
@@ -615,6 +619,273 @@ export async function deleteCalendarEvent(id: string): Promise<{ success: boolea
         console.error('Error deleting calendar event:', err);
         return { success: false, error: err.message };
     }
+}
+
+/**
+ * F3b: Add a service to an existing calendar event.
+ * Appends the service to serviceSlots and recalculates duration/endTime.
+ */
+export async function addServiceToEvent(
+    eventId: string,
+    serviceId: string,
+    serviceName: string,
+    serviceDuration: number,
+    servicePrice?: number
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        // 1. Fetch the event
+        const { data: ev, error: fetchErr } = await supabase
+            .from('calendar_events').select('*').eq('id', eventId).single();
+        if (fetchErr || !ev) throw new Error(fetchErr?.message || 'Event not found');
+
+        // 2. Parse existing slots
+        const existingSlots: any[] = typeof ev.serviceSlots === 'string'
+            ? JSON.parse(ev.serviceSlots || '[]')
+            : (ev.serviceSlots || []);
+
+        // 3. Calculate new slot times
+        const currentEndTime = ev.endTime;
+        const newSlotEndTime = addMinutesHelper(currentEndTime, serviceDuration);
+
+        const newSlot = {
+            serviceId,
+            serviceName,
+            duration: serviceDuration,
+            price: servicePrice || 0,
+            startTime: currentEndTime,
+            endTime: newSlotEndTime,
+            barberId: ev.barberId,
+            barberName: ev.barberName,
+            status: ev.status || 'confirmed',
+        };
+
+        // 4. If no existing slots, create one for the current service too
+        if (existingSlots.length === 0 && ev.serviceId) {
+            existingSlots.push({
+                serviceId: ev.serviceId,
+                serviceName: ev.serviceName || 'Serviço',
+                duration: ev.duration || 30,
+                price: 0,
+                startTime: ev.startTime,
+                endTime: ev.endTime,
+                barberId: ev.barberId,
+                barberName: ev.barberName,
+                status: ev.status || 'confirmed',
+            });
+        }
+
+        const allSlots = [...existingSlots, newSlot];
+        const allServiceIds = allSlots.map(sl => sl.serviceId);
+        const allServiceNames = allSlots.map(sl => sl.serviceName).join(' + ');
+        const totalDuration = allSlots.reduce((sum, sl) => sum + (sl.duration || 30), 0);
+
+        // 5. Update event
+        const { error: updateErr } = await supabase.from('calendar_events').update({
+            serviceSlots: JSON.stringify(allSlots),
+            serviceIds: JSON.stringify(allServiceIds),
+            serviceId: allServiceIds[0] || null,
+            serviceName: allServiceNames,
+            duration: totalDuration,
+            endTime: newSlotEndTime,
+            title: `${ev.clientName || 'Cliente'} - ${allServiceNames}`,
+            updatedAt: new Date().toISOString(),
+        }).eq('id', eventId);
+        if (updateErr) throw updateErr;
+
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error adding service to event:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * F4: Split a service slot from a compound event to a different barber.
+ * Creates a new event for the moved service and updates the original event's serviceSlots.
+ * Both events are linked via a shared groupId.
+ */
+export async function splitServiceFromEvent(
+    originalEventId: string,
+    slotIndex: number,
+    newBarberId: string,
+    newBarberName: string
+): Promise<{ success: boolean; newEventId?: string; error?: string }> {
+    try {
+        // 1. Fetch the original event
+        const { data: orig, error: fetchErr } = await supabase
+            .from('calendar_events').select('*').eq('id', originalEventId).single();
+        if (fetchErr || !orig) throw new Error(fetchErr?.message || 'Event not found');
+
+        // 2. Parse serviceSlots
+        const slots = typeof orig.serviceSlots === 'string'
+            ? JSON.parse(orig.serviceSlots) : (orig.serviceSlots || []);
+        if (!slots[slotIndex]) throw new Error('Invalid slot index');
+
+        const movedSlot = slots[slotIndex];
+        const groupId = orig.groupId || crypto.randomUUID();
+
+        // 3. Remove the slot from original event
+        const remainingSlots = slots.filter((_: any, i: number) => i !== slotIndex);
+        const newDuration = remainingSlots.reduce((s: number, sl: any) => s + (sl.duration || 30), 0);
+        const newEndTime = remainingSlots.length > 0
+            ? remainingSlots[remainingSlots.length - 1].endTime
+            : orig.endTime;
+        const newServiceNames = remainingSlots.map((sl: any) => sl.serviceName).join(' + ');
+
+        // 4. Update original event
+        const { error: updateErr } = await supabase.from('calendar_events').update({
+            serviceSlots: JSON.stringify(remainingSlots),
+            serviceIds: JSON.stringify(remainingSlots.map((sl: any) => sl.serviceId)),
+            serviceId: remainingSlots[0]?.serviceId || null, // Legacy: point to first remaining
+            duration: newDuration,
+            endTime: newEndTime,
+            serviceName: newServiceNames,
+            title: `${orig.clientName || 'Cliente'} - ${newServiceNames}`,
+            groupId,
+            updatedAt: new Date().toISOString(),
+        }).eq('id', originalEventId);
+        if (updateErr) throw updateErr;
+
+        // 5. Create new event for the moved service
+        const newEventId = crypto.randomUUID();
+        const newEvent = {
+            id: newEventId,
+            title: `${orig.clientName || 'Cliente'} - ${movedSlot.serviceName}`,
+            type: orig.type,
+            startTime: movedSlot.startTime,
+            endTime: movedSlot.endTime,
+            date: orig.date,
+            clientName: orig.clientName,
+            clientId: orig.clientId,
+            barberId: newBarberId,
+            barberName: newBarberName,
+            serviceId: movedSlot.serviceId,
+            serviceName: movedSlot.serviceName,
+            serviceIds: JSON.stringify([movedSlot.serviceId]),
+            serviceSlots: JSON.stringify([{ ...movedSlot, barberId: newBarberId, barberName: newBarberName }]),
+            duration: movedSlot.duration,
+            unitId: orig.unitId,
+            source: 'admin_split',
+            status: movedSlot.status || 'confirmed',
+            groupId,
+            // Propagate financial & plan fields from original event
+            usedInPlan: orig.usedInPlan || false,
+            usedReferralCredit: orig.usedReferralCredit || false,
+            couponCode: orig.couponCode || null,
+            // finalPrice NOT propagated: the original's price is the combined total,
+            // the split event falls back to svc?.price (individual service price)
+            updatedAt: new Date().toISOString(),
+        };
+        const { error: insertErr } = await supabase.from('calendar_events').insert(newEvent);
+        if (insertErr) throw insertErr;
+
+        return { success: true, newEventId };
+    } catch (err: any) {
+        console.error('Error splitting service from event:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * F5: Merge (reagrupar) all events linked by a shared groupId back into a single compound event.
+ * Reverses a previous split operation. The event with the earliest startTime becomes the "primary".
+ */
+export async function mergeGroupedEvents(
+    groupId: string
+): Promise<{ success: boolean; mergedEventId?: string; error?: string }> {
+    try {
+        // 1. Fetch all events with this groupId
+        const { data: groupEvents, error: fetchErr } = await supabase
+            .from('calendar_events')
+            .select('*')
+            .eq('groupId', groupId)
+            .order('startTime', { ascending: true });
+        if (fetchErr || !groupEvents || groupEvents.length < 2) {
+            return { success: false, error: fetchErr?.message || 'Not enough events to merge' };
+        }
+
+        // 2. The primary event is the one with the earliest startTime
+        const primary = groupEvents[0];
+        const others = groupEvents.slice(1);
+
+        // 3. Combine all serviceSlots into one array
+        const allSlots: any[] = [];
+        for (const ev of groupEvents) {
+            const slots = typeof ev.serviceSlots === 'string'
+                ? JSON.parse(ev.serviceSlots)
+                : (ev.serviceSlots || []);
+            allSlots.push(...slots);
+        }
+        // Sort by startTime for chronological order
+        allSlots.sort((a: any, b: any) => {
+            const aMin = a.startTime ? getMinutesHelper(a.startTime) : 0;
+            const bMin = b.startTime ? getMinutesHelper(b.startTime) : 0;
+            return aMin - bMin;
+        });
+
+        // 4. Recalculate aggregate fields
+        const allServiceIds = allSlots.map((sl: any) => sl.serviceId);
+        const serviceName = allSlots.map((sl: any) => sl.serviceName).join(' + ');
+        const totalDuration = allSlots.reduce((sum: number, sl: any) => sum + (sl.duration || 30), 0);
+        const endTime = addMinutesHelper(primary.startTime, totalDuration);
+
+        // 5. Reassign all slots to the primary event's barber
+        const mergedSlots = allSlots.map((sl: any) => ({
+            ...sl,
+            barberId: primary.barberId,
+            barberName: primary.barberName,
+        }));
+
+        // 6. Recalculate slot times sequentially from primary startTime
+        let cumTime = primary.startTime;
+        for (const sl of mergedSlots) {
+            sl.startTime = cumTime;
+            sl.endTime = addMinutesHelper(cumTime, sl.duration || 30);
+            cumTime = sl.endTime;
+        }
+
+        // 7. Update primary event with merged data
+        const now = new Date().toISOString();
+        const { error: updateErr } = await supabase.from('calendar_events').update({
+            serviceSlots: JSON.stringify(mergedSlots),
+            serviceIds: JSON.stringify(allServiceIds),
+            serviceId: allServiceIds[0] || null, // Legacy single-service field
+            serviceName,
+            duration: totalDuration,
+            endTime,
+            title: `${primary.clientName || 'Cliente'} - ${serviceName}`,
+            groupId: null, // No longer a group
+            updatedAt: now,
+        }).eq('id', primary.id);
+        if (updateErr) throw updateErr;
+
+        // 8. Delete all other events in the group
+        const deleteIds = others.map(ev => ev.id);
+        const { error: deleteErr } = await supabase
+            .from('calendar_events')
+            .delete()
+            .in('id', deleteIds);
+        if (deleteErr) throw deleteErr;
+
+        return { success: true, mergedEventId: primary.id };
+    } catch (err: any) {
+        console.error('Error merging grouped events:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+// Helper: parse "HH:MM" to total minutes
+function getMinutesHelper(time: string): number {
+    const [h, m] = time.split(':').map(Number);
+    return h * 60 + (m || 0);
+}
+
+// Helper: add minutes to "HH:MM" time string
+function addMinutesHelper(time: string, mins: number): string {
+    const total = getMinutesHelper(time) + mins;
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 // ============================================
@@ -1946,7 +2217,11 @@ export async function createComandaFromAppointment(
         // Determine if subscription discount applies
         let discountRules: Record<string, number> = {}; // serviceId → discount %
         const plan = subscriptionPlan || activeSubscription?.plan;
-        if (activeSubscription?.status === 'active' && plan) {
+        // Support soft-cancel: active OR cancelled/paused with future endDate
+        const subEligible = activeSubscription?.status === 'active' ||
+            ((activeSubscription?.status === 'cancelled' || activeSubscription?.status === 'paused') &&
+             activeSubscription?.endDate && new Date(activeSubscription.endDate) > new Date());
+        if (subEligible && plan) {
             const planServices = safeParse(plan.planServices);
             const allowedUnitIds = safeParse(plan.allowedUnitIds);
             const excludedProfessionals = safeParse(plan.excludedProfessionals);

@@ -6,7 +6,7 @@ import {
     CalendarDays, Store, Crown, Percent, Split, TrendingUp,
     Filter, AlertTriangle, Star, History, BarChart3, CalendarRange,
     Settings, ToggleLeft, Clock, Zap, ShieldCheck, FileSpreadsheet,
-    MessageSquare, Award, ArrowUpRight, ArrowDownRight, Save
+    MessageSquare, Award, ArrowUpRight, ArrowDownRight, Save, BadgePercent
 } from 'lucide-react';
 import { Comanda, ComandaItem, Service, Product, TeamMember, CalendarEvent, Client } from '../types';
 import { useConfirm } from '../components/ConfirmModal';
@@ -76,10 +76,10 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
     const textMain = isDarkMode ? 'text-slate-50' : 'text-slate-900';
     const textSub = isDarkMode ? 'text-slate-400' : 'text-slate-600';
     const bgCard = isDarkMode ? 'bg-dark-surface' : 'bg-white';
-    const borderCol = isDarkMode ? 'border-dark-border' : 'border-slate-200';
+    const borderCol = isDarkMode ? 'border-white/10' : 'border-slate-200';
     const bgInput = isDarkMode ? 'bg-dark' : 'bg-white';
     const bgMuted = isDarkMode ? 'bg-dark' : 'bg-slate-50';
-    const bgToggleOff = isDarkMode ? 'bg-dark-border' : 'bg-slate-300';
+    const bgToggleOff = isDarkMode ? 'bg-slate-600' : 'bg-slate-300';
 
 
     // â”€â”€ State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -487,9 +487,16 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
     const getClientSubscription = (clientId?: string) => {
         if (!clientId) return null;
         const unitId = selectedUnitId !== 'all' ? selectedUnitId : undefined;
+        const now = new Date();
+        // Active subs first, then soft-cancelled (paid period still active)
         return subscriptions.find(s =>
             s.clientId === clientId &&
             s.status === 'active' &&
+            (!s.unitId || !unitId || s.unitId === unitId)
+        ) || subscriptions.find(s =>
+            s.clientId === clientId &&
+            (s.status === 'cancelled' || s.status === 'paused') &&
+            s.endDate && new Date(s.endDate) > now &&
             (!s.unitId || !unitId || s.unitId === unitId)
         ) || null;
     };
@@ -546,7 +553,8 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
 
             // ═══ SUBSCRIPTION DISCOUNT LOGIC (Decisões #1, #5, #6, #8) ═══
             const sub = getClientSubscription(comanda.clientId);
-            if (sub?.status === 'active' && sub.plan) {
+            // getClientSubscription already validates: active OR soft-cancelled with future endDate
+            if (sub?.plan) {
                 const planAllowed = sub.plan.unitScope === 'all' ||
                     safeParseJsonArray(sub.plan.allowedUnitIds).includes(selectedUnitId !== 'all' ? selectedUnitId : '');
 
@@ -693,7 +701,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
         const colorMap: Record<string, string> = {
             agenda: isDarkMode ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-50 text-blue-600 border-blue-200',
             balcao: isDarkMode ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200',
-            clube: isDarkMode ? 'bg-violet-500/10 text-violet-400 border-violet-500/20' : 'bg-violet-50 text-violet-600 border-violet-200',
+            clube: isDarkMode ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-200',
             manual: isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-slate-100 text-slate-500 border-slate-200',
         };
         const cls = colorMap[o] || colorMap.manual;
@@ -815,14 +823,41 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                         </div>
                         <div className="p-5 space-y-5 max-h-[70vh] overflow-y-auto custom-scrollbar">
                             {/* Order Summary */}
-                            <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-dark/50 border-dark-border' : 'bg-slate-50 border-slate-200'}`}>
+                            <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-dark/50 border-white/10' : 'bg-slate-50 border-slate-200'}`}>
                                 <p className={`text-xs font-semibold ${textSub} uppercase tracking-wider mb-2`}>Resumo</p>
                                 {selectedComanda.items?.map(item => (
                                     <div key={item.id} className="flex justify-between text-sm mb-1">
-                                        <span className={textSub}>{item.quantity}x {item.name}</span>
-                                        <span className={textMain}>{formatCurrency(item.totalPrice)}</span>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className={textSub}>{item.quantity}x {item.name}</span>
+                                            {item.subscriptionDiscount && (
+                                                <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${isDarkMode ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}>
+                                                    -{item.subscriptionDiscount}%
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            {item.subscriptionDiscount && item.originalPrice && (
+                                                <span className={`${textSub} line-through opacity-40 text-xs`}>{formatCurrency(item.originalPrice * item.quantity)}</span>
+                                            )}
+                                            <span className={item.subscriptionDiscount ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-600') : textMain}>{formatCurrency(item.totalPrice)}</span>
+                                        </div>
                                     </div>
                                 ))}
+                                {/* Plan savings line */}
+                                {(() => {
+                                    const savings = (selectedComanda.items || []).reduce((sum, i) =>
+                                        sum + (i.subscriptionDiscount && i.originalPrice ? (i.originalPrice - i.unitPrice) * i.quantity : 0), 0);
+                                    return savings > 0 ? (
+                                        <div className={`flex justify-between text-xs mb-1 pt-1 border-t ${borderCol}`}>
+                                            <span className={`flex items-center gap-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                                                <Crown size={10} /> Economia do plano
+                                            </span>
+                                            <span className={`font-bold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                                                - {formatCurrency(savings)}
+                                            </span>
+                                        </div>
+                                    ) : null;
+                                })()}
                                 <div className={`flex justify-between pt-2 mt-2 border-t ${borderCol}`}>
                                     <span className={`text-sm font-bold ${textMain}`}>Subtotal</span>
                                     <span className={`font-bold ${textMain}`}>{formatCurrency(selectedComanda.totalAmount)}</span>
@@ -1114,7 +1149,7 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                             </p>
                                             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                                                 <OriginBadge origin={selectedComanda.origin} size="sm" />
-                                                {(() => { const unitId = selectedUnitId !== 'all' ? selectedUnitId : undefined; const sub = subscriptions.find(s => s.clientId === selectedComanda.clientId && s.status !== 'cancelled' && (!s.unitId || !unitId || s.unitId === unitId)); if (!sub) return null; const isOverdue = sub.status === 'overdue'; const isPending = sub.status === 'pending_payment'; return <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${isOverdue ? (isDarkMode ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200') : isPending ? (isDarkMode ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-50 text-blue-600 border-blue-200') : (isDarkMode ? 'bg-violet-500/10 text-violet-400 border-violet-500/20' : 'bg-violet-50 text-violet-600 border-violet-200')}`}><Crown size={9} />{isOverdue ? 'Inadimplente' : isPending ? 'Aguardando Pgto' : 'Assinante'}</span>; })()}
+                                                {(() => { const unitId = selectedUnitId !== 'all' ? selectedUnitId : undefined; const sub = subscriptions.find(s => s.clientId === selectedComanda.clientId && s.status !== 'cancelled' && (!s.unitId || !unitId || s.unitId === unitId)); if (!sub) return null; const isOverdue = sub.status === 'overdue'; const isPending = sub.status === 'pending_payment'; return <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${isOverdue ? (isDarkMode ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200') : isPending ? (isDarkMode ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-50 text-blue-600 border-blue-200') : (isDarkMode ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-200')}`}><Crown size={9} />{isOverdue ? 'Inadimplente' : isPending ? 'Aguardando Pgto' : 'Assinante'}</span>; })()}
                                                 {isComandaActive(selectedComanda) && (
                                                     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${isDarkMode ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-50 text-blue-600 border-blue-200'}`}>
                                                         <Timer size={9} />{formatElapsed(selectedComanda.openedAt)}
@@ -1166,18 +1201,34 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                         ) : (
                                             <div className="space-y-2">
                                                 {selectedComanda.items.map(item => (
-                                                    <div key={item.id} className={`flex items-center justify-between p-3 rounded-xl border ${borderCol} transition-colors hover:border-primary/20`}>
+                                                    <div key={item.id} className={`flex items-center justify-between p-3 rounded-xl border ${item.subscriptionDiscount ? (isDarkMode ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-emerald-200 bg-emerald-50/50') : borderCol} transition-colors hover:border-primary/20`}>
                                                         <div className="flex items-center gap-3">
-                                                            <div className={`p-2 rounded-lg ${item.type === 'service' ? (isDarkMode ? 'bg-primary/10 text-primary' : 'bg-primary/5 text-primary') : (isDarkMode ? 'bg-amber-500/10 text-amber-500' : 'bg-amber-50 text-amber-500')}`}>
-                                                                {item.type === 'service' ? <Scissors size={14} /> : <Package size={14} />}
+                                                            <div className={`p-2 rounded-lg ${item.subscriptionDiscount ? (isDarkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-500') : item.type === 'service' ? (isDarkMode ? 'bg-primary/10 text-primary' : 'bg-primary/5 text-primary') : (isDarkMode ? 'bg-amber-500/10 text-amber-500' : 'bg-amber-50 text-amber-500')}`}>
+                                                                {item.subscriptionDiscount ? <Crown size={14} /> : item.type === 'service' ? <Scissors size={14} /> : <Package size={14} />}
                                                             </div>
                                                             <div>
-                                                                <p className={`text-sm font-medium ${textMain}`}>{item.name}</p>
-                                                                <p className={`text-xs ${textSub}`}>{item.quantity}x {formatCurrency(item.unitPrice)}</p>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <p className={`text-sm font-medium ${textMain}`}>{item.name}</p>
+                                                                    {item.subscriptionDiscount && (
+                                                                        <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold ${isDarkMode ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}>
+                                                                            <BadgePercent size={8} /> -{item.subscriptionDiscount}%
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    {item.subscriptionDiscount && item.originalPrice ? (
+                                                                        <>
+                                                                            <p className={`text-xs ${textSub} line-through opacity-50`}>{item.quantity}x {formatCurrency(item.originalPrice)}</p>
+                                                                            <p className={`text-xs ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} font-medium`}>{item.quantity}x {formatCurrency(item.unitPrice)}</p>
+                                                                        </>
+                                                                    ) : (
+                                                                        <p className={`text-xs ${textSub}`}>{item.quantity}x {formatCurrency(item.unitPrice)}</p>
+                                                                    )}
+                                                                </div>
                                                             </div>
                                                         </div>
                                                         <div className="flex items-center gap-3">
-                                                            <span className={`text-sm font-bold ${textMain}`}>{formatCurrency(item.totalPrice)}</span>
+                                                            <span className={`text-sm font-bold ${item.subscriptionDiscount ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-600') : textMain}`}>{formatCurrency(item.totalPrice)}</span>
                                                             {isComandaActive(selectedComanda) && (
                                                                 <button onClick={() => handleRemoveItem(selectedComanda, item.id)} className="p-1.5 rounded-lg text-red-500 hover:bg-red-500/10 transition-colors"><Trash2 size={13} /></button>
                                                             )}
@@ -1219,17 +1270,46 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                                         const isService = quickAddTab === 'service';
                                                         const price = isService ? (item as Service).price : (item as Product).sellPrice;
                                                         const lowStock = !isService && (item as Product).stock <= (item as Product).minStock;
+
+                                                        // Compute plan discount preview
+                                                        const sub = getClientSubscription(selectedComanda?.clientId);
+                                                        let discPct = 0;
+                                                        let discountedPrice = price;
+                                                        if (sub?.plan && isService) {
+                                                            const rules = safeParseJsonArray(sub.plan.planServices);
+                                                            const rule = rules.find((r: any) => r.serviceId === item.id);
+                                                            if (rule && Number(rule.discount) > 0) {
+                                                                discPct = Number(rule.discount);
+                                                                discountedPrice = +(price * (1 - discPct / 100)).toFixed(2);
+                                                            }
+                                                        }
+                                                        const hasDisc = discPct > 0;
+
                                                         return (
-                                                            <button key={item.id} onClick={() => handleAddItem(selectedComanda, quickAddTab, item)} className={`p-2.5 rounded-lg border ${borderCol} hover:border-primary/50 transition-all text-left group relative`}>
+                                                            <button key={item.id} onClick={() => handleAddItem(selectedComanda, quickAddTab, item)} className={`p-2.5 rounded-lg border ${hasDisc ? (isDarkMode ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-emerald-200 bg-emerald-50/50') : borderCol} hover:border-primary/50 transition-all text-left group relative`}>
                                                                 <div className="flex items-center gap-2 mb-1">
-                                                                    <div className={`p-1.5 rounded-md ${isService ? (isDarkMode ? 'bg-primary/10 text-primary' : 'bg-primary/5 text-primary') : (isDarkMode ? 'bg-amber-500/10 text-amber-500' : 'bg-amber-50 text-amber-500')}`}>
-                                                                        {isService ? <Scissors size={11} /> : <Package size={11} />}
+                                                                    <div className={`p-1.5 rounded-md ${hasDisc ? (isDarkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-500') : isService ? (isDarkMode ? 'bg-primary/10 text-primary' : 'bg-primary/5 text-primary') : (isDarkMode ? 'bg-amber-500/10 text-amber-500' : 'bg-amber-50 text-amber-500')}`}>
+                                                                        {hasDisc ? <Crown size={11} /> : isService ? <Scissors size={11} /> : <Package size={11} />}
                                                                     </div>
                                                                     {lowStock && <AlertTriangle size={10} className="text-amber-500" />}
+                                                                    {hasDisc && (
+                                                                        <span className={`ml-auto text-[8px] font-bold px-1 py-0.5 rounded ${isDarkMode ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}>
+                                                                            {discPct === 100 ? 'GRÁTIS' : `-${discPct}%`}
+                                                                        </span>
+                                                                    )}
                                                                 </div>
                                                                 <p className={`text-xs font-medium ${textMain} truncate`}>{item.name}</p>
                                                                 <div className="flex items-center justify-between mt-1">
-                                                                    <span className="text-xs font-bold text-primary">{formatCurrency(price)}</span>
+                                                                    {hasDisc ? (
+                                                                        <div className="flex items-center gap-1">
+                                                                            <span className={`text-[10px] ${textSub} line-through opacity-50`}>{formatCurrency(price)}</span>
+                                                                            <span className={`text-xs font-bold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                                                                                {discPct === 100 ? 'Grátis' : formatCurrency(discountedPrice)}
+                                                                            </span>
+                                                                        </div>
+                                                                    ) : (
+                                                                        <span className="text-xs font-bold text-primary">{formatCurrency(price)}</span>
+                                                                    )}
                                                                     {isService && (item as Service).duration && <span className={`text-[9px] ${textSub}`}>{(item as Service).duration}min</span>}
                                                                     {!isService && <span className={`text-[9px] ${lowStock ? 'text-amber-500 font-bold' : textSub}`}>Est: {(item as Product).stock}</span>}
                                                                 </div>
@@ -1249,6 +1329,21 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                             <span className={`text-xs ${textSub}`}>Subtotal</span>
                                             <span className={`text-sm font-medium ${textMain}`}>{formatCurrency(selectedComanda.totalAmount)}</span>
                                         </div>
+                                        {/* Plan savings indicator */}
+                                        {(() => {
+                                            const planSavings = (selectedComanda.items || []).reduce((sum, i) =>
+                                                sum + (i.subscriptionDiscount && i.originalPrice ? (i.originalPrice - i.unitPrice) * i.quantity : 0), 0);
+                                            return planSavings > 0 ? (
+                                                <div className="flex justify-between mb-1">
+                                                    <span className={`text-xs flex items-center gap-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                                                        <Crown size={10} /> Economia do plano
+                                                    </span>
+                                                    <span className={`text-sm font-bold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                                                        - {formatCurrency(planSavings)}
+                                                    </span>
+                                                </div>
+                                            ) : null;
+                                        })()}
                                         {selectedComanda.discountAmount > 0 && (
                                             <div className="flex justify-between mb-1">
                                                 <span className={`text-xs ${textSub}`}>Desconto</span>
@@ -1794,17 +1889,26 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                         </thead>
                                         <tbody>
                                             {(detailComanda.items || []).map(item => (
-                                                <tr key={item.id} className={`border-b last:border-b-0 ${borderCol}`}>
+                                                <tr key={item.id} className={`border-b last:border-b-0 ${borderCol} ${item.subscriptionDiscount ? (isDarkMode ? 'bg-emerald-500/5' : 'bg-emerald-50/50') : ''}`}>
                                                     <td className="px-3 py-2">
-                                                        <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded ${item.type === 'service' ? 'bg-primary/10 text-primary' : 'bg-amber-500/10 text-amber-500'}`}>
-                                                            {item.type === 'service' ? <Scissors size={10} /> : <Package size={10} />}
-                                                            {item.type === 'service' ? 'Servico' : 'Produto'}
+                                                        <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded ${item.subscriptionDiscount ? (isDarkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-600') : item.type === 'service' ? 'bg-primary/10 text-primary' : 'bg-amber-500/10 text-amber-500'}`}>
+                                                            {item.subscriptionDiscount ? <Crown size={10} /> : item.type === 'service' ? <Scissors size={10} /> : <Package size={10} />}
+                                                            {item.subscriptionDiscount ? `Plano -${item.subscriptionDiscount}%` : item.type === 'service' ? 'Servico' : 'Produto'}
                                                         </span>
                                                     </td>
                                                     <td className={`px-3 py-2 text-xs font-medium ${textMain}`}>{item.name}</td>
                                                     <td className={`px-3 py-2 text-xs ${textSub} text-center`}>{item.quantity}</td>
-                                                    <td className={`px-3 py-2 text-xs ${textSub} text-right`}>{formatCurrency(item.unitPrice)}</td>
-                                                    <td className={`px-3 py-2 text-xs font-bold ${textMain} text-right`}>{formatCurrency(item.totalPrice)}</td>
+                                                    <td className="px-3 py-2 text-right">
+                                                        {item.subscriptionDiscount && item.originalPrice ? (
+                                                            <div className="flex flex-col items-end">
+                                                                <span className={`text-[10px] ${textSub} line-through opacity-40`}>{formatCurrency(item.originalPrice)}</span>
+                                                                <span className={`text-xs ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatCurrency(item.unitPrice)}</span>
+                                                            </div>
+                                                        ) : (
+                                                            <span className={`text-xs ${textSub}`}>{formatCurrency(item.unitPrice)}</span>
+                                                        )}
+                                                    </td>
+                                                    <td className={`px-3 py-2 text-xs font-bold text-right ${item.subscriptionDiscount ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-600') : textMain}`}>{formatCurrency(item.totalPrice)}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -1818,6 +1922,21 @@ export const ComandaPage: React.FC<ComandaPageProps> = ({ isDarkMode, currentUse
                                     <span className={`text-xs ${textSub}`}>Subtotal</span>
                                     <span className={`text-xs font-medium ${textMain}`}>{formatCurrency(detailComanda.totalAmount)}</span>
                                 </div>
+                                {/* Plan savings */}
+                                {(() => {
+                                    const savings = (detailComanda.items || []).reduce((sum, i) =>
+                                        sum + (i.subscriptionDiscount && i.originalPrice ? (i.originalPrice - i.unitPrice) * i.quantity : 0), 0);
+                                    return savings > 0 ? (
+                                        <div className="flex justify-between items-center">
+                                            <span className={`text-xs flex items-center gap-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                                                <Crown size={10} /> Economia do plano
+                                            </span>
+                                            <span className={`text-xs font-bold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                                                - {formatCurrency(savings)}
+                                            </span>
+                                        </div>
+                                    ) : null;
+                                })()}
                                 {detailComanda.discountAmount > 0 && (
                                     <div className="flex justify-between items-center">
                                         <span className={`text-xs ${textSub}`}>Desconto</span>

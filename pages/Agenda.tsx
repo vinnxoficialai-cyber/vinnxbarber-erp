@@ -4,12 +4,14 @@ import {
   User, Trash2, History, Scissors, GripVertical, AlertCircle,
   Users, Settings2, Loader2, CheckCircle2, DollarSign,
   Repeat, Mail, Phone, Gift, UserPlus, Search, PanelLeftClose, PanelLeft,
-  Bell, Palette, Eye, MessageCircle, Zap, Globe, Shield, LayoutGrid, Timer
+  Bell, Palette, Eye, MessageCircle, Zap, Globe, Shield, LayoutGrid, Timer,
+  Crown, Tag, BadgePercent
 } from 'lucide-react';
-import { CalendarEvent, EventType, TeamMember, Service, WorkSchedule, AgendaSettings, Client, Subscription } from '../types';
+import { CalendarEvent, EventType, TeamMember, Service, WorkSchedule, AgendaSettings, Client, Subscription, PlanServiceRule } from '../types';
+import { safeParseJsonArray } from '../lib/utils';
 import { useConfirm } from '../components/ConfirmModal';
 import { useToast } from '../components/Toast';
-import { saveCalendarEvent, deleteCalendarEvent, getWorkSchedules, saveAppSettings, saveClient, createComandaFromAppointment, saveComanda, deleteSubscriptionUsageLogByItem, incrementSubscriptionUses } from '../lib/dataService';
+import { saveCalendarEvent, deleteCalendarEvent, getWorkSchedules, saveAppSettings, saveClient, createComandaFromAppointment, saveComanda, deleteSubscriptionUsageLogByItem, incrementSubscriptionUses, splitServiceFromEvent, mergeGroupedEvents, addServiceToEvent } from '../lib/dataService';
 import { useAppData } from '../context/AppDataContext';
 import { useFilteredData } from '../hooks/useFilteredData';
 import { useSelectedUnit } from '../context/UnitContext';
@@ -21,7 +23,7 @@ import {
   type DragStartEvent, type DragEndEvent
 } from '@dnd-kit/core';
 import {
-  DraggableCard, DroppableSlot,
+  DraggableCard, DroppableSlot, DraggableServiceSlot,
   SLOT_INTERVAL, monthNames, weekDays, STATUS_OPTIONS,
   buildTimeOptions, buildHourLabels, getMinutes, addMinutes, formatNavDate, isSameDay
 } from '../components/agenda';
@@ -55,8 +57,18 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
   // â”€â”€ Subscriber Map (O(1) lookup by clientId) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const subscriberMap = useMemo(() => {
     const map: Record<string, Subscription> = {};
-    subscriptions.filter(s => s.status === 'active').forEach(s => {
-      map[s.clientId] = s;
+    const now = new Date();
+    subscriptions.forEach(s => {
+      // Active subscriptions always qualify
+      // Cancelled/paused subscriptions still qualify if endDate is in the future (soft cancel — paid period still active)
+      const isActive = s.status === 'active';
+      const isSoftCancel = (s.status === 'cancelled' || s.status === 'paused') && s.endDate && new Date(s.endDate) > now;
+      if (isActive || isSoftCancel) {
+        // Prefer active over cancelled if client has multiple
+        if (!map[s.clientId] || (isActive && map[s.clientId].status !== 'active')) {
+          map[s.clientId] = s;
+        }
+      }
     });
     return map;
   }, [subscriptions]);
@@ -72,6 +84,7 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [splitMode, setSplitMode] = useState(false);
   const [barberFilter, setBarberFilter] = useState<string>('all');
   const [workSchedules, setWorkSchedules] = useState<WorkSchedule[]>([]);
   const [showSettings, setShowSettings] = useState(false);
@@ -252,13 +265,84 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
     count: 4,
   });
 
-  // Computed: total duration and price from selected services
+  // ── Intelligent Plan Discount Info ──────────────────────────────
+  const clientPlanInfo = useMemo(() => {
+    if (!formData.clientId) return null;
+    const sub = subscriberMap[formData.clientId];
+    if (!sub?.plan) return null;
+    // subscriberMap already filters: active OR soft-cancelled with future endDate
+    const plan = sub.plan;
+
+    const planServices: PlanServiceRule[] = safeParseJsonArray(plan.planServices);
+    const excludedProfessionals: string[] = safeParseJsonArray(plan.excludedProfessionals);
+    const disabledDays: number[] = safeParseJsonArray(plan.disabledDays);
+    const allowedUnitIds: string[] = safeParseJsonArray(plan.allowedUnitIds);
+
+    // Restriction checks
+    const barberExcluded = formData.barberId ? excludedProfessionals.includes(formData.barberId) : false;
+    const barberName = barberExcluded ? members.find(m => m.id === formData.barberId)?.name : undefined;
+
+    let dayDisabled = false;
+    if (formData.date) {
+      const d = new Date(formData.date + 'T12:00');
+      dayDisabled = disabledDays.includes(d.getDay());
+    }
+
+    const unitOk = plan.unitScope === 'all' || allowedUnitIds.length === 0 ||
+      allowedUnitIds.includes(selectedUnitId !== 'all' ? selectedUnitId : '');
+
+    const usesThisMonth = sub.usesThisMonth || 0;
+    const maxUses = plan.maxUsesPerMonth;
+    const usesRemaining = maxUses ? Math.max(0, maxUses - usesThisMonth) : null;
+    const nearLimit = usesRemaining !== null && usesRemaining <= 3 && usesRemaining > 0;
+    const atLimit = usesRemaining !== null && usesRemaining === 0;
+
+    // Build discount map: serviceId → discount%
+    const discountMap: Record<string, number> = {};
+    const discountBlocked = barberExcluded || dayDisabled || !unitOk || atLimit;
+    if (!discountBlocked) {
+      for (const rule of planServices) {
+        if (rule.serviceId && Number(rule.discount) > 0) {
+          discountMap[rule.serviceId] = Number(rule.discount);
+        }
+      }
+    }
+
+    return {
+      planName: plan.name,
+      discountMap,
+      barberExcluded,
+      barberName,
+      dayDisabled,
+      unitOk,
+      usesThisMonth,
+      maxUses,
+      usesRemaining,
+      nearLimit,
+      atLimit,
+      isBlocked: discountBlocked,
+    };
+  }, [formData.clientId, formData.barberId, formData.date, subscriberMap, members, selectedUnitId]);
+
+  // Computed: total duration and price from selected services (plan-aware)
   const selectedServiceDetails = useMemo(() => {
     const svcs = formData.selectedServices.map(id => services.find(s => s.id === id)).filter(Boolean) as typeof services;
     const totalDuration = svcs.reduce((sum, s) => sum + (s.duration || 30), 0) + (agendaSettings.bufferMinutes || 0);
     const totalPrice = svcs.reduce((sum, s) => sum + (s.price || 0), 0);
-    return { svcs, totalDuration, totalPrice };
-  }, [formData.selectedServices, services, agendaSettings.bufferMinutes]);
+
+    // Per-service discount info
+    const perService = svcs.map(svc => {
+      const discPct = clientPlanInfo?.discountMap[svc.id] || 0;
+      const discountedPrice = discPct > 0 ? +(svc.price * (1 - discPct / 100)).toFixed(2) : svc.price;
+      return { id: svc.id, name: svc.name, duration: svc.duration || 30, originalPrice: svc.price, discountedPrice, discountPct: discPct };
+    });
+
+    const totalDiscounted = perService.reduce((sum, s) => sum + s.discountedPrice, 0);
+    const totalSavings = totalPrice - totalDiscounted;
+    const hasDiscount = totalSavings > 0;
+
+    return { svcs, totalDuration, totalPrice, perService, totalDiscounted, totalSavings, hasDiscount };
+  }, [formData.selectedServices, services, agendaSettings.bufferMinutes, clientPlanInfo]);
 
   const isFormValid = useMemo(() => {
     if (!formData.date || !formData.startTime || !formData.endTime) return false;
@@ -633,17 +717,64 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
     const { active, over } = e;
     if (!over) return;
 
-    const eventId = String(active.id);
-    const event = events.find(ev => ev.id === eventId);
-    if (!event || event.type === 'blocked') return;
-
-    // over.id format: "slot_{barberId}_{HH:MM}"
+    const activeId = String(active.id);
     const overId = String(over.id);
     if (!overId.startsWith('slot_')) return;
 
     const parts = overId.split('_');
     const newBarberId = parts[1];
     const newStartTime = parts.slice(2).join(':'); // Handle HH:MM
+
+    // ──── SERVICE-LEVEL DRAG (split / merge) ────────────────────
+    if (activeId.startsWith('service_')) {
+      const serviceParts = activeId.split('_');
+      const sourceEventId = serviceParts[1];
+      const slotIndex = parseInt(serviceParts[2], 10);
+      const sourceEvent = events.find(ev => ev.id === sourceEventId);
+      if (!sourceEvent) return;
+
+      // Same barber? No-op
+      if (sourceEvent.barberId === newBarberId) return;
+
+      // Check: does the target barber already have an event from the same group?
+      const sourceGroupId = sourceEvent.groupId;
+      if (sourceGroupId) {
+        const targetGroupEvent = dayEvents.find(ev =>
+          ev.barberId === newBarberId &&
+          ev.groupId === sourceGroupId &&
+          ev.id !== sourceEventId
+        );
+        if (targetGroupEvent) {
+          // AUTO-MERGE: dragging back to a barber that has the grouped event
+          const result = await mergeGroupedEvents(sourceGroupId);
+          if (result.success) {
+            toast.success('Serviços reagrupados com sucesso!');
+            refresh();
+          } else {
+            toast.error('Erro ao reagrupar', result.error || '');
+          }
+          return;
+        }
+      }
+
+      // SPLIT: move this service to a new barber
+      const newBarber = members.find(mb => mb.id === newBarberId);
+      if (!newBarber) return;
+      const result = await splitServiceFromEvent(sourceEventId, slotIndex, newBarberId, newBarber.name || newBarberId);
+      if (result.success) {
+        toast.success(`Serviço movido para ${newBarber.name}`);
+        refresh();
+      } else {
+        toast.error('Erro ao mover serviço', result.error || '');
+      }
+      return;
+    }
+
+    // ──── FULL EVENT DRAG (move entire appointment) ─────────────
+    const eventId = activeId;
+    const event = events.find(ev => ev.id === eventId);
+    if (!event || event.type === 'blocked') return;
+
     const duration = getMinutes(event.endTime) - getMinutes(event.startTime);
     const newEndTime = addMinutes(newStartTime, duration);
 
@@ -689,6 +820,15 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
   };
 
   const draggedEvent = activeDragId ? events.find(ev => ev.id === activeDragId) : null;
+  // Service-level drag: parse the service slot info for overlay
+  const draggedServiceInfo = activeDragId?.startsWith('service_') ? (() => {
+    const parts = activeDragId.split('_');
+    const evId = parts[1];
+    const idx = parseInt(parts[2], 10);
+    const ev = events.find(e => e.id === evId);
+    if (!ev?.serviceSlots?.[idx]) return null;
+    return { event: ev, slot: ev.serviceSlots[idx], slotIndex: idx };
+  })() : null;
 
   // ——— Today Events for Day View —————————————————————————————————————————————
   const dayEvents = useMemo(() =>
@@ -871,7 +1011,7 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
                           ))}
 
                           {barberEvents.map(ev => (
-                            <DraggableCard key={ev.id} event={ev} isDarkMode={isDarkMode} slotStartMin={dayStartMin} onClick={() => handleOpenModal(ev)} onStatusChange={handleStatusChange} slotHeight={SLOT_HEIGHT} hourHeight={HOUR_HEIGHT} isSubscriber={!!ev.clientId && !!subscriberMap[ev.clientId]} planName={ev.clientId && subscriberMap[ev.clientId]?.plan?.name} />
+                            <DraggableCard key={ev.id} event={ev} isDarkMode={isDarkMode} slotStartMin={dayStartMin} onClick={() => handleOpenModal(ev)} onStatusChange={handleStatusChange} onEdit={() => handleOpenModal(ev)} onDelete={(id) => handleDelete(id)} onMerge={async (gId) => { const r = await mergeGroupedEvents(gId); if (r.success) { toast.success('Serviços reagrupados!'); refresh(); } else { toast.error('Erro ao reagrupar', r.error || ''); } }} onAddService={async (evId, svcId) => { const svc = services.find(s => s.id === svcId); if (!svc) return; const r = await addServiceToEvent(evId, svcId, svc.name, svc.duration || 30, svc.price); if (r.success) { toast.success(`${svc.name} adicionado!`); refresh(); } else { toast.error('Erro ao adicionar serviço', r.error || ''); } }} services={services} slotHeight={SLOT_HEIGHT} hourHeight={HOUR_HEIGHT} isSubscriber={!!ev.clientId && !!subscriberMap[ev.clientId]} planName={ev.clientId && subscriberMap[ev.clientId]?.plan?.name} />
                           ))}
                         </div>
                       );
@@ -894,24 +1034,35 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
 
         {/* Drag Overlay */}
         <DragOverlay>
-          {draggedEvent && (
-            <div className={`rounded-md border px-3 py-2 shadow-md bg-card border-emerald-500/50 text-emerald-400 text-[11px] font-semibold min-w-[120px]`}>
+          {draggedServiceInfo ? (
+            /* Service-level drag overlay */
+            <div className="rounded-md border px-3 py-2 shadow-lg bg-card border-primary/50 text-primary text-[11px] font-semibold min-w-[120px]">
+              <div className="flex items-center gap-1.5">
+                <Scissors size={10} />
+                <span className="truncate">{draggedServiceInfo.slot.serviceName}</span>
+              </div>
+              <div className="text-[10px] opacity-60 mt-0.5">
+                {draggedServiceInfo.slot.startTime} - {draggedServiceInfo.slot.endTime} · {draggedServiceInfo.slot.duration}min
+              </div>
+              <div className="text-[9px] opacity-40 mt-0.5">Arraste para outro profissional</div>
+            </div>
+          ) : draggedEvent ? (
+            /* Full event drag overlay */
+            <div className={`rounded-md border px-3 py-2 shadow-lg bg-card border-emerald-500/50 text-emerald-400 text-[11px] font-semibold min-w-[120px]`}>
               <div className="flex items-center gap-1.5">
                 <GripVertical size={10} />
-                <span className="truncate">
-                  {draggedEvent.client
-                    ? (draggedEvent.serviceName || draggedEvent.title?.replace(`${draggedEvent.client} - `, '').replace(` - ${draggedEvent.client}`, '') || draggedEvent.title)
-                    : draggedEvent.title}
+                <span className="truncate font-bold">
+                  {draggedEvent.client || draggedEvent.title}
                 </span>
               </div>
               <div className="text-[10px] opacity-60 mt-0.5">{draggedEvent.startTime} - {draggedEvent.endTime}</div>
-              {draggedEvent.client && (
+              {draggedEvent.client && draggedEvent.serviceName && (
                 <div className="text-[10px] opacity-50 flex items-center gap-1 mt-0.5">
-                  <User size={8} />{draggedEvent.client}
+                  <Scissors size={8} />{draggedEvent.serviceName}
                 </div>
               )}
             </div>
-          )}
+          ) : null}
         </DragOverlay>
       </DndContext>
     );
@@ -1122,13 +1273,26 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
     const appointments = dayEvents.filter(e => e.type === 'appointment');
     const blocked = dayEvents.filter(e => e.type === 'blocked');
     const unassigned = dayEvents.filter(e => !e.barberId && e.type !== 'blocked');
-    // Estimated revenue: sum service prices for appointments that have a serviceId
+    // Estimated revenue: sum service prices, applying subscriber discounts
     const revenue = appointments.reduce((sum, ev) => {
-      if (ev.serviceId) {
-        const svc = services.find(s => s.id === ev.serviceId);
-        return sum + (svc?.price || 0);
+      const svcIds = (ev.serviceIds && ev.serviceIds.length > 0) ? ev.serviceIds : ev.serviceId ? [ev.serviceId] : [];
+      let evTotal = 0;
+      for (const svcId of svcIds) {
+        const svc = services.find(s => s.id === svcId);
+        if (!svc) continue;
+        let price = svc.price;
+        // Apply subscriber discount if applicable
+        if (ev.clientId && subscriberMap[ev.clientId]?.plan) {
+          const plan = subscriberMap[ev.clientId].plan!;
+          const planSvcs: PlanServiceRule[] = safeParseJsonArray(plan.planServices);
+          const rule = planSvcs.find(r => r.serviceId === svcId);
+          if (rule && Number(rule.discount) > 0) {
+            price = +(price * (1 - Number(rule.discount) / 100)).toFixed(2);
+          }
+        }
+        evTotal += price;
       }
-      return sum;
+      return sum + evTotal;
     }, 0);
     return {
       total: appointments.length,
@@ -1137,7 +1301,7 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
       barbers: displayedBarbers.length,
       revenue,
     };
-  }, [dayEvents, displayedBarbers, services]);
+  }, [dayEvents, displayedBarbers, services, subscriberMap]);
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // â–ˆâ–ˆ  RENDER  â–ˆâ–ˆ
@@ -1212,11 +1376,17 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
                         }}
                         options={[
                           { value: '', label: 'Adicionar serviço...' },
-                          ...services.filter(s => s.active && !formData.selectedServices.includes(s.id)).map(s => ({
-                            value: s.id,
-                            label: `${s.name} ${s.duration ? `(${s.duration}min)` : ''} - R$ ${s.price.toFixed(2)}`,
-                            icon: <Scissors size={12} />
-                          }))
+                          ...services.filter(s => s.active && !formData.selectedServices.includes(s.id)).map(s => {
+                            const disc = clientPlanInfo?.discountMap[s.id] || 0;
+                            const priceLabel = disc > 0
+                              ? `${s.name} (${s.duration || 30}min) — R$ ${(s.price * (1 - disc / 100)).toFixed(2)} (${disc === 100 ? 'Grátis' : `-${disc}%`})`
+                              : `${s.name} ${s.duration ? `(${s.duration}min)` : ''} - R$ ${s.price.toFixed(2)}`;
+                            return {
+                              value: s.id,
+                              label: priceLabel,
+                              icon: disc > 0 ? <Tag size={12} className="text-emerald-400" /> : <Scissors size={12} />,
+                            };
+                          })
                         ]}
                         isDarkMode={isDarkMode}
                       />
@@ -1227,15 +1397,26 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
                           {formData.selectedServices.map(svcId => {
                             const svc = services.find(s => s.id === svcId);
                             if (!svc) return null;
+                            const info = selectedServiceDetails.perService.find(p => p.id === svcId);
+                            const hasDisc = info && info.discountPct > 0;
                             return (
                               <div
                                 key={svcId}
-                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-primary/10 border-primary/20 text-primary"
+                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${hasDisc ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-primary/10 border-primary/20 text-primary'}`}
                               >
-                                <Scissors size={10} />
+                                {hasDisc ? <Tag size={10} /> : <Scissors size={10} />}
                                 <span>{svc.name}</span>
                                 <span className="text-muted-foreground text-[10px]">{svc.duration || 30}min</span>
-                                <span className="text-muted-foreground text-[10px]">R${svc.price.toFixed(0)}</span>
+                                {hasDisc ? (
+                                  <>
+                                    <span className="text-muted-foreground text-[10px] line-through opacity-50">R${svc.price.toFixed(0)}</span>
+                                    <span className="text-emerald-400 text-[10px] font-bold">
+                                      {info.discountPct === 100 ? 'Grátis' : `R$${info.discountedPrice.toFixed(0)}`}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-muted-foreground text-[10px]">R${svc.price.toFixed(0)}</span>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => setFormData(prev => ({
@@ -1252,8 +1433,21 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
                           })}
                           <div className="flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-bold bg-muted text-muted-foreground">
                             <Clock size={10} /> {selectedServiceDetails.totalDuration}min
-                            <DollarSign size={10} /> R$ {selectedServiceDetails.totalPrice.toFixed(2)}
+                            <DollarSign size={10} />
+                            {selectedServiceDetails.hasDiscount ? (
+                              <>
+                                <span className="line-through opacity-50">R$ {selectedServiceDetails.totalPrice.toFixed(2)}</span>
+                                <span className="text-emerald-400 font-black">R$ {selectedServiceDetails.totalDiscounted.toFixed(2)}</span>
+                              </>
+                            ) : (
+                              <span>R$ {selectedServiceDetails.totalPrice.toFixed(2)}</span>
+                            )}
                           </div>
+                          {selectedServiceDetails.hasDiscount && (
+                            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              <BadgePercent size={10} /> Economia do plano: R$ {selectedServiceDetails.totalSavings.toFixed(2)}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1308,6 +1502,64 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
                         ]}
                         isDarkMode={isDarkMode}
                       />
+
+                      {/* 🧠 Intelligent Subscriber Banner */}
+                      {clientPlanInfo && (
+                        <div className={`mt-2 p-2.5 rounded-lg text-[11px] space-y-1.5 ring-1 ring-inset ${
+                          clientPlanInfo.isBlocked
+                            ? 'bg-amber-500/5 ring-amber-500/30'
+                            : 'bg-emerald-500/5 ring-emerald-500/30'
+                        }`}>
+                          <div className="flex items-center gap-1.5 font-bold">
+                            <Crown size={12} className="text-amber-400" />
+                            <span className="text-foreground">{clientPlanInfo.planName}</span>
+                            {clientPlanInfo.maxUses && (
+                              <span className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                                clientPlanInfo.atLimit ? 'bg-red-500/10 text-red-400' :
+                                clientPlanInfo.nearLimit ? 'bg-amber-500/10 text-amber-400' :
+                                'bg-muted text-muted-foreground'
+                              }`}>
+                                {clientPlanInfo.usesThisMonth}/{clientPlanInfo.maxUses} usos
+                              </span>
+                            )}
+                          </div>
+                          {/* Per-service discounts */}
+                          {Object.keys(clientPlanInfo.discountMap).length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {Object.entries(clientPlanInfo.discountMap).map(([svcId, disc]) => {
+                                const svc = services.find(s => s.id === svcId);
+                                if (!svc) return null;
+                                return (
+                                  <span key={svcId} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[9px] font-semibold">
+                                    <Tag size={8} /> {svc.name}: {disc === 100 ? 'Grátis' : `-${disc}%`}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {/* Warnings */}
+                          {clientPlanInfo.barberExcluded && (
+                            <div className="flex items-center gap-1 text-amber-400 text-[10px]">
+                              <AlertCircle size={10} /> Desc. não válido com {clientPlanInfo.barberName || 'este profissional'}
+                            </div>
+                          )}
+                          {clientPlanInfo.dayDisabled && (
+                            <div className="flex items-center gap-1 text-amber-400 text-[10px]">
+                              <AlertCircle size={10} /> Desc. não válido neste dia da semana
+                            </div>
+                          )}
+                          {clientPlanInfo.atLimit && (
+                            <div className="flex items-center gap-1 text-red-400 text-[10px]">
+                              <AlertCircle size={10} /> Limite de usos do mês atingido
+                            </div>
+                          )}
+                          {clientPlanInfo.nearLimit && !clientPlanInfo.atLimit && (
+                            <div className="flex items-center gap-1 text-amber-400 text-[10px]">
+                              <AlertCircle size={10} /> Apenas {clientPlanInfo.usesRemaining} usos restantes este mês
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Inline New Client (only in New mode) */}
                       {!editingEventId && (
@@ -1489,16 +1741,33 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
                       {formData.selectedServices.length > 0 && (
                         <>
                           <div className="border-t border-border my-1" />
-                          {selectedServiceDetails.svcs.map(svc => (
-                            <div key={svc.id} className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">{svc.name}</span>
-                              <span className="font-medium text-foreground">R$ {svc.price.toFixed(2)}</span>
+                          {selectedServiceDetails.perService.map(info => (
+                            <div key={info.id} className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">{info.name}</span>
+                              {info.discountPct > 0 ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-muted-foreground line-through opacity-50 text-[10px]">R$ {info.originalPrice.toFixed(2)}</span>
+                                  <span className="font-medium text-emerald-400">
+                                    {info.discountPct === 100 ? 'Grátis' : `R$ ${info.discountedPrice.toFixed(2)}`}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="font-medium text-foreground">R$ {info.originalPrice.toFixed(2)}</span>
+                              )}
                             </div>
                           ))}
+                          {selectedServiceDetails.hasDiscount && (
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-emerald-400 flex items-center gap-1"><BadgePercent size={10} /> Economia</span>
+                              <span className="font-bold text-emerald-400">- R$ {selectedServiceDetails.totalSavings.toFixed(2)}</span>
+                            </div>
+                          )}
                           <div className="border-t border-border my-1" />
                           <div className="flex items-center justify-between text-xs">
                             <span className="font-bold text-foreground">Total</span>
-                            <span className="font-bold text-primary">R$ {selectedServiceDetails.totalPrice.toFixed(2)}</span>
+                            <span className={`font-bold ${selectedServiceDetails.hasDiscount ? 'text-emerald-400' : 'text-primary'}`}>
+                              R$ {selectedServiceDetails.totalDiscounted.toFixed(2)}
+                            </span>
                           </div>
                         </>
                       )}
@@ -1592,6 +1861,67 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
                       )}
                     </div>
                   )}
+
+                  {/* F3: Desmembrar compound event */}
+                  {editingEventId && formData.type !== 'blocked' && (() => {
+                    const editEv = events.find(ev => ev.id === editingEventId);
+                    if (!editEv?.serviceSlots || editEv.serviceSlots.length < 2) return null;
+                    return (
+                      <div className="p-3 rounded-xl border border-border">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                            <Scissors size={12} className="text-primary" /> Desmembrar serviços
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setSplitMode(prev => !prev)}
+                            className={`w-9 h-5 rounded-full transition-colors relative ${splitMode ? 'bg-primary' : 'bg-muted'}`}
+                          >
+                            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${splitMode ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                          </button>
+                        </div>
+                        {splitMode && (
+                          <div className="mt-3 space-y-2">
+                            <p className="text-[10px] text-muted-foreground">Mova um sub-serviço para outro profissional:</p>
+                            {editEv.serviceSlots.map((ss: any, idx: number) => (
+                              <div key={idx} className="flex items-center justify-between p-2 rounded-lg border border-border">
+                                <div>
+                                  <p className="text-xs font-semibold text-foreground">{ss.serviceName}</p>
+                                  <p className="text-[10px] text-muted-foreground">{ss.startTime} - {ss.endTime} · {ss.duration}min</p>
+                                </div>
+                                <select
+                                  className="text-[10px] bg-muted border border-border rounded px-1.5 py-1 text-foreground"
+                                  defaultValue=""
+                                  onChange={async (e) => {
+                                    const newBarberId = e.target.value;
+                                    if (!newBarberId) return;
+                                    const newBarber = members.find(tm => tm.id === newBarberId);
+                                    if (!newBarber) return;
+                                    const result = await splitServiceFromEvent(editingEventId!, idx, newBarberId, newBarber.name || newBarber.id);
+                                    if (result.success) {
+                                      toast.success('Serviço movido com sucesso!');
+                                      setSplitMode(false);
+                                      setIsModalOpen(false);
+                                      refresh();
+                                    } else {
+                                      toast.error('Erro ao desmembrar', result.error || '');
+                                    }
+                                  }}
+                                >
+                                  <option value="">Mover para...</option>
+                                  {members
+                                    .filter(tm => tm.id !== editEv.barberId && tm.active !== false)
+                                    .map(tm => (
+                                      <option key={tm.id} value={tm.id}>{tm.name || tm.id}</option>
+                                    ))}
+                                </select>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
               </div>
 

@@ -1336,8 +1336,14 @@ function PublicSiteApp() {
       return;
     }
 
-    // Check max open
-    const openAppts = allEvents.filter((e) => e.status !== "cancelled" && e.status !== "completed" && e.status !== "no_show");
+    // Check max open (exclude past appointments — they are no longer "open")
+    const openAppts = allEvents.filter((e) => {
+      if (e.status === "cancelled" || e.status === "completed" || e.status === "no_show") return false;
+      const evDate = new Date(e.year, e.month, e.date);
+      evDate.setHours(23, 59, 59, 999);
+      if (evDate < new Date()) return false;
+      return true;
+    });
     // Deduplicate by groupId: grouped events count as 1 appointment
     const seenGroups = new Set<string>();
     const uniqueOpenCount = openAppts.filter((e: any) => {
@@ -2781,10 +2787,10 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
       <>
         <div className="flex justify-between text-sm">
           <span className="flex items-center gap-2">
-            <Crown className="w-4 h-4" style={{ color: primary }} />
-            <span style={{ color: primary }}>Incluso no seu plano</span>
+            <Crown className="w-4 h-4" style={{ color: '#10b981' }} />
+            <span style={{ color: '#10b981' }}>Incluso no seu plano</span>
           </span>
-          <span className="text-green-400">- R$ {price.toFixed(2)}</span>
+          <span className="text-emerald-400">- R$ {price.toFixed(2)}</span>
         </div>
 
       </>
@@ -2795,10 +2801,10 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
       <>
         <div className="flex justify-between text-sm">
           <span className="flex items-center gap-2">
-            <Crown className="w-4 h-4" style={{ color: primary }} />
-            <span style={{ color: primary }}>Desc. do plano ({subscriptionDiscount}%)</span>
+            <Crown className="w-4 h-4" style={{ color: '#10b981' }} />
+            <span style={{ color: '#10b981' }}>Desc. do plano ({subscriptionDiscount}%)</span>
           </span>
-          <span className="text-green-400">- R$ {planDiscountAmount.toFixed(2)}</span>
+          <span className="text-emerald-400">- R$ {planDiscountAmount.toFixed(2)}</span>
         </div>
 
       </>
@@ -3931,9 +3937,9 @@ function AssinarModal({ plan, primary, bgColor, clientProfile, onClose, onSucces
             {planServiceDetails.map((s: any, i: number) => (
               <div key={i} className="flex items-center justify-between text-sm mb-1.5">
                 <span className="flex items-center gap-2 text-gray-300">
-                  <Check className="w-3.5 h-3.5" style={{ color: primary }} />{s.name}
+                  <Check className="w-3.5 h-3.5" style={{ color: '#10b981' }} />{s.name}
                 </span>
-                <span className="text-xs font-semibold" style={{ color: primary }}>{s.limit ? `${s.limit}x/mês` : 'Ilimitado'}</span>
+                <span className="text-xs font-semibold" style={{ color: '#10b981' }}>{s.limit ? `${s.limit}x/mês` : 'Ilimitado'}</span>
               </div>
             ))}
           </div>
@@ -4168,7 +4174,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                       <Scissors className="w-3.5 h-3.5" style={{ color: primary }} />
                       <span className="text-sm text-white">{svc.name}</span>
                     </div>
-                    <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: disc === 100 ? '#22c55e20' : `${primary}20`, color: disc === 100 ? '#4ade80' : primary }}>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#10b98120', color: '#34d399' }}>
                       {disc === 100 ? 'Incluso' : `${disc}% off`}
                     </span>
                   </div>
@@ -4956,7 +4962,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
               <div className="space-y-1.5">
                 {targetBenefits.map((b: string, i: number) => (
                   <div key={i} className="flex items-center gap-2">
-                    <Check className="w-3.5 h-3.5 flex-shrink-0" style={{ color: primary }} />
+                    <Check className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#10b981' }} />
                     <span className="text-xs text-gray-300">{b}</span>
                   </div>
                 ))}
@@ -4974,7 +4980,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                   return svc ? (
                     <div key={i} className="flex items-center justify-between">
                       <span className="text-xs text-gray-300">{svc.name}</span>
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: `${primary}20`, color: primary }}>{Number(s.discount)}% off</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#10b98120', color: '#34d399' }}>{Number(s.discount)}% off</span>
                     </div>
                   ) : null;
                 })}
@@ -5344,7 +5350,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                                 <Scissors className="w-3.5 h-3.5" style={{ color: primary }} />
                                 <span className="text-xs font-semibold text-white truncate">{svc.name}</span>
                               </div>
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: disc === 100 ? '#22c55e20' : `${primary}20`, color: disc === 100 ? '#4ade80' : primary }}>
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#10b98120', color: '#34d399' }}>
                                 {disc === 100 ? 'Incluso' : `${disc}% OFF`}
                               </span>
                               {limit ? (
@@ -5354,7 +5360,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                                     <span>{limit}x/mês</span>
                                   </div>
                                   <div className="w-full bg-gray-700 rounded-full h-1.5">
-                                    <div className="h-1.5 rounded-full" style={{ backgroundColor: isSuspended ? '#555' : primary, width: `${Math.min(100, (usedTotal / limit) * 100)}%` }} />
+                                    <div className="h-1.5 rounded-full" style={{ backgroundColor: isSuspended ? '#555' : '#10b981', width: `${Math.min(100, (usedTotal / limit) * 100)}%` }} />
                                   </div>
                                 </div>
                               ) : (
@@ -5526,7 +5532,7 @@ function PlanosView({ g, primary, bgColor, cardBg, plans, subscription, services
                               <Scissors className="w-3.5 h-3.5" style={{ color: primary }} />
                               <span className="text-sm text-gray-300">{svc.name}</span>
                             </div>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: disc === 100 ? '#22c55e20' : `${primary}20`, color: disc === 100 ? '#4ade80' : primary }}>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#10b98120', color: '#34d399' }}>
                               {disc === 100 ? 'Incluso' : `${disc}% OFF`}
                             </span>
                           </div>
@@ -5921,7 +5927,7 @@ function PerfilView({ g, primary, bgColor, cardBg, authUser, clientProfile, clie
         <div className="flex items-center justify-center gap-2 mt-2">
           {clientSubscription && (() => {
             const badgeMap: Record<string, { label: string; color: string; bg: string }> = {
-              active: { label: 'Assinante', color: primary, bg: `${primary}20` },
+              active: { label: 'Assinante', color: '#10b981', bg: '#10b98120' },
               overdue: { label: 'Inadimplente', color: '#f87171', bg: '#ef444420' },
               paused: { label: 'Pausado', color: '#fbbf24', bg: '#eab30820' },
               pending_payment: { label: 'Aguardando Pgto', color: '#60a5fa', bg: '#3b82f620' },
