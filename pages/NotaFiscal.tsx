@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
     FileText, Receipt, History, Users, Settings, Plus,
     TrendingUp, TrendingDown, Clock, CheckCircle2, XCircle,
-    AlertTriangle, DollarSign, BarChart3, RefreshCw
+    AlertTriangle, DollarSign, BarChart3, RefreshCw, Building2
 } from 'lucide-react';
 import { useAppData } from '../hooks/useAppData';
 import { useFilteredData } from '../hooks/useFilteredData';
@@ -26,9 +26,11 @@ import TabEmissao from '../components/nota-fiscal/TabEmissao';
 import TabHistorico from '../components/nota-fiscal/TabHistorico';
 import TabEquipe from '../components/nota-fiscal/TabEquipe';
 import TabConfiguracoes from '../components/nota-fiscal/TabConfiguracoes';
+import PainelFiscal from '../components/nota-fiscal/PainelFiscal';
 
 const TABS = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+    { id: 'painel', label: 'Painel', icon: Building2 },
     { id: 'emissao', label: 'Emissão', icon: Receipt },
     { id: 'historico', label: 'Histórico', icon: History },
     { id: 'equipe', label: 'Equipe', icon: Users },
@@ -61,16 +63,18 @@ export default function NotaFiscal({ isDarkMode, currentUser }: NotaFiscalProps)
     const [fiscalData, setFiscalData] = useState<ProfessionalFiscalData[]>([]);
     const [settings, setSettings] = useState<FiscalSettings | null>(null);
     const [loading, setLoading] = useState(true);
+    const { selectedUnitId, units, setSelectedUnitId } = useSelectedUnit();
+    const unitFilter = selectedUnitId !== 'all' ? selectedUnitId : undefined;
 
     // Load data
     const loadData = async () => {
         setLoading(true);
         try {
             const [inv, emt, fd, fs] = await Promise.all([
-                getInvoices(),
-                getEmitters(),
+                getInvoices(unitFilter),
+                getEmitters(unitFilter),
                 getProfessionalFiscalData(),
-                getFiscalSettings(),
+                getFiscalSettings(unitFilter),
             ]);
             setInvoices(inv);
             setEmitters(emt);
@@ -83,7 +87,7 @@ export default function NotaFiscal({ isDarkMode, currentUser }: NotaFiscalProps)
         }
     };
 
-    useEffect(() => { loadData(); }, []);
+    useEffect(() => { loadData(); }, [selectedUnitId]);
 
     // ===================== KPIs =====================
     const kpis = useMemo(() => {
@@ -200,6 +204,16 @@ export default function NotaFiscal({ isDarkMode, currentUser }: NotaFiscalProps)
                     settings={settings}
                 />
             )}
+            {activeTab === 'painel' && (
+                <PainelFiscal
+                    units={units}
+                    isDarkMode={isDarkMode}
+                    onNavigateConfig={(unitId) => {
+                        setSelectedUnitId(unitId);
+                        setActiveTab('config');
+                    }}
+                />
+            )}
             {activeTab === 'emissao' && (
                 <TabEmissao
                     invoices={invoices} emitters={emitters}
@@ -228,6 +242,7 @@ export default function NotaFiscal({ isDarkMode, currentUser }: NotaFiscalProps)
                 <TabConfiguracoes
                     emitters={emitters} settings={settings}
                     isDarkMode={isDarkMode} onRefresh={loadData} toast={toast}
+                    selectedUnitId={unitFilter}
                 />
             )}
         </div>

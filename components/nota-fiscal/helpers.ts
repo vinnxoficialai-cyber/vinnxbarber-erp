@@ -60,6 +60,7 @@ export function createDraftFromComanda(comanda: any, emitter: InvoiceEmitter): I
         clientCpfCnpj: comanda.clientCpfCnpj,
         professionalId: comanda.barberId,
         professionalName: comanda.barberName,
+        unitId: comanda.unitId || undefined,
         items,
         totalServices,
         totalProducts,
@@ -121,10 +122,11 @@ export function validateInvoice(invoice: Invoice): ValidationResult {
     return { valid: errors.length === 0, errors, warnings };
 }
 
-export function calculateTaxes(items: InvoiceItem[], docType: InvoiceDocType): TaxSummary {
+export function calculateTaxes(items: InvoiceItem[], docType: InvoiceDocType, emitterIssRate?: number): TaxSummary {
     const totalServices = items.filter(i => i.type === 'service').reduce((s, i) => s + i.totalPrice, 0);
     const totalProducts = items.filter(i => i.type === 'product').reduce((s, i) => s + i.totalPrice, 0);
-    const issRate = docType === 'nfse' ? 0.05 : 0;
+    // Use emitter ISS rate if provided, otherwise default 5% (LC 116/2003 max)
+    const issRate = docType === 'nfse' ? ((emitterIssRate || 5) / 100) : 0;
     const icmsRate = docType === 'nfce' ? 0.18 : 0;
     return {
         issRate, issTotal: totalServices * issRate,
@@ -141,25 +143,4 @@ export function suggestDocType(items: InvoiceItem[]): InvoiceDocType {
     if (hasServices && !hasProducts) return 'nfse';
     if (hasProducts && !hasServices) return 'nfce';
     return 'nfse'; // mixed → NFS-e by default
-}
-
-// Stubs for future Supabase integration
-export async function queueInvoiceEmission(_invoice: Invoice): Promise<{ success: boolean; error?: string }> {
-    return { success: true };
-}
-
-export async function cancelInvoice(_invoiceId: string, _reason: string): Promise<{ success: boolean; error?: string }> {
-    return { success: true };
-}
-
-export async function downloadPdfXml(_invoice: Invoice, _type: 'pdf' | 'xml'): Promise<void> {
-    console.log(`[Stub] Download ${_type} for invoice ${_invoice.id}`);
-}
-
-export async function resendEmail(_invoice: Invoice): Promise<{ success: boolean }> {
-    return { success: true };
-}
-
-export async function exportInvoices(_invoices: Invoice[], _format: 'csv' | 'xlsx'): Promise<void> {
-    console.log(`[Stub] Export ${_invoices.length} invoices as ${_format}`);
 }

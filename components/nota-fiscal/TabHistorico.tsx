@@ -129,14 +129,22 @@ export default function TabHistorico({ invoices, isDarkMode, members, onRefresh,
 
     const handleCancel = async (inv: Invoice) => {
         if (inv.status === 'authorized') {
+            const reason = window.prompt(
+                'Justificativa de cancelamento (mínimo 15 caracteres — exigência SEFAZ):'
+            );
+            if (!reason) return;
+            if (reason.trim().length < 15) {
+                toast.error('Justificativa curta', 'A SEFAZ exige no mínimo 15 caracteres.');
+                return;
+            }
             const ok = await confirm({
                 title: 'Cancelar Nota Autorizada',
-                message: `Cancelar nota ${inv.number || inv.id.slice(0, 8)}? Esta ação será enviada ao provedor fiscal.`,
+                message: `Cancelar nota ${inv.number || inv.id.slice(0, 8)}? Justificativa: "${reason}". Esta ação será enviada à SEFAZ.`,
                 confirmLabel: 'Confirmar Cancelamento',
                 variant: 'danger'
             });
             if (!ok) return;
-            const result = await cancelInvoice(inv, 'Cancelamento solicitado pelo usuário');
+            const result = await cancelInvoice(inv, reason.trim());
             if (result.success) {
                 toast.success('Nota cancelada');
             } else {
@@ -255,8 +263,9 @@ export default function TabHistorico({ invoices, isDarkMode, members, onRefresh,
                                                 <div className="flex items-center justify-end gap-2">
                                                     <button onClick={() => setSelectedInvoice(inv)}
                                                         className="text-primary hover:underline text-xs font-medium">Ver</button>
-                                                    {inv.status === 'authorized' && (
-                                                        <button className="text-primary hover:underline text-xs font-medium">PDF</button>
+                                                    {inv.status === 'authorized' && (inv.danfeUrl || inv.pdfUrl) && (
+                                                        <button onClick={() => window.open(inv.danfeUrl || inv.pdfUrl, '_blank')}
+                                                            className="text-primary hover:underline text-xs font-medium">PDF</button>
                                                     )}
                                                     {inv.status === 'authorized' && (
                                                         <button onClick={() => handleCancel(inv)}

@@ -417,6 +417,9 @@ function PublicSiteApp() {
   const [loadingFading, setLoadingFading] = useState(false);
   const [animateReady, setAnimateReady] = useState(false);
 
+  // Deep-link: pending rating modal (set from push notification click)
+  const [pendingRateEventId, setPendingRateEventId] = useState<string | null>(null);
+
   // Auth
   const [authUser, setAuthUser] = useState<{ id: string; email: string } | null>(null);
   const [clientProfile, setClientProfile] = useState<any>(null);
@@ -664,16 +667,42 @@ function PublicSiteApp() {
   }, [showToast]);
 
   // Effect: Auto re-subscribe when Service Worker reports subscription expired
+  // + Handle notification-action deep-links from SW postMessage
   useEffect(() => {
     if (!pushSupported) return;
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'push-subscription-expired' && clientProfile?.id) {
         subscribeToPush();
       }
+      // Deep-link: push notification clicked while app is open
+      if (event.data?.type === 'notification-action' && event.data?.action === 'rate' && event.data?.eventId) {
+        setPendingRateEventId(event.data.eventId);
+        setActiveView('historico');
+      }
     };
     navigator.serviceWorker.addEventListener('message', handleMessage);
     return () => navigator.serviceWorker.removeEventListener('message', handleMessage);
   }, [pushSupported, clientProfile?.id, subscribeToPush]);
+
+  // Deep-link: parse URL params on load (e.g. /#/site?action=rate&eventId=xxx)
+  useEffect(() => {
+    try {
+      const hash = window.location.hash; // e.g. "#/site?action=rate&eventId=xxx"
+      const qIdx = hash.indexOf('?');
+      if (qIdx >= 0) {
+        const params = new URLSearchParams(hash.substring(qIdx));
+        const action = params.get('action');
+        const eventId = params.get('eventId');
+        if (action === 'rate' && eventId) {
+          setPendingRateEventId(eventId);
+          setActiveView('historico');
+          // Clean URL params to prevent re-triggering on refresh
+          const cleanHash = hash.substring(0, qIdx);
+          window.history.replaceState(null, '', cleanHash || '#/site');
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   // Show push banner only for LOGGED-IN users who haven't subscribed
   useEffect(() => {
@@ -1550,6 +1579,76 @@ function PublicSiteApp() {
     };
   }, [clientProfile]);
 
+  // ============================================================
+  // CLIENT-SIDE RATING NOTIFICATION SCHEDULER
+  // Schedules a local notification at the exact endTime of each
+  // appointment. Recalculates on every events change (reschedule
+  // by client or admin via realtime, new bookings, cancellations).
+  // ============================================================
+  const ratingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    // Clear all existing timers on every update
+    ratingTimersRef.current.forEach((timer) => clearTimeout(timer));
+    ratingTimersRef.current.clear();
+
+    // Only schedule if user is logged in and has notification permission
+    if (!authUser || !clientProfile || Notification.permission !== 'granted') return;
+
+    const now = Date.now();
+    // Max schedule window: 24 hours (avoid unreliable long timers)
+    const maxDelay = 24 * 60 * 60 * 1000;
+
+    for (const ev of allEvents) {
+      // Skip cancelled, no_show, already rated, or already rating-requested
+      if (ev.status === 'cancelled' || ev.status === 'no_show') continue;
+      if (ev.rating) continue;
+
+      // Calculate the exact endTime datetime
+      const eventDate = new Date(ev.year, ev.month, ev.date);
+      if (ev.endTime) {
+        const [h, m] = ev.endTime.split(':').map(Number);
+        eventDate.setHours(h, m, 0, 0);
+      } else if (ev.startTime) {
+        const [h, m] = ev.startTime.split(':').map(Number);
+        eventDate.setHours(h, m + (ev.duration || 30), 0, 0);
+      } else {
+        continue; // No time info, skip
+      }
+
+      const delay = eventDate.getTime() - now;
+
+      // Only schedule future events within the 24h window
+      if (delay <= 0 || delay > maxDelay) continue;
+
+      const timer = setTimeout(async () => {
+        ratingTimersRef.current.delete(ev.id);
+        try {
+          const reg = await navigator.serviceWorker?.ready;
+          if (!reg) return;
+          const deepLink = `/#/site?action=rate&eventId=${ev.id}`;
+          await reg.showNotification('⭐ Como foi seu atendimento?', {
+            body: `Avalie seu ${ev.serviceName || 'serviço'} e ajude a melhorar nosso atendimento!`,
+            icon: 'https://enjyflztvyomrlzddavk.supabase.co/storage/v1/object/public/avatars/public/pwa_icon_192.png',
+            tag: `rate-local-${ev.id}`,
+            data: { url: deepLink },
+            vibrate: [200, 100, 200],
+          } as NotificationOptions);
+        } catch (err) {
+          console.warn('[RatingTimer] Failed to show notification:', err);
+        }
+      }, delay);
+
+      ratingTimersRef.current.set(ev.id, timer);
+    }
+
+    // Cleanup on unmount
+    return () => {
+      ratingTimersRef.current.forEach((timer) => clearTimeout(timer));
+      ratingTimersRef.current.clear();
+    };
+  }, [allEvents, authUser, clientProfile]);
+
   const uiScale = parseFloat(g("theme.ui_scale", "1")) || 1;
 
   // ============================================================
@@ -1663,6 +1762,8 @@ function PublicSiteApp() {
             onRefresh={refreshEvents}
             setActiveView={setActiveView} updateSelection={updateSelection}
             resetSelection={resetSelection}
+            pendingRateEventId={pendingRateEventId}
+            onRateEventHandled={() => setPendingRateEventId(null)}
           />}
           {activeView === "planos" && <PlanosView
             g={g} primary={primary} bgColor={bgColor} cardBg={cardBg}
@@ -2956,7 +3057,7 @@ function ResumoModal({ selection, primary, bgColor, cardBg, clientSubscription, 
 // ============================================================
 // HISTORICO VIEW (with details, reschedule, cancel, rate)
 // ============================================================
-function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, clientSubscription, setClientSubscription, events, availabilityEvents, units, barbers, services, schedules, closedDays, maxAdvDays, slotInterval, onLogin, openModal, closeModal, onRefresh, setActiveView, updateSelection, resetSelection }: any) {
+function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, clientSubscription, setClientSubscription, events, availabilityEvents, units, barbers, services, schedules, closedDays, maxAdvDays, slotInterval, onLogin, openModal, closeModal, onRefresh, setActiveView, updateSelection, resetSelection, pendingRateEventId, onRateEventHandled }: any) {
   if (!authUser) {
     return (
       <div className="p-6 h-full flex flex-col items-center justify-center text-center min-h-[80vh]">
@@ -2969,17 +3070,25 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
   }
 
   const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  // Build full datetime from event date + startTime so appointments move to
+  // history the moment their scheduled start time is reached (not at midnight).
+  const getEventStart = (e: CalendarEvent) => {
+    const d = new Date(e.year, e.month, e.date);
+    if (e.startTime) {
+      const [h, m] = e.startTime.split(":").map(Number);
+      d.setHours(h, m, 0, 0);
+    }
+    return d;
+  };
 
   const abertos = events.filter((e: CalendarEvent) => {
     if (e.status === "cancelled" || e.status === "completed" || e.status === "no_show") return false;
-    const eventDate = new Date(e.year, e.month, e.date);
-    return eventDate >= todayStart;
+    return getEventStart(e) > now;
   });
   const historico = events.filter((e: CalendarEvent) => {
     if (e.status === "cancelled") return false;
-    const eventDate = new Date(e.year, e.month, e.date);
-    return eventDate < todayStart || e.status === "completed" || e.status === "no_show";
+    return getEventStart(e) <= now || e.status === "completed" || e.status === "no_show";
   });
 
   // Resolve barber name — fallback to barbers array if barberName looks like a UUID
@@ -2989,11 +3098,32 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
       ? e.barberName
       : barbers.find((b: any) => b.id === e.barberId)?.name || e.barberName || "A definir";
 
+  // Deep-link: auto-open rating modal when pendingRateEventId is set
+  // (triggered by push notification click)
+  const pendingRateHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pendingRateEventId || !events.length) return;
+    // Prevent re-triggering for the same eventId
+    if (pendingRateHandledRef.current === pendingRateEventId) return;
+    const ev = events.find((e: CalendarEvent) => e.id === pendingRateEventId);
+    if (ev && !ev.rating) {
+      pendingRateHandledRef.current = pendingRateEventId;
+      // Small delay to ensure the view is rendered before opening the modal
+      setTimeout(() => {
+        showAvaliacaoModal(ev);
+        if (onRateEventHandled) onRateEventHandled();
+      }, 300);
+    } else {
+      // Event not found or already rated — clear the pending state
+      if (onRateEventHandled) onRateEventHandled();
+    }
+  }, [pendingRateEventId, events]);
+
   // Show appointment details
   function showDetalhes(ev: CalendarEvent) {
     const eventDate = new Date(ev.year, ev.month, ev.date);
     const dateStr = eventDate.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
-    const isOpen = eventDate >= todayStart && ev.status !== "completed" && ev.status !== "no_show";
+    const isOpen = getEventStart(ev) > new Date() && ev.status !== "completed" && ev.status !== "no_show";
     const unit = units.find((u: any) => u.id === ev.unitId);
 
     // Use the shared resolveBarberName helper (defined in HistoricoView scope)
@@ -3228,13 +3358,18 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
             startTime: newTime,
             endTime: newEnd,
             updatedAt: now,
+            // Rastreamento de remarcação pelo cliente
+            originalStartTime: ev.startTime,
+            originalEndTime: ev.endTime,
+            lastModifiedBy: 'client',
+            lastModifiedByName: 'Cliente',
           };
 
           // F6: Propagate reschedule to all events in the group
           if ((ev as any).groupId) {
             // Fetch all group events to recalculate endTime per event (each has different duration)
             const { data: groupEvts } = await supabase.from("calendar_events")
-              .select("id, duration").eq("groupId", (ev as any).groupId);
+              .select("id, duration, startTime, endTime").eq("groupId", (ev as any).groupId);
             if (groupEvts && groupEvts.length > 0) {
               for (const ge of groupEvts) {
                 await supabase.from("calendar_events").update({
@@ -3242,6 +3377,11 @@ function HistoricoView({ g, primary, bgColor, cardBg, authUser, clientProfile, c
                   startTime: newTime,
                   endTime: addMinutesToTime(newTime, ge.duration || 30),
                   updatedAt: now,
+                  // Rastreamento de remarcação
+                  originalStartTime: ge.startTime,
+                  originalEndTime: ge.endTime,
+                  lastModifiedBy: 'client',
+                  lastModifiedByName: 'Cliente',
                 }).eq("id", ge.id);
               }
             }

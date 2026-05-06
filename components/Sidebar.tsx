@@ -70,6 +70,7 @@ const SECTIONS: NavSection[] = [
       { icon: CreditCard, label: 'Contas Bancárias', path: '/contas-bancarias' },
       { icon: FileSpreadsheet, label: 'Contas a Pagar', path: '/contas-pagar' },
       { icon: Receipt, label: 'Nota Fiscal', path: '/nota-fiscal' },
+      { icon: Settings, label: 'Config. Fiscal', path: '/configuracao-fiscal' },
     ],
   },
   {

@@ -4,11 +4,12 @@ import {
     CreditCard, MapPin, Mail, Phone, Award,
     Server, Key, ToggleLeft, ToggleRight,
     Save, Globe, Hash, Percent, Lock, Upload,
-    CheckCircle2, AlertTriangle, XCircle
+    CheckCircle2, AlertTriangle, XCircle, Loader2, Search
 } from 'lucide-react';
 import { InvoiceEmitter, FiscalSettings } from '../../types';
 import { saveEmitter, saveFiscalSettings } from '../../lib/dataService';
 import { uploadCertificate } from '../../lib/fiscalService';
+import { useSelectedUnit } from '../../context/UnitContext';
 
 interface Props {
     emitters: InvoiceEmitter[];
@@ -16,9 +17,11 @@ interface Props {
     isDarkMode: boolean;
     onRefresh: () => void;
     toast: any;
+    selectedUnitId?: string;
 }
 
-export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRefresh, toast }: Props) {
+export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRefresh, toast, selectedUnitId }: Props) {
+    const { units } = useSelectedUnit();
     const textMain = isDarkMode ? 'text-slate-50' : 'text-slate-900';
     const textSub = isDarkMode ? 'text-slate-400' : 'text-slate-600';
     const bgCard = isDarkMode ? 'bg-dark-surface' : 'bg-white';
@@ -28,14 +31,80 @@ export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRef
     // Section state
     const [section, setSection] = useState<'emitter' | 'nfse_nfce' | 'rules' | 'api'>('emitter');
 
-    // Emitter form
-    const mainEmitter = emitters.find(e => e.type === 'company') || null;
+    // Local unit selection (when global filter = "Todas" and multiple units)
+    const [configUnitId, setConfigUnitId] = useState<string | undefined>(undefined);
+    const effectiveUnitId = selectedUnitId || configUnitId;
+
+    // Emitter form — filter by effective unit
+    const mainEmitter = emitters.find(e => e.type === 'company' && (
+        effectiveUnitId ? e.unitId === effectiveUnitId : true
+    )) || emitters.find(e => e.type === 'company') || null;
     const [emitterForm, setEmitterForm] = useState<Partial<InvoiceEmitter>>({});
 
+    // Ponto 3 — CNPJ lookup states
+    const [cnpjLoading, setCnpjLoading] = useState(false);
+    const [cnpjStatus, setCnpjStatus] = useState<'idle' | 'success' | 'error'>('idle');
+    const [autoFillSource, setAutoFillSource] = useState<'unit' | 'cnpj' | null>(null);
+
     useEffect(() => {
-        if (mainEmitter) setEmitterForm(mainEmitter);
-        else setEmitterForm({ type: 'company', active: true, cnpj: '', name: '', address: '', city: '', state: '', email: '' });
-    }, [emitters]);
+        if (mainEmitter) {
+            setEmitterForm(mainEmitter);
+            setAutoFillSource(null);
+        } else {
+            // Ponto 3A — Auto-fill from Unit data when creating new emitter
+            const unitData = effectiveUnitId ? units.find(u => u.id === effectiveUnitId) : null;
+            if (unitData) {
+                setEmitterForm({
+                    type: 'company', active: true,
+                    cnpj: unitData.cnpj || '',
+                    name: unitData.name || '',
+                    tradeName: unitData.tradeName || '',
+                    address: unitData.address || '',
+                    city: unitData.city || '',
+                    state: unitData.state || '',
+                    zip: unitData.zip || '',
+                    phone: unitData.phone || '',
+                    email: unitData.email || '',
+                });
+                setAutoFillSource('unit');
+            } else {
+                setEmitterForm({ type: 'company', active: true, cnpj: '', name: '', address: '', city: '', state: '', email: '' });
+                setAutoFillSource(null);
+            }
+        }
+        setCnpjStatus('idle');
+    }, [emitters, effectiveUnitId]);
+
+    // Ponto 3B — CNPJ auto-lookup (same logic as Unidades.tsx)
+    const handleCnpjLookup = async (cnpj: string) => {
+        const digits = cnpj.replace(/\D/g, '');
+        if (digits.length !== 14) return;
+        setCnpjLoading(true);
+        setCnpjStatus('idle');
+        try {
+            const res = await fetch(`https://open.cnpja.com/office/${digits}`);
+            if (!res.ok) throw new Error('API error');
+            const data = await res.json();
+            setEmitterForm(prev => ({
+                ...prev,
+                cnpj: digits,
+                name: data.company?.name || prev.name,
+                tradeName: data.alias || data.company?.name || prev.tradeName,
+                address: data.address ? `${data.address.street}, ${data.address.number}${data.address.details ? ' ' + data.address.details : ''}` : prev.address,
+                city: data.address?.city || prev.city,
+                state: data.address?.state || prev.state,
+                zip: data.address?.zip || prev.zip,
+                phone: data.phones?.[0]?.number || prev.phone,
+                email: data.emails?.[0]?.address || prev.email,
+            }));
+            setCnpjStatus('success');
+            setAutoFillSource('cnpj');
+        } catch {
+            setCnpjStatus('error');
+        } finally {
+            setCnpjLoading(false);
+        }
+    };
 
     // Settings form
     const [settingsForm, setSettingsForm] = useState<Partial<FiscalSettings>>({});
@@ -58,6 +127,7 @@ export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRef
             id: mainEmitter?.id || crypto.randomUUID(),
             type: 'company' as const,
             active: true,
+            unitId: effectiveUnitId || emitterForm.unitId || undefined,
         } as InvoiceEmitter;
         const result = await saveEmitter(data);
         if (result.success) {
@@ -67,20 +137,25 @@ export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRef
     };
 
     const handleSaveSettings = async () => {
-        const result = await saveFiscalSettings(settingsForm as FiscalSettings);
+        const result = await saveFiscalSettings({
+            ...settingsForm,
+            unitId: effectiveUnitId || settingsForm.unitId || undefined,
+        } as FiscalSettings);
         if (result.success) {
             toast.success('Configurações salvas');
             onRefresh();
         } else toast.error('Erro', result.error);
     };
 
+    // Ponto 4 — Certificate upload with unitId isolation
     const handleCertUpload = async (file: File) => {
         if (!file.name.endsWith('.pfx') && !file.name.endsWith('.p12')) {
             toast.error('Formato inválido', 'Selecione um arquivo .pfx ou .p12');
             return;
         }
-        const emitterId = mainEmitter?.id || 'new';
-        const result = await uploadCertificate(file, emitterId);
+        // Use unitId for path isolation, fallback to emitterId
+        const pathId = effectiveUnitId || mainEmitter?.id || 'new';
+        const result = await uploadCertificate(file, pathId);
         if (result.success) {
             setEmitterForm({
                 ...emitterForm,
@@ -122,6 +197,10 @@ export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRef
         </div>
     );
 
+    // Should we show unit selector cards?
+    const showUnitCards = !selectedUnitId && units.length > 1;
+    const isFormDisabled = showUnitCards && !configUnitId;
+
     return (
         <div className="space-y-4">
             {/* Section Tabs */}
@@ -136,6 +215,82 @@ export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRef
                 ))}
             </div>
 
+            {/* Unit Context — Cards or Banner */}
+            {(() => {
+                // Case 1: Global filter selected a specific unit → compact banner
+                const currentUnit = selectedUnitId ? units.find(u => u.id === selectedUnitId) : null;
+                if (currentUnit) {
+                    return (
+                        <div className={`${bgCard} border ${borderCol} rounded-xl p-3 shadow-sm flex items-center gap-3`}>
+                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center flex-shrink-0">
+                                <Building2 size={16} className="text-primary" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className={`text-sm font-semibold ${textMain} truncate`}>Configurando: {currentUnit.tradeName || currentUnit.name}</p>
+                                <p className={`text-[11px] ${textSub}`}>{currentUnit.cnpj || 'CNPJ não cadastrado'} • {currentUnit.city}/{currentUnit.state}</p>
+                            </div>
+                            <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex-shrink-0">UNIDADE</span>
+                        </div>
+                    );
+                }
+
+                // Case 2: configUnitId selected via cards → compact banner with deselect
+                const configUnit = configUnitId ? units.find(u => u.id === configUnitId) : null;
+                if (configUnit) {
+                    return (
+                        <div className={`${bgCard} border border-primary/30 rounded-xl p-3 shadow-sm flex items-center gap-3`}>
+                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center flex-shrink-0">
+                                <Building2 size={16} className="text-primary" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className={`text-sm font-semibold ${textMain} truncate`}>Configurando: {configUnit.tradeName || configUnit.name}</p>
+                                <p className={`text-[11px] ${textSub}`}>{configUnit.cnpj || 'CNPJ não cadastrado'} • {configUnit.city}/{configUnit.state}</p>
+                            </div>
+                            <button onClick={() => setConfigUnitId(undefined)}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border ${borderCol} ${textSub} hover:text-primary transition-colors`}>
+                                Trocar
+                            </button>
+                        </div>
+                    );
+                }
+
+                // Case 3: Filter = "Todas" and multiple units → show cards grid
+                if (!selectedUnitId && units.length > 1) {
+                    return (
+                        <div className={`${bgCard} border ${borderCol} rounded-xl shadow-sm overflow-hidden`}>
+                            <div className={`p-3 border-b ${borderCol}`}>
+                                <p className={`text-xs font-bold ${textMain} flex items-center gap-1.5`}>
+                                    <Building2 size={12} className="text-primary" />
+                                    Selecione uma unidade para configurar
+                                </p>
+                            </div>
+                            <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                {units.filter(u => u.status === 'active').map(unit => {
+                                    const hasEmitter = emitters.some(e => e.type === 'company' && e.unitId === unit.id && e.cnpj);
+                                    return (
+                                        <button key={unit.id} onClick={() => setConfigUnitId(unit.id)}
+                                            className={`p-3 rounded-xl border ${borderCol} text-left transition-all hover:border-primary/40 hover:shadow-sm group`}>
+                                            <div className="flex items-center gap-2.5">
+                                                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center flex-shrink-0">
+                                                    <Building2 size={14} className="text-primary" />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <p className={`text-xs font-bold ${textMain} truncate`}>{unit.tradeName || unit.name}</p>
+                                                    <p className={`text-[10px] ${textSub} truncate`}>{unit.cnpj || 'CNPJ pendente'}</p>
+                                                </div>
+                                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${hasEmitter ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                }
+
+                return null;
+            })()}
+
             {/* EMITTER DATA */}
             {section === 'emitter' && (
                 <div className={`${bgCard} border ${borderCol} rounded-xl shadow-sm`}>
@@ -146,9 +301,37 @@ export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRef
                         <p className={`text-xs ${textSub} mt-1`}>Informações fiscais da empresa para emissão de NF</p>
                     </div>
                     <div className="p-5 space-y-4">
+                        {/* Ponto 3 — Auto-fill badge */}
+                        {autoFillSource && (
+                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${autoFillSource === 'unit' ? 'bg-blue-500/10 text-blue-500' : 'bg-emerald-500/10 text-emerald-500'} text-[11px] font-medium`}>
+                                <CheckCircle2 size={14} />
+                                {autoFillSource === 'unit' ? 'Dados preenchidos da unidade' : 'Dados preenchidos via CNPJ'}
+                            </div>
+                        )}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <InputField label="CNPJ *" icon={CreditCard} value={emitterForm.cnpj}
-                                onChange={(v: string) => setEmitterForm({ ...emitterForm, cnpj: v })} placeholder="00.000.000/0001-00" />
+                            {/* Ponto 3B — CNPJ with auto-lookup */}
+                            <div>
+                                <label className={`text-xs font-medium ${textSub} mb-1 flex items-center gap-1`}>
+                                    <CreditCard size={12} /> CNPJ *
+                                </label>
+                                <div className="relative">
+                                    <input type="text" value={emitterForm.cnpj || ''}
+                                        onChange={e => {
+                                            const v = e.target.value;
+                                            setEmitterForm({ ...emitterForm, cnpj: v });
+                                            const digits = v.replace(/\D/g, '');
+                                            if (digits.length === 14) handleCnpjLookup(v);
+                                        }}
+                                        placeholder="00.000.000/0001-00"
+                                        className={`w-full ${bgInput} border ${borderCol} rounded-lg p-2.5 pr-9 text-sm ${textMain} focus:ring-1 focus:ring-primary outline-none`} />
+                                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                                        {cnpjLoading ? <Loader2 size={16} className="animate-spin text-primary" /> :
+                                         cnpjStatus === 'success' ? <CheckCircle2 size={16} className="text-emerald-500" /> :
+                                         cnpjStatus === 'error' ? <XCircle size={16} className="text-red-400" /> :
+                                         <Search size={14} className={textSub} />}
+                                    </span>
+                                </div>
+                            </div>
                             <InputField label="Razão Social *" icon={Building2} value={emitterForm.name}
                                 onChange={(v: string) => setEmitterForm({ ...emitterForm, name: v })} />
                         </div>
@@ -192,6 +375,8 @@ export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRef
                                 <InputField label="CEP" value={emitterForm.zip}
                                     onChange={(v: string) => setEmitterForm({ ...emitterForm, zip: v })} placeholder="00000-000" />
                             </div>
+                            <InputField label="Código IBGE do Município (7 dígitos)" icon={Hash} value={emitterForm.ibgeMunicipio}
+                                onChange={(v: string) => setEmitterForm({ ...emitterForm, ibgeMunicipio: v })} placeholder="3550308" />
                         </div>
 
                         {/* Contact */}
@@ -202,14 +387,32 @@ export default function TabConfiguracoes({ emitters, settings, isDarkMode, onRef
                                 onChange={(v: string) => setEmitterForm({ ...emitterForm, phone: v })} />
                         </div>
 
-                        {/* Certificate Upload */}
+                        {/* Certificate Upload — Ponto 4 */}
                         <div className={`p-4 rounded-xl border ${borderCol} space-y-3`}>
-                            <p className={`text-sm font-bold text-primary flex items-center gap-1`}>
-                                <Lock size={14} /> Certificado Digital (A1)
-                            </p>
+                            <div className="flex items-center justify-between">
+                                <p className={`text-sm font-bold text-primary flex items-center gap-1`}>
+                                    <Lock size={14} /> Certificado Digital (A1)
+                                </p>
+                                {/* Ponto 4.2 — Badge showing which unit the cert belongs to */}
+                                {effectiveUnitId && (() => {
+                                    const certUnit = units.find(u => u.id === effectiveUnitId);
+                                    return certUnit ? (
+                                        <span className={`px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold`}>
+                                            {certUnit.tradeName || certUnit.name}
+                                        </span>
+                                    ) : null;
+                                })()}
+                            </div>
                             <p className={`text-xs ${textSub}`}>
                                 Arquivo .pfx ou .p12 — necessário para emissão de NF-e/NFS-e/NFC-e
                             </p>
+                            {/* Ponto 4.3 — Warning when production env without certificate */}
+                            {!emitterForm.certificateFile && (emitterForm.nfseEnvironment === 'producao' || emitterForm.nfceEnvironment === 'producao') && (
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 text-amber-500 text-[11px] font-medium">
+                                    <AlertTriangle size={14} />
+                                    Esta unidade não possui certificado digital. A emissão em produção não funcionará.
+                                </div>
+                            )}
 
                             {/* Upload Area */}
                             <div

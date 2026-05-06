@@ -341,6 +341,13 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                     source: e.source || 'manual',
                     status: e.status || 'confirmed',
                     serviceIds: Array.isArray(e.serviceIds) ? e.serviceIds : (typeof e.serviceIds === 'string' ? JSON.parse(e.serviceIds || '[]') : []),
+                    serviceSlots: e.serviceSlots ? (typeof e.serviceSlots === 'string' ? JSON.parse(e.serviceSlots) : e.serviceSlots) : undefined,
+                    groupId: e.groupId || undefined,
+                    // Reschedule tracking
+                    originalStartTime: e.originalStartTime || undefined,
+                    originalEndTime: e.originalEndTime || undefined,
+                    lastModifiedBy: e.lastModifiedBy || undefined,
+                    lastModifiedByName: e.lastModifiedByName || undefined,
                     comandaId: e.comandaId || undefined,
                     clientId: e.clientId || undefined,
                     clientName: e.clientName || undefined,

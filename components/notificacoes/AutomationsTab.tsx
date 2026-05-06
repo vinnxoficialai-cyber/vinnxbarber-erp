@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Clock, MessageSquare, Users, Calendar, Bell, Loader2, Upload, X, Image as ImageIcon, Save } from 'lucide-react';
+import { Clock, Star, UserPlus, Gift, UserMinus, Loader2, Upload, X, Image as ImageIcon, Save, ChevronUp, ChevronDown } from 'lucide-react';
 import type { PushAutomationConfig } from '../../types';
 import { supabase } from '../../lib/supabase';
 import { uploadImage, deleteImage } from '../../lib/storage';
@@ -16,23 +16,25 @@ interface Props {
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
+type FieldDef = { key: string; label: string; type: 'number' | 'duration'; min: number; max: number; unit?: string };
+
 const AUTO_META: Record<string, {
-  title: string; desc: string; icon: React.ElementType; emoji: string;
-  fields: { key: string; label: string; type: 'number'; min: number; max: number; unit?: string }[];
+  title: string; desc: string; icon: React.ElementType; color: string;
+  fields: FieldDef[];
   variables: string[];
 }> = {
   reminder: {
-    title: 'Lembrete de Agendamento', desc: 'Notifica X horas antes do horário', icon: Clock, emoji: '⏰',
-    fields: [{ key: 'hoursBeforeAppointment', label: 'Horas antes', type: 'number', min: 1, max: 24, unit: 'h' }],
+    title: 'Lembrete de Agendamento', desc: 'Notifica antes do horário agendado', icon: Clock, color: '#3b82f6',
+    fields: [{ key: 'reminderMinutes', label: 'Antecedência', type: 'duration', min: 5, max: 1440 }],
     variables: ['{servico}', '{hora}'],
   },
   review: {
-    title: 'Pedir Avaliação', desc: 'Solicita avaliação após conclusão do serviço', icon: MessageSquare, emoji: '⭐',
-    fields: [{ key: 'hoursAfterCompletion', label: 'Horas após conclusão', type: 'number', min: 1, max: 48, unit: 'h' }],
+    title: 'Avaliação Pós-Atendimento', desc: 'Notifica automaticamente ao fim do horário agendado. Fallback: solicita avaliação após conclusão manual.', icon: Star, color: '#f59e0b',
+    fields: [{ key: 'reviewDelayMinutes', label: 'Tempo após conclusão (fallback)', type: 'duration', min: 5, max: 2880 }],
     variables: ['{servico}'],
   },
   incomplete: {
-    title: 'Cadastro Incompleto', desc: 'Incentiva clientes a completar o perfil', icon: Users, emoji: '📝',
+    title: 'Cadastro Incompleto', desc: 'Incentiva clientes a completar o perfil', icon: UserPlus, color: '#8b5cf6',
     fields: [
       { key: 'intervalDays', label: 'Intervalo entre envios', type: 'number', min: 1, max: 30, unit: 'dias' },
       { key: 'maxAttempts', label: 'Máx. tentativas', type: 'number', min: 1, max: 10, unit: '' },
@@ -40,12 +42,12 @@ const AUTO_META: Record<string, {
     variables: [],
   },
   birthday: {
-    title: 'Aniversário', desc: 'Parabéns + oferta especial no dia', icon: Calendar, emoji: '🎂',
+    title: 'Aniversário', desc: 'Parabéns + oferta especial no dia', icon: Gift, color: '#ec4899',
     fields: [{ key: 'discountPercent', label: 'Desconto (%)', type: 'number', min: 0, max: 100, unit: '%' }],
     variables: ['{nome}', '{desconto}'],
   },
   inactive: {
-    title: 'Clientes Inativos', desc: 'Reengajamento de clientes que não visitam há muito', icon: Bell, emoji: '💈',
+    title: 'Clientes Inativos', desc: 'Reengajamento de clientes que não visitam há muito', icon: UserMinus, color: '#ef4444',
     fields: [
       { key: 'inactiveDays', label: 'Dias de inatividade', type: 'number', min: 15, max: 90, unit: 'dias' },
       { key: 'maxNudgesPerMonth', label: 'Máx. nudges/mês', type: 'number', min: 1, max: 5, unit: '' },
@@ -53,6 +55,7 @@ const AUTO_META: Record<string, {
     variables: [],
   },
 };
+
 
 export const AutomationsTab: React.FC<Props> = ({ isDarkMode, textMain, textSub, bgCard, borderCol, bgInput, shadowClass, inputCls, labelCls, automations, setAutomations, toast }) => {
   const [saving, setSaving] = useState<string | null>(null);
@@ -112,7 +115,9 @@ export const AutomationsTab: React.FC<Props> = ({ isDarkMode, textMain, textSub,
             {/* Header */}
             <div className={`px-5 py-4 flex items-center justify-between border-b ${borderCol}`}>
               <div className="flex items-center gap-3">
-                <span className="text-xl">{meta.emoji}</span>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: meta.color + '18' }}>
+                  <Icon size={18} style={{ color: meta.color }} />
+                </div>
                 <div>
                   <h3 className={`text-sm font-bold ${textMain}`}>{meta.title}</h3>
                   <p className={`text-[10px] ${textSub}`}>{meta.desc}</p>
@@ -136,10 +141,60 @@ export const AutomationsTab: React.FC<Props> = ({ isDarkMode, textMain, textSub,
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {meta.fields.map(f => (
                   <div key={f.key}>
-                    <label className={labelCls}>{f.label} {f.unit && <span className={`text-[10px] ${textSub}`}>({f.unit})</span>}</label>
-                    <input type="number" value={(config[f.key] as number) || f.min}
-                      onChange={e => updateLocal(a.id, { config: { ...config, [f.key]: parseInt(e.target.value) || f.min } })}
-                      min={f.min} max={f.max} className={inputCls} />
+                    <label className={labelCls}>
+                      {f.label}
+                      {f.type === 'number' && f.unit && <span className={`text-[10px] ${textSub}`}>({f.unit})</span>}
+                    </label>
+                    {f.type === 'duration' ? (() => {
+                      const total = (config[f.key] as number) || 0;
+                      const dH = Math.floor(total / 60);
+                      const dM = total % 60;
+                      const setDuration = (h: number, m: number) => {
+                        const clamped = Math.max(0, Math.min(f.max, h * 60 + m));
+                        updateLocal(a.id, { config: { ...config, [f.key]: clamped } });
+                      };
+                      const stepH = (dir: number) => setDuration(Math.max(0, dH + dir), dM);
+                      const stepM = (dir: number) => {
+                        let newM = dM + dir * 5;
+                        let newH = dH;
+                        if (newM >= 60) { newM = 0; newH++; }
+                        if (newM < 0) { newM = 55; newH = Math.max(0, newH - 1); }
+                        setDuration(newH, newM);
+                      };
+                      const chevronCls = `p-0.5 rounded transition-colors ${isDarkMode ? 'hover:bg-slate-600 text-slate-400 hover:text-white' : 'hover:bg-slate-200 text-slate-500 hover:text-slate-800'}`;
+                      const boxCls = `flex items-center gap-1 px-3 py-2 rounded-lg border ${borderCol} ${bgInput}`;
+                      return (
+                        <div className="flex items-center gap-2">
+                          {/* Hours */}
+                          <div className={boxCls}>
+                            <span className={`text-2xl font-bold tabular-nums ${textMain}`} style={{ minWidth: '2ch', textAlign: 'center' }}>
+                              {String(dH).padStart(2, '0')}
+                            </span>
+                            <div className="flex flex-col">
+                              <button type="button" onClick={() => stepH(1)} className={chevronCls}><ChevronUp size={14} /></button>
+                              <button type="button" onClick={() => stepH(-1)} className={chevronCls}><ChevronDown size={14} /></button>
+                            </div>
+                            <span className={`text-[10px] font-medium ${textSub}`}>h</span>
+                          </div>
+                          <span className={`text-xl font-bold ${textSub}`}>:</span>
+                          {/* Minutes */}
+                          <div className={boxCls}>
+                            <span className={`text-2xl font-bold tabular-nums ${textMain}`} style={{ minWidth: '2ch', textAlign: 'center' }}>
+                              {String(dM).padStart(2, '0')}
+                            </span>
+                            <div className="flex flex-col">
+                              <button type="button" onClick={() => stepM(1)} className={chevronCls}><ChevronUp size={14} /></button>
+                              <button type="button" onClick={() => stepM(-1)} className={chevronCls}><ChevronDown size={14} /></button>
+                            </div>
+                            <span className={`text-[10px] font-medium ${textSub}`}>min</span>
+                          </div>
+                        </div>
+                      );
+                    })() : (
+                      <input type="number" value={(config[f.key] as number) || f.min}
+                        onChange={e => updateLocal(a.id, { config: { ...config, [f.key]: parseInt(e.target.value) || f.min } })}
+                        min={f.min} max={f.max} className={inputCls} />
+                    )}
                   </div>
                 ))}
               </div>

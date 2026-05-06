@@ -586,6 +586,11 @@ export async function saveCalendarEvent(event: CalendarEvent): Promise<{ success
                 serviceSlots: typeof event.serviceSlots === 'string' ? event.serviceSlots : JSON.stringify(event.serviceSlots)
             } : {}),
             ...(event.groupId ? { groupId: event.groupId } : {}),
+            // Reschedule tracking
+            ...(event.originalStartTime ? { originalStartTime: event.originalStartTime } : {}),
+            ...(event.originalEndTime ? { originalEndTime: event.originalEndTime } : {}),
+            ...(event.lastModifiedBy ? { lastModifiedBy: event.lastModifiedBy } : {}),
+            ...(event.lastModifiedByName ? { lastModifiedByName: event.lastModifiedByName } : {}),
         };
 
         const { data: existing } = await supabase
@@ -2141,6 +2146,42 @@ export async function closeComanda(
                 });
         }
 
+        // ── Fiscal auto-emission (fire-and-forget, never blocks close) ──
+        if (typeof window !== 'undefined') {
+            try {
+                // Resolver fiscal_settings pela unitId da comanda (com fallback global)
+                const comandaUnitId = comanda.unitId || null;
+                let fsData = null;
+                if (comandaUnitId) {
+                    const { data } = await supabase
+                        .from('fiscal_settings')
+                        .select('autoEmitOnClose, apiProvider')
+                        .eq('unitId', comandaUnitId)
+                        .maybeSingle();
+                    fsData = data;
+                }
+                if (!fsData) {
+                    const { data } = await supabase
+                        .from('fiscal_settings')
+                        .select('autoEmitOnClose, apiProvider')
+                        .is('unitId', null)
+                        .limit(1)
+                        .maybeSingle();
+                    fsData = data;
+                }
+                if (fsData?.autoEmitOnClose && fsData?.apiProvider && fsData.apiProvider !== 'none') {
+                    fetch('/api/fiscal-emit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ comandaId, type: 'auto_close', unitId: comandaUnitId }),
+                    }).catch(e => console.warn('[fiscal] auto-emit non-fatal:', e));
+                }
+            } catch (e) {
+                // Non-fatal: fiscal emission failure must NEVER break comanda close
+                console.warn('[fiscal] auto-emit check failed (non-fatal):', e);
+            }
+        }
+
         return { success: true };
     } catch (err: any) {
         console.error('Error closing comanda:', err);
@@ -3093,12 +3134,17 @@ export async function deleteProfessionalFiscalData(
 // NOTA FISCAL — Invoice Emitters
 // ============================================
 
-export async function getEmitters(): Promise<InvoiceEmitter[]> {
+export async function getEmitters(unitId?: string): Promise<InvoiceEmitter[]> {
     try {
-        const { data, error } = await supabase
+        let query = supabase
             .from('invoice_emitters')
             .select('*')
             .order('createdAt', { ascending: false });
+        // Filter by unit if specified, otherwise return all
+        if (unitId) {
+            query = query.or(`unitId.eq.${unitId},unitId.is.null`);
+        }
+        const { data, error } = await query;
         if (error) throw error;
         return (data || []) as InvoiceEmitter[];
     } catch (err: any) {
@@ -3141,6 +3187,9 @@ export async function saveEmitter(
             certificateName: emitter.certificateName || null,
             certificateExpiry: emitter.certificateExpiry || null,
             certificateStatus: emitter.certificateStatus || 'missing',
+            // Focus NFe integration fields
+            focusNfeToken: emitter.focusNfeToken || null,
+            ibgeMunicipio: emitter.ibgeMunicipio || null,
             active: emitter.active ?? true,
             memberId: emitter.memberId || null,
             unitId: emitter.unitId || null,
@@ -3197,12 +3246,17 @@ export async function deleteEmitter(
 // NOTA FISCAL — Invoices
 // ============================================
 
-export async function getInvoices(): Promise<Invoice[]> {
+export async function getInvoices(unitId?: string): Promise<Invoice[]> {
     try {
-        const { data, error } = await supabase
+        let query = supabase
             .from('invoices')
             .select('*')
             .order('createdAt', { ascending: false });
+        // Filter by unit if specified
+        if (unitId) {
+            query = query.eq('unitId', unitId);
+        }
+        const { data, error } = await query;
         if (error) throw error;
         const safeParse = safeParseJsonArray;
         return (data || []).map((inv: any) => ({
@@ -3259,6 +3313,11 @@ export async function saveInvoice(
             correctionText: invoice.correctionText || null,
             pdfUrl: invoice.pdfUrl || null,
             xmlUrl: invoice.xmlUrl || null,
+            // Focus NFe tracking fields
+            focusNfeRef: invoice.focusNfeRef || null,
+            focusNfeChave: invoice.focusNfeChave || null,
+            danfeUrl: invoice.danfeUrl || null,
+            unitId: invoice.unitId || null,
             events: JSON.stringify(invoice.events || []),
             notes: invoice.notes || null,
             createdBy: invoice.createdBy || null,
@@ -3315,14 +3374,25 @@ export async function deleteInvoice(
 // NOTA FISCAL — Fiscal Settings
 // ============================================
 
-export async function getFiscalSettings(): Promise<FiscalSettings | null> {
+export async function getFiscalSettings(unitId?: string): Promise<FiscalSettings | null> {
     try {
+        // 1. Try unit-specific settings first
+        if (unitId) {
+            const { data, error } = await supabase
+                .from('fiscal_settings')
+                .select('*')
+                .eq('unitId', unitId)
+                .maybeSingle();
+            if (!error && data) return data as FiscalSettings;
+        }
+        // 2. Fallback to global (unitId IS NULL)
         const { data, error } = await supabase
             .from('fiscal_settings')
             .select('*')
+            .is('unitId', null)
             .limit(1)
-            .single();
-        if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows
+            .maybeSingle();
+        if (error && error.code !== 'PGRST116') throw error;
         return data as FiscalSettings | null;
     } catch (err: any) {
         console.error('Error fetching fiscal settings:', err);
@@ -3347,15 +3417,23 @@ export async function saveFiscalSettings(
             cancellationWindowHours: settings.cancellationWindowHours ?? 24,
             emailTemplate: settings.emailTemplate || null,
             unitId: settings.unitId || null,
+            // Subscription fiscal automation flags
+            autoEmitOnSubscription: settings.autoEmitOnSubscription ?? false,
+            includePlanDetails: settings.includePlanDetails ?? true,
+            // Tax rate indicators for dashboard
+            pisRate: settings.pisRate ?? 0.0065,
+            cofinsRate: settings.cofinsRate ?? 0.03,
             updatedAt: now,
         };
 
-        // Check if settings row exists
-        const { data: existing } = await supabase
-            .from('fiscal_settings')
-            .select('id')
-            .limit(1)
-            .single();
+        // Check if settings row exists FOR THIS UNIT (or global)
+        let existingQuery = supabase.from('fiscal_settings').select('id');
+        if (settings.unitId) {
+            existingQuery = existingQuery.eq('unitId', settings.unitId);
+        } else {
+            existingQuery = existingQuery.is('unitId', null);
+        }
+        const { data: existing } = await existingQuery.maybeSingle();
 
         if (existing) {
             const { error } = await supabase

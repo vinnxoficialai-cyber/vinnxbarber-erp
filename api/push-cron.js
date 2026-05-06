@@ -24,14 +24,16 @@ async function sbQuery(path) {
   return res.ok ? await res.json() : [];
 }
 
-async function sendPush(clientId, title, body, tag, image) {
+async function sendPush(clientId, title, body, tag, image, url) {
+  const payload = { clientId, title, body, tag, image };
+  if (url) payload.url = url;
   return fetch(`${API_BASE}/api/push-send`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-push-secret': process.env.PUSH_API_SECRET,
     },
-    body: JSON.stringify({ clientId, title, body, tag, image }),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -95,9 +97,13 @@ async function processReminders() {
   const config = await getConfig('reminder');
   if (!config?.enabled) return { flow: 'reminder', skipped: true };
 
-  const hours = config.config?.hoursBeforeAppointment || 2;
+  // Support new single-minute key, fallback to old hours+minutes keys, then legacy hours-only
+  const cfg = config.config || {};
+  const totalMinutes = cfg.reminderMinutes
+    || ((cfg.hoursBeforeAppointment || 0) * 60 + (cfg.minutesBeforeAppointment || 0))
+    || 120; // default 2h
 
-  // Find events in the next N hours that haven't been reminded
+  // Find events in the next N minutes that haven't been reminded
   // date is TIMESTAMPTZ, startTime is TEXT like "08:30"
   const todayISO = new Date().toISOString().split('T')[0] + 'T00:00:00';
   const events = await sbQuery(
@@ -110,7 +116,7 @@ async function processReminders() {
 
   let sent = 0;
   const now = new Date();
-  const cutoff = new Date(now.getTime() + hours * 60 * 60 * 1000);
+  const cutoff = new Date(now.getTime() + totalMinutes * 60 * 1000);
 
   for (const ev of events) {
     // Combine date + startTime to get actual datetime
@@ -145,8 +151,12 @@ async function processReviews() {
   const config = await getConfig('review');
   if (!config?.enabled) return { flow: 'review', skipped: true };
 
-  const hours = config.config?.hoursAfterCompletion || 3;
-  const cutoffISO = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  // Support new single-minute key, fallback to old hours+minutes keys, then legacy hours-only
+  const cfg = config.config || {};
+  const totalMinutes = cfg.reviewDelayMinutes
+    || ((cfg.hoursAfterCompletion || 0) * 60 + (cfg.minutesAfterCompletion || 0))
+    || 180; // default 3h
+  const cutoffISO = new Date(Date.now() - totalMinutes * 60 * 1000).toISOString();
 
   const events = await sbQuery(
     `calendar_events?select=id,"clientId","serviceName"` +
@@ -503,6 +513,72 @@ async function processHardCancellations() {
 }
 
 // ══════════════════════════════════════
+// FLOW 8: END-TIME REVIEW REQUESTS (hourly)
+// Sends a push notification asking for a review as soon as
+// the appointment's endTime has passed, regardless of whether
+// the barber marked it as "completed".
+// ══════════════════════════════════════
+async function processEndTimeReviews() {
+  const config = await getConfig('review');
+  // This flow runs even if the review automation config is disabled,
+  // because it's a core UX feature. But we still read config for templates.
+
+  const now = new Date();
+  // Lookback window: 2 hours (generous margin for hourly cron)
+  const lookbackISO = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
+  const todayISO = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+
+  // Find events that are today or recent (within lookback window),
+  // not yet rating-requested, not rated, not cancelled, with a clientId
+  const events = await sbQuery(
+    `calendar_events?select=id,"clientId","serviceName","startTime","endTime",date,status` +
+    `&rating=is.null&"ratingRequested"=eq.false` +
+    `&"clientId"=not.is.null` +
+    `&status=not.in.(cancelled,no_show)` +
+    `&date=gte.${lookbackISO}` +
+    `&order=date.asc&limit=100`
+  );
+
+  let sent = 0;
+  for (const ev of events) {
+    // Build the actual end datetime from date + endTime
+    const datePart = new Date(ev.date).toISOString().split('T')[0];
+    const endTime = ev.endTime || ev.startTime || '23:59';
+    const eventEnd = new Date(`${datePart}T${endTime}:00-03:00`); // BRT
+
+    // Only process if endTime has already passed
+    if (eventEnd > now) continue;
+
+    // Skip events that ended more than 2 hours ago (already missed)
+    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+    if (eventEnd < twoHoursAgo) continue;
+
+    const template = config?.messageTemplate || 'Como foi seu {servico}? Avalie seu atendimento! ⭐';
+    const body = template.replace('{servico}', ev.serviceName || 'serviço');
+    const deepLink = `/#/site?action=rate&eventId=${ev.id}`;
+
+    await sendPush(
+      ev.clientId,
+      '⭐ Como foi seu atendimento?',
+      body,
+      `rate-endtime-${ev.id}`,
+      config?.imageUrl,
+      deepLink
+    );
+
+    // Mark as rating-requested to prevent duplicate notifications
+    await sbFetch(`calendar_events?id=eq.${ev.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ratingRequested: true }),
+      headers: { Prefer: 'return=minimal' },
+    });
+    sent++;
+  }
+
+  return { flow: 'endTimeReview', sent };
+}
+
+// ══════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════
 export default async function handler(req, res) {
@@ -525,6 +601,7 @@ export default async function handler(req, res) {
       results.push(await processReminders());
       results.push(await processReviews());
       results.push(await processScheduledCampaigns());
+      results.push(await processEndTimeReviews());
     } else if (type === 'daily') {
       results.push(await processIncompleteProfiles());
       results.push(await processBirthdays());

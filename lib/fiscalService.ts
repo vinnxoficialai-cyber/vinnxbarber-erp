@@ -1,13 +1,10 @@
 /**
  * fiscalService.ts — Serviço de emissão de Nota Fiscal
- * 
- * Abstração para comunicação com provedores de emissão:
- * - Focus NFe (https://focusnfe.com.br)
- * - NFE.io (https://nfe.io)
- * - PlugNotas (https://plugnotas.com.br)
- * 
- * O serviço detecta automaticamente o provedor configurado
- * e redireciona as chamadas para a API correta.
+ *
+ * ARQUITETURA CORRIGIDA:
+ * Este arquivo roda NO BROWSER e NÃO chama APIs externas diretamente.
+ * Toda comunicação com a Focus NFe é feita via /api/fiscal-emit (server-side).
+ * Isso resolve o Bug #1 (API key exposta) e Bug #2 (RLS).
  */
 
 import { supabase } from './supabase';
@@ -20,156 +17,83 @@ import { getFiscalSettings, getEmitters, saveInvoice } from './dataService';
 
 export type FiscalProvider = 'focus_nfe' | 'nfe_io' | 'plugnotas' | 'none';
 
-export interface EmissionRequest {
-    invoice: Invoice;
-    emitter: InvoiceEmitter;
-    provider: FiscalProvider;
-    apiKey: string;
-    environment: 'sandbox' | 'production';
-}
-
 export interface EmissionResponse {
     success: boolean;
+    status?: string;
     protocolNumber?: string;
     authorizationDate?: string;
     pdfUrl?: string;
     xmlUrl?: string;
+    focusNfeRef?: string;
     error?: string;
-    rawResponse?: any;
+    message?: string;
 }
 
 export interface CancellationRequest {
     invoiceId: string;
     protocolNumber: string;
     reason: string;
-    provider: FiscalProvider;
-    apiKey: string;
-    environment: 'sandbox' | 'production';
 }
-
-// ============================================
-// Provider Base URLs
-// ============================================
-
-const PROVIDER_URLS: Record<FiscalProvider, { sandbox: string; production: string }> = {
-    focus_nfe: {
-        sandbox: 'https://homologacao.focusnfe.com.br/v2',
-        production: 'https://api.focusnfe.com.br/v2',
-    },
-    nfe_io: {
-        sandbox: 'https://api.nfe.io/v1',
-        production: 'https://api.nfe.io/v1',
-    },
-    plugnotas: {
-        sandbox: 'https://api.sandbox.plugnotas.com.br',
-        production: 'https://api.plugnotas.com.br',
-    },
-    none: { sandbox: '', production: '' },
-};
 
 // ============================================
 // Main Service Functions
 // ============================================
 
 /**
- * Emite uma NF via o provedor configurado
+ * Emite uma NF via endpoint server-side /api/fiscal-emit
+ * CORRIGIDO: não expõe mais a API key no browser (Bug #1)
  */
 export async function emitInvoice(invoice: Invoice): Promise<EmissionResponse> {
     try {
-        // 1. Get settings
-        const settings = await getFiscalSettings();
-        if (!settings || settings.apiProvider === 'none' || !settings.apiKey) {
+        // Validações básicas client-side antes de chamar o servidor
+        const settings = await getFiscalSettings(invoice.unitId);
+        if (!settings || settings.apiProvider === 'none') {
             return {
                 success: false,
-                error: 'Nenhum provedor de NF configurado. Vá em Configurações → Integração API para configurar.',
+                error: 'Nenhum provedor de NF configurado. Vá em Configurações → Integração API.',
             };
         }
 
-        // 2. Get emitter
-        const emitters = await getEmitters();
-        const emitter = emitters.find(e => e.id === invoice.emitterId) || emitters.find(e => e.type === 'company');
-        if (!emitter) {
+        // Garantir que o invoice existe no banco antes de emitir
+        await saveInvoice({ ...invoice, status: 'queued' });
+
+        // Chamar endpoint server-side — apiKey nunca trafega no browser
+        const res = await fetch('/api/fiscal-emit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ invoiceId: invoice.id }),
+        });
+
+        const data = await res.json();
+
+        if (res.status === 200 && data.success) {
             return {
-                success: false,
-                error: 'Nenhum emitente configurado. Configure um emitente antes de emitir.',
+                success: true,
+                status: data.status,
+                focusNfeRef: data.focusNfeRef,
+                protocolNumber: data.chave,
+                message: data.message,
             };
         }
 
-        // 3. Validate certificate
-        if (emitter.certificateStatus !== 'valid') {
+        if (res.status === 202) {
+            // NFS-e assíncrona: processando, autorização vem via webhook
             return {
-                success: false,
-                error: `Certificado digital ${emitter.certificateStatus === 'missing' ? 'não cadastrado' : emitter.certificateStatus === 'expired' ? 'expirado' : 'com problemas'}. Faça o upload do certificado A1 válido.`,
+                success: true,
+                status: 'processing',
+                focusNfeRef: data.focusNfeRef,
+                message: data.message || 'NFS-e enviada. Aguardando autorização da SEFAZ.',
             };
         }
 
-        // 4. Build request
-        const request: EmissionRequest = {
-            invoice,
-            emitter,
-            provider: settings.apiProvider as FiscalProvider,
-            apiKey: settings.apiKey,
-            environment: (settings.apiEnvironment as 'sandbox' | 'production') || 'sandbox',
+        return {
+            success: false,
+            error: data.error || 'Erro ao emitir nota fiscal.',
         };
 
-        // 5. Route to provider
-        let response: EmissionResponse;
-        switch (request.provider) {
-            case 'focus_nfe':
-                response = await emitViaFocusNFe(request);
-                break;
-            case 'nfe_io':
-                response = await emitViaNfeIo(request);
-                break;
-            case 'plugnotas':
-                response = await emitViaPlugNotas(request);
-                break;
-            default:
-                return { success: false, error: 'Provedor não suportado.' };
-        }
-
-        // 6. Update invoice status
-        if (response.success) {
-            const updatedInvoice: Invoice = {
-                ...invoice,
-                status: 'authorized',
-                protocolNumber: response.protocolNumber,
-                authorizationDate: response.authorizationDate,
-                pdfUrl: response.pdfUrl,
-                xmlUrl: response.xmlUrl,
-                events: [
-                    ...(invoice.events || []),
-                    {
-                        id: crypto.randomUUID(),
-                        type: 'authorized',
-                        description: `NF autorizada via ${request.provider}. Protocolo: ${response.protocolNumber}`,
-                        timestamp: new Date().toISOString(),
-                    }
-                ],
-            };
-            await saveInvoice(updatedInvoice);
-        } else {
-            const updatedInvoice: Invoice = {
-                ...invoice,
-                status: 'rejected',
-                rejectionReason: response.error,
-                events: [
-                    ...(invoice.events || []),
-                    {
-                        id: crypto.randomUUID(),
-                        type: 'rejected',
-                        description: `Rejeição: ${response.error}`,
-                        timestamp: new Date().toISOString(),
-                    }
-                ],
-            };
-            await saveInvoice(updatedInvoice);
-        }
-
-        return response;
     } catch (err: any) {
-        console.error('Error emitting invoice:', err);
-        return { success: false, error: err.message || 'Erro interno ao emitir NF.' };
+        console.error('[fiscalService] emitInvoice error:', err);
+        return { success: false, error: err.message || 'Erro de comunicação com o servidor.' };
     }
 }
 
@@ -181,16 +105,16 @@ export async function cancelInvoice(
     reason: string
 ): Promise<EmissionResponse> {
     try {
-        const settings = await getFiscalSettings();
-        if (!settings || settings.apiProvider === 'none' || !settings.apiKey) {
+        const settings = await getFiscalSettings(invoice.unitId);
+        if (!settings || settings.apiProvider === 'none') {
             return { success: false, error: 'Provedor de NF não configurado.' };
         }
 
-        if (!invoice.protocolNumber) {
-            return { success: false, error: 'Nota não possui número de protocolo para cancelamento.' };
+        if (!invoice.protocolNumber && !invoice.focusNfeRef) {
+            return { success: false, error: 'Nota não possui referência para cancelamento.' };
         }
 
-        // Check cancellation window
+        // Verificar janela de cancelamento
         if (settings.cancellationWindowHours && invoice.authorizationDate) {
             const authDate = new Date(invoice.authorizationDate);
             const hoursElapsed = (Date.now() - authDate.getTime()) / (1000 * 60 * 60);
@@ -202,39 +126,56 @@ export async function cancelInvoice(
             }
         }
 
-        // Update invoice
-        const updatedInvoice: Invoice = {
-            ...invoice,
-            status: 'cancelled',
-            cancellationReason: reason,
-            events: [
-                ...(invoice.events || []),
-                {
-                    id: crypto.randomUUID(),
-                    type: 'cancelled',
-                    description: `Cancelada: ${reason}`,
-                    timestamp: new Date().toISOString(),
-                }
-            ],
-        };
-        await saveInvoice(updatedInvoice);
+        const res = await fetch('/api/fiscal-emit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                invoiceId: invoice.id,
+                action: 'cancel',
+                reason,
+            }),
+        });
 
-        return { success: true };
+        const data = await res.json();
+
+        if (data.success) {
+            // Atualizar status local
+            await saveInvoice({
+                ...invoice,
+                status: 'cancelled',
+                cancellationReason: reason,
+                events: [
+                    ...(invoice.events || []),
+                    {
+                        id: crypto.randomUUID(),
+                        type: 'cancelled',
+                        description: `Cancelada: ${reason}`,
+                        timestamp: new Date().toISOString(),
+                    },
+                ],
+            });
+            return { success: true };
+        }
+
+        return { success: false, error: data.error || 'Erro ao cancelar.' };
+
     } catch (err: any) {
-        console.error('Error cancelling invoice:', err);
+        console.error('[fiscalService] cancelInvoice error:', err);
         return { success: false, error: err.message };
     }
 }
 
 /**
  * Upload de certificado digital A1 para Supabase Storage
+ * Bucket: 'fiscal' (privado — certificados são documentos sensíveis)
  */
 export async function uploadCertificate(
     file: File,
     emitterId: string
 ): Promise<{ success: boolean; path?: string; error?: string }> {
     try {
-        const fileName = `certificates/${emitterId}/${Date.now()}_${file.name}`;
+        const safeEmitterId = emitterId.replace(/[^a-zA-Z0-9\-_]/g, '_');
+        const fileName = `certificates/${safeEmitterId}/${Date.now()}_${file.name}`;
 
         const { data, error } = await supabase.storage
             .from('fiscal')
@@ -244,74 +185,144 @@ export async function uploadCertificate(
 
         return { success: true, path: data.path };
     } catch (err: any) {
-        console.error('Error uploading certificate:', err);
+        console.error('[fiscalService] uploadCertificate error:', err);
         return { success: false, error: err.message };
     }
 }
 
 /**
- * Cria uma invoice a partir de uma comanda fechada
+ * Cria uma ou duas invoices a partir de uma comanda fechada
+ * CORRIGIDO: detecta comanda mista e respeita splitMixedComanda (Bug #4 fix)
  */
 export async function createInvoiceFromComanda(
     comanda: any,
     emitter: InvoiceEmitter,
-    docType: 'nfse' | 'nfce' = 'nfse'
-): Promise<Invoice> {
+    settings?: FiscalSettings | null
+): Promise<Invoice[]> {
     const items = (comanda.items || []).map((item: any) => ({
         id: crypto.randomUUID(),
         type: item.type === 'product' ? 'product' : 'service',
-        sourceId: item.serviceId || item.productId || '',
+        sourceId: item.serviceId || item.productId || item.id || '',
         description: item.name || item.description || 'Item',
         quantity: item.quantity || 1,
         unitPrice: item.price || item.unitPrice || 0,
         totalPrice: (item.quantity || 1) * (item.price || item.unitPrice || 0),
     }));
 
-    const totalServices = items.filter((i: any) => i.type === 'service').reduce((s: number, i: any) => s + i.totalPrice, 0);
-    const totalProducts = items.filter((i: any) => i.type === 'product').reduce((s: number, i: any) => s + i.totalPrice, 0);
+    const serviceItems = items.filter((i: any) => i.type === 'service');
+    const productItems = items.filter((i: any) => i.type === 'product');
+    const totalServices = serviceItems.reduce((s: number, i: any) => s + i.totalPrice, 0);
+    const totalProducts = productItems.reduce((s: number, i: any) => s + i.totalPrice, 0);
+    const totalAmount = comanda.finalAmount || comanda.totalAmount || (totalServices + totalProducts);
 
-    return {
-        id: crypto.randomUUID(),
-        docType,
-        status: 'draft',
+    const baseInvoice = {
         emitterId: emitter.id,
         emitterName: emitter.name,
+        clientId: comanda.clientId || undefined,
         clientName: comanda.clientName || 'Consumidor Final',
         clientCpfCnpj: comanda.clientCpfCnpj || '',
         clientEmail: comanda.clientEmail || '',
         comandaId: comanda.id,
         professionalId: comanda.barberId,
         professionalName: comanda.barberName || '',
-        items,
-        totalServices,
-        totalProducts,
-        totalAmount: comanda.finalAmount || comanda.totalAmount || (totalServices + totalProducts),
         discountAmount: comanda.discountAmount || 0,
-        events: [{
-            id: crypto.randomUUID(),
-            type: 'created',
-            description: `NF criada a partir da comanda #${comanda.id?.slice(0, 8)}`,
-            timestamp: new Date().toISOString(),
-        }],
         createdBy: 'system',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        unitId: comanda.unitId || undefined,
     };
+
+    const hasBoth = serviceItems.length > 0 && productItems.length > 0;
+    const shouldSplit = hasBoth && (settings?.splitMixedComanda ?? true);
+
+    if (shouldSplit) {
+        // Comanda mista: 2 notas separadas
+        const nfseInvoice: Invoice = {
+            id: crypto.randomUUID(),
+            ...baseInvoice,
+            docType: 'nfse',
+            status: 'draft',
+            items: serviceItems,
+            totalServices,
+            totalProducts: 0,
+            totalAmount: totalServices,
+            issTotal: Number((totalServices * (emitter.nfseIssRate || 5) / 100).toFixed(2)),
+            events: [{
+                id: crypto.randomUUID(),
+                type: 'created',
+                description: `NFS-e criada da comanda #${comanda.id?.slice(0, 8)} (serviços)`,
+                timestamp: new Date().toISOString(),
+            }],
+        };
+
+        const nfceInvoice: Invoice = {
+            id: crypto.randomUUID(),
+            ...baseInvoice,
+            docType: 'nfce',
+            status: 'draft',
+            items: productItems,
+            totalServices: 0,
+            totalProducts,
+            totalAmount: totalProducts,
+            events: [{
+                id: crypto.randomUUID(),
+                type: 'created',
+                description: `NFC-e criada da comanda #${comanda.id?.slice(0, 8)} (produtos)`,
+                timestamp: new Date().toISOString(),
+            }],
+        };
+
+        return [nfseInvoice, nfceInvoice];
+    }
+
+    // Comanda simples: 1 nota
+    const docType = productItems.length > 0 && serviceItems.length === 0 ? 'nfce' : 'nfse';
+    const invoice: Invoice = {
+        id: crypto.randomUUID(),
+        ...baseInvoice,
+        docType,
+        status: 'draft',
+        items,
+        totalServices,
+        totalProducts,
+        totalAmount,
+        issTotal: docType === 'nfse'
+            ? Number((totalServices * (emitter.nfseIssRate || 5) / 100).toFixed(2))
+            : undefined,
+        events: [{
+            id: crypto.randomUUID(),
+            type: 'created',
+            description: `NF criada da comanda #${comanda.id?.slice(0, 8)}`,
+            timestamp: new Date().toISOString(),
+        }],
+    };
+
+    return [invoice];
 }
 
 /**
  * Cria uma invoice a partir de uma assinatura paga
+ * CORRIGIDO: usa ref determinística (período YYYYMM) para idempotência
  */
 export async function createInvoiceFromSubscription(
     subscription: Subscription,
     plan: SubscriptionPlan,
     emitter: InvoiceEmitter,
+    settings?: FiscalSettings | null,
 ): Promise<Invoice> {
-    const issRate = (emitter.nfseIssRate || 5) / 100;
+    const issRate = emitter.nfseIssRate || 5;
     const amount = plan.price;
-    const issTotal = amount * issRate;
+    const issTotal = Number((amount * issRate / 100).toFixed(2));
+    const period = new Date().toISOString().slice(0, 7); // "2026-05"
 
-    const description = `Assinatura ${plan.name} — ${plan.recurrence === 'monthly' ? 'Mensal' : plan.recurrence === 'quarterly' ? 'Trimestral' : plan.recurrence === 'semiannual' ? 'Semestral' : 'Anual'}`;
+    const recurrenceLabel: Record<string, string> = {
+        monthly: 'Mensal', quarterly: 'Trimestral',
+        semiannual: 'Semestral', annual: 'Anual',
+    };
+
+    const description = settings?.includePlanDetails !== false
+        ? `Assinatura ${plan.name} — ${recurrenceLabel[plan.recurrence] || plan.recurrence} — ${period}`
+        : `Assinatura de plano — ${period}`;
 
     return {
         id: crypto.randomUUID(),
@@ -322,7 +333,8 @@ export async function createInvoiceFromSubscription(
         clientName: subscription.clientName || 'Assinante',
         clientCpfCnpj: '',
         clientEmail: subscription.billingEmail || '',
-        appointmentId: subscription.id, // ref to subscription
+        appointmentId: subscription.id,
+        // Ref determinística: o focusNfeRef será gerado pelo api/fiscal-emit
         items: [{
             id: crypto.randomUUID(),
             type: 'service' as const,
@@ -331,7 +343,7 @@ export async function createInvoiceFromSubscription(
             quantity: 1,
             unitPrice: amount,
             totalPrice: amount,
-            issRate: emitter.nfseIssRate || 5,
+            issRate,
         }],
         totalServices: amount,
         totalProducts: 0,
@@ -341,218 +353,37 @@ export async function createInvoiceFromSubscription(
         events: [{
             id: crypto.randomUUID(),
             type: 'created',
-            description: `NF criada a partir da assinatura ${plan.name} — ${subscription.clientName}`,
+            description: `NFS-e criada da assinatura ${plan.name} — ${subscription.clientName} — ${period}`,
             timestamp: new Date().toISOString(),
         }],
         createdBy: 'system',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        unitId: subscription.unitId || undefined,
     };
 }
 
-// Provider-Specific Implementations
-// ============================================
-
 /**
- * Focus NFe — https://focusnfe.com.br/doc/
+ * Consulta o status atual de uma NF na Focus NFe via server-side
  */
-async function emitViaFocusNFe(req: EmissionRequest): Promise<EmissionResponse> {
-    const baseUrl = PROVIDER_URLS.focus_nfe[req.environment];
-    const endpoint = req.invoice.docType === 'nfse' ? '/nfse' : '/nfce';
-
+export async function checkInvoiceStatus(invoice: Invoice): Promise<EmissionResponse> {
     try {
-        const body = buildFocusNFePayload(req);
-
-        const response = await fetch(`${baseUrl}${endpoint}?ref=${req.invoice.id}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Basic ${btoa(req.apiKey + ':' + '')}`,
-            },
-            body: JSON.stringify(body),
-        });
-
-        const data = await response.json();
-
-        if (response.ok && (data.status === 'autorizado' || data.status === 'processando_autorizacao')) {
-            return {
-                success: true,
-                protocolNumber: data.protocolo || data.numero_protocolo,
-                authorizationDate: new Date().toISOString(),
-                pdfUrl: data.caminho_danfe || data.url,
-                xmlUrl: data.caminho_xml,
-                rawResponse: data,
-            };
+        if (!invoice.focusNfeRef) {
+            return { success: false, error: 'Nota sem referência Focus NFe para consulta.' };
         }
 
-        return {
-            success: false,
-            error: data.mensagem || data.erros?.[0]?.mensagem || 'Erro na emissão via Focus NFe',
-            rawResponse: data,
-        };
-    } catch (err: any) {
-        return { success: false, error: `Erro de comunicação com Focus NFe: ${err.message}` };
-    }
-}
-
-/**
- * NFE.io — https://nfe.io/docs/
- */
-async function emitViaNfeIo(req: EmissionRequest): Promise<EmissionResponse> {
-    const baseUrl = PROVIDER_URLS.nfe_io[req.environment];
-    const companyId = req.emitter.cnpj?.replace(/\D/g, '');
-
-    try {
-        const body = buildNfeIoPayload(req);
-
-        const response = await fetch(`${baseUrl}/companies/${companyId}/serviceinvoices`, {
+        const res = await fetch('/api/fiscal-emit', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': req.apiKey,
-            },
-            body: JSON.stringify(body),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                invoiceId: invoice.id,
+                action: 'check_status',
+                focusNfeRef: invoice.focusNfeRef,
+            }),
         });
 
-        const data = await response.json();
-
-        if (response.ok && data.id) {
-            return {
-                success: true,
-                protocolNumber: data.id,
-                authorizationDate: data.issuedOn || new Date().toISOString(),
-                pdfUrl: data.pdfUrl,
-                xmlUrl: data.xmlUrl,
-                rawResponse: data,
-            };
-        }
-
-        return {
-            success: false,
-            error: data.message || 'Erro na emissão via NFE.io',
-            rawResponse: data,
-        };
+        return await res.json();
     } catch (err: any) {
-        return { success: false, error: `Erro de comunicação com NFE.io: ${err.message}` };
+        return { success: false, error: err.message };
     }
-}
-
-/**
- * PlugNotas — https://docs.plugnotas.com.br/
- */
-async function emitViaPlugNotas(req: EmissionRequest): Promise<EmissionResponse> {
-    const baseUrl = PROVIDER_URLS.plugnotas[req.environment];
-
-    try {
-        const body = buildPlugNotasPayload(req);
-
-        const response = await fetch(`${baseUrl}/nfse`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': req.apiKey,
-            },
-            body: JSON.stringify(body),
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.documents?.[0]?.id) {
-            return {
-                success: true,
-                protocolNumber: data.documents[0].id,
-                authorizationDate: new Date().toISOString(),
-                rawResponse: data,
-            };
-        }
-
-        return {
-            success: false,
-            error: data.message || data.error || 'Erro na emissão via PlugNotas',
-            rawResponse: data,
-        };
-    } catch (err: any) {
-        return { success: false, error: `Erro de comunicação com PlugNotas: ${err.message}` };
-    }
-}
-
-// ============================================
-// Payload Builders
-// ============================================
-
-function buildFocusNFePayload(req: EmissionRequest) {
-    const { invoice, emitter } = req;
-    if (invoice.docType === 'nfse') {
-        return {
-            data_emissao: new Date().toISOString(),
-            prestador: {
-                cnpj: emitter.cnpj?.replace(/\D/g, ''),
-                inscricao_municipal: emitter.municipalRegistration,
-                codigo_municipio: emitter.city,
-            },
-            tomador: {
-                cpf_cnpj: invoice.clientCpfCnpj?.replace(/\D/g, ''),
-                razao_social: invoice.clientName,
-                email: invoice.clientEmail,
-            },
-            servico: {
-                aliquota: (emitter.nfseIssRate || 5) / 100,
-                discriminacao: invoice.items.map(i => `${i.description} (${i.quantity}x)`).join('; '),
-                iss_retido: false,
-                item_lista_servico: emitter.defaultServiceCode || '1401',
-                valor_servicos: invoice.totalAmount,
-            },
-        };
-    }
-    // NFC-e
-    return {
-        natureza_operacao: 'VENDA DE MERCADORIA',
-        tipo_documento: 1,
-        finalidade_emissao: 1,
-        consumidor_final: 1,
-        presenca_comprador: 1,
-        items: invoice.items.map((item, i) => ({
-            numero_item: i + 1,
-            codigo_produto: item.sourceId || String(i + 1),
-            descricao: item.description,
-            quantidade_comercial: item.quantity,
-            valor_unitario_comercial: item.unitPrice,
-            valor_bruto: item.totalPrice,
-        })),
-        forma_pagamento: [{ tipo_pagamento: '01', valor: invoice.totalAmount }],
-    };
-}
-
-function buildNfeIoPayload(req: EmissionRequest) {
-    const { invoice, emitter } = req;
-    return {
-        cityServiceCode: emitter.defaultServiceCode || '1401',
-        description: invoice.items.map(i => `${i.description} (${i.quantity}x)`).join('; '),
-        servicesAmount: invoice.totalAmount,
-        borrower: {
-            name: invoice.clientName,
-            federalTaxNumber: invoice.clientCpfCnpj?.replace(/\D/g, '') ? Number(invoice.clientCpfCnpj.replace(/\D/g, '')) : undefined,
-            email: invoice.clientEmail,
-        },
-    };
-}
-
-function buildPlugNotasPayload(req: EmissionRequest) {
-    const { invoice, emitter } = req;
-    return [{
-        prestador: { cpfCnpj: emitter.cnpj?.replace(/\D/g, '') },
-        tomador: {
-            cpfCnpj: invoice.clientCpfCnpj?.replace(/\D/g, ''),
-            razaoSocial: invoice.clientName,
-            email: invoice.clientEmail,
-        },
-        servico: [{
-            codigo: emitter.defaultServiceCode || '1401',
-            discriminacao: invoice.items.map(i => `${i.description} (${i.quantity}x)`).join('; '),
-            cnae: emitter.cnae,
-            issRetido: false,
-            aliquotaIss: (emitter.nfseIssRate || 5) / 100,
-            valor: { servico: invoice.totalAmount },
-        }],
-    }];
 }

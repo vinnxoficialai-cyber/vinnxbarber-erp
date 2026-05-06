@@ -90,15 +90,33 @@ self.addEventListener('notificationclick', (event) => {
 
   const url = (event.notification.data?.url as string) || '/#/site';
 
+  // Parse action params from URL for deep-linking (e.g. ?action=rate&eventId=xxx)
+  let actionData: Record<string, string> | null = null;
+  try {
+    const qIdx = url.indexOf('?');
+    if (qIdx >= 0) {
+      const params = new URLSearchParams(url.substring(qIdx));
+      const action = params.get('action');
+      if (action) {
+        actionData = { type: 'notification-action', action };
+        const eventId = params.get('eventId');
+        if (eventId) actionData.eventId = eventId;
+      }
+    }
+  } catch { /* ignore parse errors */ }
+
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-      // Focus existing window if available
+      // If the app is already open, send a message and focus it
       for (const client of windowClients) {
         if (client.url.includes('/#/site') && 'focus' in client) {
+          if (actionData) {
+            client.postMessage(actionData);
+          }
           return client.focus();
         }
       }
-      // Otherwise open new window
+      // Otherwise open new window with the deep-link URL
       return self.clients.openWindow(url);
     })
   );

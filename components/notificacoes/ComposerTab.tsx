@@ -65,15 +65,30 @@ export const ComposerTab: React.FC<Props> = ({ isDarkMode, textMain, textSub, bg
     if (file) handleUpload(file);
   };
 
-  const sendTestNotification = () => {
+  const sendTestNotification = async () => {
     if (!('Notification' in window)) { toast.error('Erro', 'Browser sem suporte a notificações'); return; }
     if (!title.trim()) { toast.error('Erro', 'Preencha o título'); return; }
-    Notification.requestPermission().then(perm => {
-      if (perm === 'granted') {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast.error('Permissão', 'Habilite notificações no browser'); return; }
+    try {
+      const reg = await navigator.serviceWorker?.ready;
+      if (reg) {
+        // Use SW showNotification — supports image, icon, badge, actions
+        await reg.showNotification(title, {
+          body: body || '',
+          icon: '/pwa_icon_192.png',
+          image: imageUrl || undefined,
+          tag: 'preview-' + Date.now(),
+          data: { url: targetUrl || '/#/site' },
+        } as NotificationOptions);
+      } else {
+        // Fallback: basic Notification (no image support)
         new Notification(title, { body: body || '', icon: '/pwa_icon_192.png' });
-        toast.success('Preview', 'Notificação de teste enviada');
-      } else { toast.error('Permissão', 'Habilite notificações no browser'); }
-    });
+      }
+      toast.success('Preview', 'Notificação de teste enviada');
+    } catch (e: any) {
+      toast.error('Erro', e.message || 'Falha ao enviar preview');
+    }
   };
 
   const handleSend = async () => {

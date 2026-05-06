@@ -28,8 +28,9 @@ BEGIN
   _client_id := COALESCE(NEW."clientId", OLD."clientId");
   IF _client_id IS NULL THEN RETURN NEW; END IF;
 
-  -- 1. Novo agendamento confirmado
-  IF TG_OP = 'INSERT' AND NEW.status = 'confirmed' THEN
+  -- 1. Novo agendamento confirmado (skip admin split — not a real new booking)
+  IF TG_OP = 'INSERT' AND NEW.status = 'confirmed'
+     AND COALESCE(NEW.source, 'app') != 'admin_split' THEN
     _title := '✅ Agendamento Confirmado!';
     _body := COALESCE(NEW."serviceName", 'Serviço') || ' - ' ||
              TO_CHAR(NEW.date, 'DD/MM') || ' às ' || NEW."startTime";
@@ -39,9 +40,14 @@ BEGIN
   ELSIF TG_OP = 'UPDATE' AND NEW.status = 'cancelled'
         AND OLD.status IS DISTINCT FROM 'cancelled' THEN
     _title := '❌ Agendamento Cancelado';
-    _body := COALESCE(NEW."serviceName", 'Serviço') || ' - ' ||
-             TO_CHAR(NEW.date, 'DD/MM') || ' às ' || NEW."startTime";
-    _tag := 'cancel-' || NEW.id;
+    IF NEW."groupId" IS NOT NULL THEN
+      _body := 'Agendamento cancelado - ' ||
+               TO_CHAR(NEW.date, 'DD/MM') || ' às ' || NEW."startTime";
+    ELSE
+      _body := COALESCE(NEW."serviceName", 'Serviço') || ' - ' ||
+               TO_CHAR(NEW.date, 'DD/MM') || ' às ' || NEW."startTime";
+    END IF;
+    _tag := 'cancel-' || COALESCE(NEW."groupId", NEW.id::text);
 
   -- 3. Reagendamento: data OU horário mudou
   ELSIF TG_OP = 'UPDATE'
@@ -49,9 +55,14 @@ BEGIN
              OR NEW.date IS DISTINCT FROM OLD.date)
         AND NEW.status IS DISTINCT FROM 'cancelled' THEN
     _title := '🔄 Horário Alterado';
-    _body := COALESCE(NEW."serviceName", 'Serviço') || ' reagendado para ' ||
-             TO_CHAR(NEW.date, 'DD/MM') || ' às ' || NEW."startTime";
-    _tag := 'reschedule-' || NEW.id;
+    IF NEW."groupId" IS NOT NULL THEN
+      _body := 'Agendamento reagendado para ' ||
+               TO_CHAR(NEW.date, 'DD/MM') || ' às ' || NEW."startTime";
+    ELSE
+      _body := COALESCE(NEW."serviceName", 'Serviço') || ' reagendado para ' ||
+               TO_CHAR(NEW.date, 'DD/MM') || ' às ' || NEW."startTime";
+    END IF;
+    _tag := 'reschedule-' || COALESCE(NEW."groupId", NEW.id::text);
 
   -- 4. Profissional alterado (sem mudança de data/horário)
   ELSIF TG_OP = 'UPDATE'

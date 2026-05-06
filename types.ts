@@ -222,6 +222,12 @@ export interface CalendarEvent {
   // Compound event fields
   serviceSlots?: ServiceSlot[];  // Sub-services with individual barber/time/status
   groupId?: string;              // Links events that were split from a single booking
+
+  // Reschedule tracking
+  originalStartTime?: string;     // Horário anterior (antes da última remarcação)
+  originalEndTime?: string;       // Horário anterior (antes da última remarcação)
+  lastModifiedBy?: string;        // userId do responsável, ou 'client' se foi cliente
+  lastModifiedByName?: string;    // Nome cacheado para exibição
 }
 
 export interface PersonalTask {
@@ -1154,6 +1160,9 @@ export interface InvoiceEmitter {
   certificateName?: string;
   certificateExpiry?: string;
   certificateStatus?: CertificateStatus;
+  // Focus NFe integration
+  focusNfeToken?: string;       // Token individual do emitter na conta master Focus NFe
+  ibgeMunicipio?: string;       // Código IBGE 7 dígitos do município (obrigatório para NFS-e)
   // Meta
   active: boolean;
   memberId?: string;
@@ -1199,6 +1208,7 @@ export interface Invoice {
   clientCpfCnpj?: string;
   clientEmail?: string;
   clientAddress?: string;
+  clientPhone?: string;
   comandaId?: string;
   appointmentId?: string;
   professionalId?: string;
@@ -1220,6 +1230,12 @@ export interface Invoice {
   correctionText?: string;
   pdfUrl?: string;
   xmlUrl?: string;
+  // Focus NFe tracking
+  focusNfeRef?: string;         // Ref usada na chamada da API Focus NFe (idempotência)
+  focusNfeChave?: string;       // Chave NF-e/NFC-e da SEFAZ (44 dígitos)
+  danfeUrl?: string;            // URL do DANFE gerado pela Focus NFe
+  // Multi-unit
+  unitId?: string;
   events: InvoiceEvent[];
   notes?: string;
   createdBy: string;

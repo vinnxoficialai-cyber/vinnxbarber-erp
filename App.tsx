@@ -43,6 +43,7 @@ import { Expedientes } from './pages/Expedientes';
 import { Relatorios } from './pages/Relatorios';
 import { Unidades } from './pages/Unidades';
 import NotaFiscal from './pages/NotaFiscal';
+import ConfiguracaoFiscal from './pages/ConfiguracaoFiscal';
 import { StoreCustomizer } from './pages/StoreCustomizer';
 import { UnitProvider } from './context/UnitContext';
 import { useAppData } from './hooks/useAppData';
@@ -600,6 +601,11 @@ const App: React.FC = () => {
                 <Route path="/nota-fiscal" element={
                   <ProtectedRoute path="/nota-fiscal" currentUser={currentUser}>
                     <NotaFiscal isDarkMode={isDarkMode} currentUser={currentUser} />
+                  </ProtectedRoute>
+                } />
+                <Route path="/configuracao-fiscal" element={
+                  <ProtectedRoute path="/configuracao-fiscal" currentUser={currentUser}>
+                    <ConfiguracaoFiscal isDarkMode={isDarkMode} currentUser={currentUser} />
                   </ProtectedRoute>
                 } />
                 <Route path="/personalizar" element={

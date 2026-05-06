@@ -2,7 +2,7 @@
 // Auth: x-asaas-access-token (configured in billing_gateway_config)
 // Receives payment events from ASAAS and reconciles with local subscriptions
 
-const SUPABASE_URL = 'https://enjyflztvyomrlzddavk.supabase.co';
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://enjyflztvyomrlzddavk.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 async function sbQuery(path, options = {}) {
@@ -438,6 +438,43 @@ export default async function handler(req, res) {
           body: JSON.stringify(updates),
         });
         console.log(`[asaas-webhook] Subscription ${subscription.id} updated:`, Object.keys(updates));
+      }
+
+      // ── Auto-emit NFS-e for subscription after PAYMENT_CONFIRMED (unit-aware) ──
+      if ((event === 'PAYMENT_CONFIRMED' || event === 'PAYMENT_RECEIVED') && subscription.status !== 'cancelled') {
+        try {
+          // Resolver fiscal_settings pela unitId da subscription (com fallback global)
+          let fs = null;
+          const subUnitId = subscription.unitId || null;
+          if (subUnitId) {
+            const fsRes = await sbQuery(
+              `fiscal_settings?select=autoEmitOnSubscription,apiProvider&unitId=eq.${subUnitId}&limit=1`,
+              { headers: { Prefer: 'return=representation' } }
+            );
+            const fsList = await fsRes.json();
+            fs = fsList?.[0];
+          }
+          if (!fs) {
+            const fsRes = await sbQuery(
+              `fiscal_settings?select=autoEmitOnSubscription,apiProvider&unitId=is.null&limit=1`,
+              { headers: { Prefer: 'return=representation' } }
+            );
+            const fsList = await fsRes.json();
+            fs = fsList?.[0];
+          }
+          if (fs?.autoEmitOnSubscription && fs?.apiProvider && fs.apiProvider !== 'none') {
+            const period = new Date().toISOString().slice(0, 7).replace('-', '');
+            const baseUrl = `${process.env.VINNX_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://vinnxbarber-erp.vercel.app')}`;
+            fetch(`${baseUrl}/api/fiscal-emit`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'nfse_subscription', subscriptionId: subscription.id, period, unitId: subUnitId }),
+            }).catch(e => console.warn('[asaas-webhook] fiscal auto-emit non-fatal:', e.message));
+            console.log(`[asaas-webhook] Fiscal auto-emit dispatched for sub ${subscription.id} period ${period} unit ${subUnitId || 'global'}`);
+          }
+        } catch (e) {
+          console.warn('[asaas-webhook] Fiscal auto-emit check failed (non-fatal):', e.message);
+        }
       }
     } else {
       console.warn(`[asaas-webhook] No matching subscription for payment ${payment.id}`);

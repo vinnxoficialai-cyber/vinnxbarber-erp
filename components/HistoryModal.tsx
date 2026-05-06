@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, History, Calendar, User, CheckCircle, Circle, Clock, Search, Users } from 'lucide-react';
+import { X, History, Calendar, User, CheckCircle, Circle, Clock, Search, Users, RefreshCw } from 'lucide-react';
 import { TeamMember, PersonalTask, CalendarEvent } from '../types';
 import { CustomDropdown } from './CustomDropdown';
 
@@ -17,6 +17,10 @@ type HistoryItem = {
     scope?: string;
     status?: string;
     client?: string;
+    // Reschedule tracking
+    originalStartTime?: string;
+    originalEndTime?: string;
+    lastModifiedByName?: string;
 };
 
 interface HistoryModalProps {
@@ -66,7 +70,22 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                 if (!matchText && !matchClient && !matchAssignee) return false;
             }
             return true;
-        }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        }).sort((a, b) => {
+            const now = new Date();
+            const todayStr = now.toISOString().split('T')[0];
+            const dateA = a.date;
+            const dateB = b.date;
+            const isPastA = dateA <= todayStr;
+            const isPastB = dateB <= todayStr;
+
+            // Today & past dates come before future dates
+            if (isPastA && !isPastB) return -1;
+            if (!isPastA && isPastB) return 1;
+
+            // Within same group: past/today = descending (newest first), future = ascending (nearest first)
+            if (isPastA && isPastB) return dateB.localeCompare(dateA);
+            return dateA.localeCompare(dateB);
+        });
     }, [items, dateFrom, dateTo, selectedMember, statusFilter, searchQuery, members]);
 
     // Reset pagination when filters change
@@ -288,10 +307,23 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                                                                     {item.client}
                                                                 </span>
                                                             )}
-                                                            {item.startTime && (
+                                                            {item.startTime && !item.originalStartTime && (
                                                                 <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                                                                     <Clock size={9} />
                                                                     {item.startTime}{item.endTime ? ` - ${item.endTime}` : ''}
+                                                                </span>
+                                                            )}
+                                                            {item.originalStartTime && (
+                                                                <span className="text-[10px] text-amber-400 flex items-center gap-1" title="Horário anterior → atual">
+                                                                    <RefreshCw size={9} />
+                                                                    <span className="line-through opacity-60">{item.originalStartTime}{item.originalEndTime ? `-${item.originalEndTime}` : ''}</span>
+                                                                    <span>→</span>
+                                                                    <span className="font-semibold">{item.startTime}{item.endTime ? `-${item.endTime}` : ''}</span>
+                                                                </span>
+                                                            )}
+                                                            {item.lastModifiedByName && (
+                                                                <span className="text-[10px] text-muted-foreground/70 flex items-center gap-0.5">
+                                                                    por {item.lastModifiedByName}
                                                                 </span>
                                                             )}
                                                         </div>
@@ -302,6 +334,11 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                                                         {st && (
                                                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${st.color} ${st.bg}`}>
                                                                 {st.label}
+                                                            </span>
+                                                        )}
+                                                        {item.originalStartTime && (
+                                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-amber-400 bg-amber-500/10">
+                                                                Remarcado
                                                             </span>
                                                         )}
                                                         {item.scope && (
@@ -366,5 +403,9 @@ export function eventToHistoryItem(event: CalendarEvent): HistoryItem {
         status: event.status || 'confirmed',
         assigneeId: event.barberId,
         client: event.client,
+        // Reschedule tracking
+        originalStartTime: event.originalStartTime,
+        originalEndTime: event.originalEndTime,
+        lastModifiedByName: event.lastModifiedByName,
     };
 }

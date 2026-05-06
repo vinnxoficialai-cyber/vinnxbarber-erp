@@ -5,7 +5,10 @@
       "Bash(npx tsc:*)",
       "Bash(npx vite build)",
       "Bash(npx vite dev:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "WebSearch",
+      "WebFetch(domain:focusnfe.com.br)",
+      "Bash(xargs grep -l \"invoice\\\\|fiscal\\\\|emitter\")"
     ]
   }
 }

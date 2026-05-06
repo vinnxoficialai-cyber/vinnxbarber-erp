@@ -552,7 +552,23 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
     if (editingEventId) {
       // Update existing
       const originalEvent = events.find(ev => ev.id === editingEventId);
-      const updated = buildEvent(baseDate, editingEventId);
+      const formBuilt = buildEvent(baseDate, editingEventId);
+
+      // Merge: preserve existing fields from originalEvent that buildEvent doesn't include
+      // (serviceSlots, groupId, tracking fields, rating, etc.)
+      const updated: CalendarEvent = {
+        ...(originalEvent || {}),  // Preserve all existing DB fields
+        ...formBuilt,              // Override with form data
+      };
+
+      // Registrar troca de horário se mudou
+      if (originalEvent && (originalEvent.startTime !== updated.startTime || originalEvent.endTime !== updated.endTime)) {
+        updated.originalStartTime = originalEvent.startTime;
+        updated.originalEndTime = originalEvent.endTime;
+        updated.lastModifiedBy = currentUser?.id || 'unknown';
+        updated.lastModifiedByName = currentUser?.name || 'Desconhecido';
+      }
+
       const result = await saveCalendarEvent(updated);
       if (!result.success) {
         toast.error('Erro ao salvar', result.error || 'Erro desconhecido');
@@ -800,6 +816,13 @@ export const Agenda: React.FC<AgendaProps> = ({ isDarkMode, currentUser }) => {
       barberName: barber?.name || event.barberName,
       startTime: newStartTime,
       endTime: newEndTime,
+      // Registrar troca de horário por drag-drop (só se o horário mudou)
+      ...(event.startTime !== newStartTime || event.endTime !== newEndTime ? {
+        originalStartTime: event.startTime,
+        originalEndTime: event.endTime,
+        lastModifiedBy: currentUser?.id || 'unknown',
+        lastModifiedByName: currentUser?.name || 'Desconhecido',
+      } : {}),
     };
 
     const result = await saveCalendarEvent(updated);

@@ -49,14 +49,19 @@ export default function TabEmissao({ invoices, emitters, pendingComandas, member
 
         setEmittingIds(prev => new Set(prev).add(comanda.id));
         try {
-            const mainEmitter = emitters.find(e => e.type === 'company') || emitters[0];
-            const invoice = await createInvoiceFromComanda(comanda, mainEmitter);
-            await saveInvoice(invoice);
-            const result = await emitInvoice(invoice);
-            if (result.success) {
-                toast.success('NF Emitida', `Nota autorizada — Protocolo: ${result.protocolNumber || 'N/A'}`);
-            } else {
-                toast.error('Erro na emissão', result.error || 'Erro desconhecido ao emitir NF.');
+            // Prefer unit-specific emitter from the comanda's unit
+            const mainEmitter = emitters.find(e => e.type === 'company' && e.unitId === comanda.unitId)
+                || emitters.find(e => e.type === 'company')
+                || emitters[0];
+            const invoiceList = await createInvoiceFromComanda(comanda, mainEmitter);
+            for (const invoice of invoiceList) {
+                await saveInvoice(invoice);
+                const result = await emitInvoice(invoice);
+                if (result.success) {
+                    toast.success('NF Emitida', `${invoice.docType.toUpperCase()} — ${result.status === 'processing' ? 'Em processamento' : 'Autorizada'}`);
+                } else {
+                    toast.error('Erro na emissão', result.error || 'Erro desconhecido ao emitir NF.');
+                }
             }
         } catch (err: any) {
             toast.error('Erro', err.message || 'Erro ao processar nota fiscal.');
@@ -86,7 +91,10 @@ export default function TabEmissao({ invoices, emitters, pendingComandas, member
 
         setEmittingIds(prev => new Set(prev).add(sub.id));
         try {
-            const mainEmitter = emitters.find(e => e.type === 'company') || emitters[0];
+            // Prefer unit-specific emitter from the subscription's unit
+            const mainEmitter = emitters.find(e => e.type === 'company' && e.unitId === sub.unitId)
+                || emitters.find(e => e.type === 'company')
+                || emitters[0];
             const invoice = await createInvoiceFromSubscription(sub, plan, mainEmitter);
             await saveInvoice(invoice);
             const result = await emitInvoice(invoice);
@@ -118,7 +126,9 @@ export default function TabEmissao({ invoices, emitters, pendingComandas, member
             const plan = subscriptionPlans.find(p => p.id === sub.planId);
             if (!plan || emitters.length === 0) { fail++; continue; }
             try {
-                const mainEmitter = emitters.find(e => e.type === 'company') || emitters[0];
+                const mainEmitter = emitters.find(e => e.type === 'company' && e.unitId === sub.unitId)
+                    || emitters.find(e => e.type === 'company')
+                    || emitters[0];
                 const invoice = await createInvoiceFromSubscription(sub, plan, mainEmitter);
                 await saveInvoice(invoice);
                 await emitInvoice(invoice);
