@@ -9,8 +9,12 @@
             "schedule": "0 4 * * *"
         },
         {
-            "path": "/api/push-cron-daily",
+            "path": "/api/push-cron?type=daily",
             "schedule": "0 12 * * *"
+        },
+        {
+            "path": "/api/push-cron?type=hourly",
+            "schedule": "0 * * * *"
         },
         {
             "path": "/api/fiscal-reconcile",

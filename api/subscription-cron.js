@@ -163,7 +163,7 @@ export default async function handler(req, res) {
 
           if (daysUntil === 3 || daysUntil === 1) {
             try {
-              await fetch(`${API_BASE}/api/push-send`, {
+              await fetch(`${API_BASE}/api/push?action=send`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-push-secret': process.env.PUSH_API_SECRET },
                 body: JSON.stringify({

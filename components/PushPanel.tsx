@@ -95,7 +95,7 @@ export function PushPanel({ isDarkMode, textMain, textSub, bgInput, borderCol }:
         // Send immediately via API
         const session = await supabase.auth.getSession();
         const token = session.data.session?.access_token;
-        const res = await fetch('/api/push-broadcast', {
+        const res = await fetch('/api/push?action=broadcast', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ title: compTitle, body: compBody, image: compImage || undefined }),

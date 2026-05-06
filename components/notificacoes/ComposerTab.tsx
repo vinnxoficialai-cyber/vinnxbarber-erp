@@ -112,7 +112,7 @@ export const ComposerTab: React.FC<Props> = ({ isDarkMode, textMain, textSub, bg
 
         if (sendMode === 'individual') {
           // Send to single client
-          const res = await fetch('/api/push-send', {
+          const res = await fetch('/api/push?action=send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ clientId: selectedClientId, title, body, image: imageUrl || undefined, url: targetUrl }),
@@ -129,7 +129,7 @@ export const ComposerTab: React.FC<Props> = ({ isDarkMode, textMain, textSub, bg
             ...(filterMinVisits ? { minVisits: parseInt(filterMinVisits) } : {}),
           } : undefined;
 
-          const res = await fetch('/api/push-broadcast', {
+          const res = await fetch('/api/push?action=broadcast', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ title, body, image: imageUrl || undefined, url: targetUrl, filterCriteria }),

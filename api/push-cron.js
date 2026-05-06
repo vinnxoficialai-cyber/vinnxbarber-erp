@@ -27,7 +27,7 @@ async function sbQuery(path) {
 async function sendPush(clientId, title, body, tag, image, url) {
   const payload = { clientId, title, body, tag, image };
   if (url) payload.url = url;
-  return fetch(`${API_BASE}/api/push-send`, {
+  return fetch(`${API_BASE}/api/push?action=send`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -322,7 +322,7 @@ async function processScheduledCampaigns() {
 
   // Process one-time campaigns
   for (const c of scheduled) {
-    await fetch(`${API_BASE}/api/push-broadcast`, {
+    await fetch(`${API_BASE}/api/push?action=broadcast`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -363,7 +363,7 @@ async function processScheduledCampaigns() {
     );
     if (logs?.length) continue;
 
-    await fetch(`${API_BASE}/api/push-broadcast`, {
+    await fetch(`${API_BASE}/api/push?action=broadcast`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -587,9 +587,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Auth: x-push-secret from header or query param
+  // Auth: x-push-secret (internal/pg_cron) OR Vercel CRON_SECRET (direct cron call)
   const secret = req.headers['x-push-secret'] || req.query?.secret;
-  if (!secret || secret !== process.env.PUSH_API_SECRET) {
+  const bearerToken = req.headers['authorization']?.replace('Bearer ', '');
+  const isAuthorized = (secret && secret === process.env.PUSH_API_SECRET)
+    || (bearerToken && bearerToken === process.env.CRON_SECRET);
+  if (!isAuthorized) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 

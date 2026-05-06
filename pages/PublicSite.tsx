@@ -564,7 +564,7 @@ function PublicSiteApp() {
       if (!sub) return;
       const j = sub.toJSON();
       try {
-        await fetch('/api/push-subscribe', {
+        await fetch('/api/push?action=subscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -613,7 +613,7 @@ function PublicSiteApp() {
 
       // Always save subscription to DB (bypass RLS by using service role via API)
       const j = sub.toJSON();
-      const saveRes = await fetch('/api/push-subscribe', {
+      const saveRes = await fetch('/api/push?action=subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -653,7 +653,7 @@ function PublicSiteApp() {
         const endpoint = sub.endpoint;
         await sub.unsubscribe();
         // Use API with service_role to bypass RLS
-        await fetch('/api/push-subscribe', {
+        await fetch('/api/push?action=subscribe', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ endpoint }),
