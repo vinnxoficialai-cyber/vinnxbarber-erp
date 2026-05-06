@@ -13,10 +13,6 @@
             "schedule": "0 12 * * *"
         },
         {
-            "path": "/api/push-cron?type=hourly",
-            "schedule": "0 * * * *"
-        },
-        {
             "path": "/api/fiscal-reconcile",
             "schedule": "0 6 * * *"
         }
@@ -32,3 +28,4 @@
         }
     ]
 }
+
